@@ -5,6 +5,7 @@ Roles: BA · Architect · UX Lead · Frontend Lead · Backend Lead
 Stack: Streamlit · casparser · yfinance · pyxirr · pandas · plotly
 """
 
+
 import streamlit as st
 import casparser
 import pandas as pd
@@ -19,6 +20,7 @@ import io, os
 import warnings
 warnings.filterwarnings("ignore")
 
+
 # ─────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────
@@ -29,6 +31,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
 # ─────────────────────────────────────────────
 # DESIGN SYSTEM — ZERODHA/GROWW INSPIRED
 # ─────────────────────────────────────────────
@@ -36,10 +39,12 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
     background: #F7F8FA;
 }
+
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
@@ -50,6 +55,7 @@ html, body, [class*="css"] {
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stFileUploader label,
 [data-testid="stSidebar"] .stTextInput label { color: #64748B !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: 0.8px; }
+
 
 /* ── Metrics ── */
 [data-testid="stMetric"] {
@@ -62,6 +68,7 @@ html, body, [class*="css"] {
 [data-testid="stMetricValue"] { font-size: 24px !important; font-weight: 700 !important; color: #0F172A !important; }
 [data-testid="stMetricLabel"] { font-size: 11px !important; font-weight: 600 !important; color: #64748B !important; text-transform: uppercase; letter-spacing: 0.6px; }
 [data-testid="stMetricDelta"] { font-size: 13px !important; font-weight: 500 !important; }
+
 
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
@@ -86,6 +93,7 @@ html, body, [class*="css"] {
     border-bottom: none !important;
 }
 
+
 /* ── Cards ── */
 .metric-card {
     background: #FFFFFF;
@@ -100,12 +108,14 @@ html, body, [class*="css"] {
 .pos { color: #16A34A; }
 .neg { color: #DC2626; }
 
+
 /* ── Section headers ── */
 .section-head {
     font-size: 15px; font-weight: 700; color: #0F172A;
     margin-bottom: 2px; letter-spacing: -0.2px;
 }
 .section-sub { font-size: 12px; color: #94A3B8; margin-bottom: 16px; }
+
 
 /* ── Filter bar ── */
 .filter-bar {
@@ -116,6 +126,7 @@ html, body, [class*="css"] {
     margin-bottom: 16px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
+
 
 /* ── Holdings table ── */
 .holdings-row {
@@ -136,6 +147,7 @@ html, body, [class*="css"] {
 .fund-name { font-size: 13px; font-weight: 600; color: #0F172A; }
 .fund-meta { font-size: 11px; color: #94A3B8; margin-top: 2px; }
 
+
 /* ── Badges ── */
 .badge {
     display: inline-block;
@@ -150,11 +162,13 @@ html, body, [class*="css"] {
 .badge-direct   { background: #F0FDF4; color: #15803D; }
 .badge-regular  { background: #FFF7ED; color: #C2410C; }
 
+
 /* ── Alert ── */
 .alert-success { background:#F0FDF4; border:1px solid #BBF7D0; border-radius:10px; padding:12px 16px; color:#15803D; font-size:13px; }
 .alert-warn    { background:#FFFBEB; border:1px solid #FDE68A; border-radius:10px; padding:12px 16px; color:#92400E; font-size:13px; }
 .alert-info    { background:#EFF6FF; border:1px solid #BFDBFE; border-radius:10px; padding:12px 16px; color:#1E40AF; font-size:13px; }
 .alert-danger  { background:#FEF2F2; border:1px solid #FECACA; border-radius:10px; padding:12px 16px; color:#991B1B; font-size:13px; }
+
 
 /* ── Onboarding ── */
 .onboard-hero { text-align:center; padding:60px 20px; }
@@ -166,8 +180,10 @@ html, body, [class*="css"] {
 .step-title { font-size:14px; font-weight:700; color:#0F172A; margin-bottom:6px; }
 .step-desc { font-size:12px; color:#64748B; line-height:1.6; }
 
+
 /* ── Footer ── */
 .footer-note { font-size:10px; color:#CBD5E1; text-align:center; margin-top:60px; padding:20px; border-top:1px solid #E2E8F0; }
+
 
 /* ── Timeline ── */
 .timeline-bar {
@@ -178,6 +194,7 @@ html, body, [class*="css"] {
     font-size:10px; font-weight:700; color:#fff; padding:0 8px;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
+
 
 /* ── Comparison ── */
 .compare-card {
@@ -190,6 +207,7 @@ html, body, [class*="css"] {
     border-bottom:1px solid #F1F5F9; font-size:12px; }
 .compare-label { color:#64748B; } .compare-val { font-weight:600; color:#0F172A; }
 
+
 /* ── Score ring ── */
 .score-ring {
     width:100px; height:100px; border-radius:50%;
@@ -198,14 +216,157 @@ html, body, [class*="css"] {
     margin:0 auto;
 }
 
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width:4px; height:4px; }
 ::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:4px; }
+
+
+
+
+/* ══ v6.0 Premium UI additions ══ */
+
+
+/* Root tokens */
+:root {
+  --shadow-sm: 0 1px 2px rgba(10,15,30,0.04);
+  --shadow:    0 2px 6px rgba(10,15,30,0.06);
+  --shadow-md: 0 6px 20px rgba(10,15,30,0.09);
+  --r: 12px; --r-sm: 8px;
+}
+
+
+/* Elevated card hover */
+.metric-card {
+  transition: box-shadow 0.18s ease, transform 0.18s ease !important;
+}
+.metric-card:hover {
+  box-shadow: 0 6px 20px rgba(10,15,30,0.09) !important;
+  transform: translateY(-1px) !important;
+}
+
+
+/* Holdings row interactive */
+[style*="border-radius:10px"][style*="padding:14px 18px"] {
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+}
+[style*="border-radius:10px"][style*="padding:14px 18px"]:hover {
+  box-shadow: 0 6px 18px rgba(10,15,30,0.08) !important;
+  transform: translateX(2px);
+}
+
+
+/* Better tab styling */
+.stTabs [data-baseweb="tab"] { transition: background 0.12s, color 0.12s; }
+.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {
+  background: #F0F2F5 !important;
+  color: #3D4A5C !important;
+}
+
+
+/* Premium sidebar button */
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #5B5FD6 0%, #7C3AED 100%) !important;
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(91,95,214,0.35) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.2px;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  box-shadow: 0 6px 20px rgba(91,95,214,0.45) !important;
+  transform: translateY(-1px) !important;
+}
+
+
+/* Gradient section headers */
+.sh-grad {
+  font-size: 16px; font-weight: 800; letter-spacing: -0.4px;
+  background: linear-gradient(90deg, #0A0F1E 0%, #3D4A5C 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 2px;
+}
+
+
+/* Pills period selector */
+[data-testid="stPills"] button {
+  border-radius: 20px !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+}
+[data-testid="stPills"] button[aria-selected="true"] {
+  background: #0A0F1E !important;
+  color: #fff !important;
+}
+
+
+/* Verdict badges */
+.verdict-strong  { background:#ECFDF5; color:#059669; border:1px solid #A7F3D0; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+.verdict-average { background:#FFFBEB; color:#D97706; border:1px solid #FDE68A; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+.verdict-weak    { background:#FEF2F2; color:#DC2626; border:1px solid #FECACA; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+
+
+/* Risk pill */
+.risk-low    { display:inline-block; padding:2px 9px; border-radius:20px; font-size:10px; font-weight:700; background:#ECFDF5; color:#059669; }
+.risk-mod    { display:inline-block; padding:2px 9px; border-radius:20px; font-size:10px; font-weight:700; background:#FFFBEB; color:#D97706; }
+.risk-high   { display:inline-block; padding:2px 9px; border-radius:20px; font-size:10px; font-weight:700; background:#FEF2F2; color:#DC2626; }
+
+
+/* Dataframe upgrade */
+[data-testid="stDataFrame"] {
+  border-radius: 10px !important;
+  overflow: hidden !important;
+  border: 1px solid #E2E8F0 !important;
+  box-shadow: 0 1px 3px rgba(10,15,30,0.04) !important;
+}
+
+
+/* Better metrics */
+[data-testid="stMetric"] {
+  background: linear-gradient(135deg, #FFFFFF 0%, #FAFBFC 100%) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 1px 3px rgba(10,15,30,0.06) !important;
+}
+
+
+/* Sidebar divider */
+[data-testid="stSidebar"] hr {
+  border-color: #E2E8F0 !important;
+  margin: 16px 0 !important;
+}
+
+
+/* Download button */
+.stDownloadButton > button {
+  background: #F7F8FA !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  color: #3D4A5C !important;
+  transition: all 0.15s !important;
+}
+.stDownloadButton > button:hover {
+  background: #EEF2FF !important;
+  border-color: #C7D2FE !important;
+  color: #4338CA !important;
+}
+
+
+/* Alert boxes upgrade */
+.alert-success, .alert-warn, .alert-info, .alert-danger {
+  border-left-width: 3px !important;
+}
+
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: #D1D9E6; border-radius: 4px; }
+
 
 /* ── Plotly ── */
 .js-plotly-plot .plotly .modebar { display:none !important; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────
 # CONSTANTS & CONFIG
@@ -218,10 +379,12 @@ BENCHMARKS = {
     "Nifty Next 50": "^NSMIDCP",
 }
 
+
 PERIOD_MAP = {
     "1M": 30, "3M": 90, "6M": 180,
     "1Y": 365, "3Y": 1095, "5Y": 1825, "All": 9999
 }
+
 
 CATEGORY_COLORS = {
     "Equity": "#3B82F6", "Debt": "#10B981", "Hybrid": "#F59E0B",
@@ -229,10 +392,48 @@ CATEGORY_COLORS = {
     "FOF": "#F43F5E", "Other": "#94A3B8"
 }
 
+
+# ── Per-fund benchmark mapping (cap-type / category → TRI proxy) ──
+FUND_BENCH_BY_CAP = {
+    "Large Cap":       ("^NSEI",              "Nifty 50"),
+    "Mid Cap":         ("^NSMIDCP",           "Nifty Midcap 150"),
+    "Small Cap":       ("NIFTYSMALLCAP250.NS","Nifty SmallCap 250"),
+    "Flexi/Multi Cap": ("^CNX500",            "Nifty 500"),
+    "Index":           ("^NSEI",              "Nifty 50"),
+    "Mixed":           ("^NSEI",              "Nifty 50"),
+}
+FUND_BENCH_BY_CAT = {
+    "ELSS":   ("^NSEI",   "Nifty 50"),
+    "Hybrid": ("^NSEI",   "Nifty 50"),
+    "FOF":    ("^CNX500", "Nifty 500"),
+    "Debt":   (None,      "CRISIL Composite Bond"),
+    "Liquid": (None,      "CRISIL Liquid"),
+    "Other":  ("^NSEI",   "Nifty 50"),
+}
+
+
+# Risk tiers (annual vol%, beta, label) — category-seeded heuristics
+RISK_TIERS = {
+    "Liquid":  (0.5,  0.02, "Very Low"),
+    "Debt":    (3.5,  0.15, "Low"),
+    "Hybrid":  (9.0,  0.55, "Moderate"),
+    "ELSS":    (15.0, 0.90, "High"),
+    "Index":   (13.0, 1.00, "Moderate-High"),
+    "Equity":  (17.0, 1.10, "High"),
+    "FOF":     (14.0, 0.80, "High"),
+    "Other":   (10.0, 0.60, "Moderate"),
+}
+MAX_DD_ESTIMATE = {
+    "Equity":45, "ELSS":42, "Index":38, "Hybrid":28,
+    "FOF":38, "Debt":10, "Liquid":2, "Other":22,
+}
+
+
 SECTOR_COLORS = [
     "#3B82F6","#10B981","#F59E0B","#8B5CF6","#F43F5E",
     "#06B6D4","#6366F1","#EC4899","#14B8A6","#F97316"
 ]
+
 
 # Approximate expense ratios (Direct / Regular) by category
 EXP_RATIOS = {
@@ -241,6 +442,7 @@ EXP_RATIOS = {
     "Debt":    (0.25, 0.85), "Liquid": (0.12, 0.35),
     "FOF":     (0.60, 1.70), "Other":  (0.45, 1.20),
 }
+
 
 # Goal-based timeline mapping
 GOAL_TIMELINE = {
@@ -253,6 +455,7 @@ GOAL_TIMELINE = {
     "FOF":     ("Long Term (7yr+)", "#F43F5E", 10),
     "Other":   ("Medium Term (3-7yr)", "#94A3B8", 5),
 }
+
 
 # Sector keywords for heuristic sector detection from fund names
 SECTOR_KEYWORDS = {
@@ -267,6 +470,7 @@ SECTOR_KEYWORDS = {
     "Auto": ["AUTO", "AUTOMOBILE", "EV"],
     "Diversified": [],  # fallback
 }
+
 
 # ─────────────────────────────────────────────
 # BACKEND: PARSE CAS PDF
@@ -287,12 +491,14 @@ def fmt_inr(number: float) -> str:
     except Exception:
         return "₹0"
 
+
 def _get(obj, key, default=None):
     if isinstance(obj, dict):
         val = obj.get(key, default)
         return val if val is not None else default
     val = getattr(obj, key, default)
     return val if val is not None else default
+
 
 @st.cache_data(show_spinner=False)
 def parse_cas(file_bytes: bytes, password: str):
@@ -301,13 +507,16 @@ def parse_cas(file_bytes: bytes, password: str):
         with open("_vault_tmp.pdf", "wb") as f:
             f.write(file_bytes)
 
+
         data = casparser.read_cas_pdf("_vault_tmp.pdf", password)
+
 
         import os
         try:
             os.remove("_vault_tmp.pdf")
         except Exception:
             pass
+
 
         if "accounts" in data:
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "NSDL CAS detected. FolioIQ requires a CAMS/KFintech Detailed CAS for transaction analytics."
@@ -321,6 +530,7 @@ def parse_cas(file_bytes: bytes, password: str):
         sips       = []
         
         is_partial_cas = False
+
 
         for folio in folios:
             schemes = _get(folio, 'schemes', [])
@@ -343,11 +553,13 @@ def parse_cas(file_bytes: bytes, password: str):
                 nav    = float(_get(val_obj, 'nav', 0) or 0) if val_obj else 0
                 cost   = float(_get(val_obj, 'cost', 0) or 0)
 
+
                 # Derive fund metadata from scheme name
                 category = _detect_category(name)
                 plan     = "Regular" if any(x in name.upper() for x in ["REGULAR", "REG "]) else "Direct"
                 amc      = _detect_amc(name)
                 cap_type = _detect_cap_type(name)
+
 
                 if bal > 0 or cur_val > 0:
                     # Use CAS cost value if available, else estimate from transactions
@@ -367,6 +579,7 @@ def parse_cas(file_bytes: bytes, password: str):
                         "Gain%":       ((cur_val - invested) / invested * 100) if invested > 0 else 0,
                         "Weight%":     0.0,
                     })
+
 
                 # Transactions
                 txs_raw = _get(scheme, 'transactions', [])
@@ -396,18 +609,25 @@ def parse_cas(file_bytes: bytes, password: str):
                                 "NAV": float(t_nav),
                             })
 
+
         df_h = pd.DataFrame(holdings)
         if not df_h.empty:
             total_val = df_h["Market Value"].sum()
             if total_val > 0:
                 df_h["Weight%"] = df_h["Market Value"] / total_val * 100
 
+
         df_t = pd.DataFrame(txns)
         df_s = pd.DataFrame(sips)
         return df_h, df_t, df_s, None, is_partial_cas
 
+
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e), False
+
+
+
+
 
 
 
@@ -432,6 +652,8 @@ def _detect_category(name: str) -> str:
     return "Other"
 
 
+
+
 def _detect_cap_type(name: str) -> str:
     n = name.upper()
     if "SMALL CAP" in n: return "Small Cap"
@@ -440,6 +662,8 @@ def _detect_cap_type(name: str) -> str:
     if "FLEXI CAP" in n or "MULTI CAP" in n: return "Flexi/Multi Cap"
     if "INDEX" in n or "NIFTY 50" in n or "SENSEX" in n: return "Index"
     return "Mixed"
+
+
 
 
 def _detect_amc(name: str) -> str:
@@ -457,6 +681,8 @@ def _detect_amc(name: str) -> str:
         if k.upper() in name.upper():
             return v
     return "Other AMC"
+
+
 
 
 def _estimate_invested(scheme) -> float:
@@ -485,6 +711,8 @@ def _estimate_invested(scheme) -> float:
         return 0.0
 
 
+
+
 # ─────────────────────────────────────────────
 # BACKEND: MARKET DATA
 # ─────────────────────────────────────────────
@@ -504,6 +732,8 @@ def fetch_benchmark(ticker: str, period_days: int = 365):
         return close
     except Exception:
         return pd.Series(dtype=float)
+
+
 
 
 # ─────────────────────────────────────────────
@@ -540,6 +770,7 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
                 elif "TAX" in t_type or "DUTY" in t_type or "FEE" in t_type:
                     ledger.append({"date": row["Date"], "amount": -amt})
 
+
         if not ledger:
             return 0.0
             
@@ -558,6 +789,8 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
         return max(-100.0, min(float(result) * 100, 1000.0))
     except Exception:
         return 0.0
+
+
 
 
 def compute_benchmark_xirr(df_t: pd.DataFrame, bench_series: pd.Series) -> tuple:
@@ -635,13 +868,22 @@ def compute_benchmark_xirr(df_t: pd.DataFrame, bench_series: pd.Series) -> tuple
             return 0.0, bench_current_value
         
         result = xirr(ldf["date"], ldf["amount"])
-        if result is None or np.isnan(result):
+        if result is None or np.isnan(result) or not np.isfinite(float(result)):
+            # Fallback: CAGR from total outflows → current bench value
+            total_out = abs(ldf[ldf["amount"] < 0]["amount"].sum())
+            if total_out > 0 and bench_current_value > 0:
+                earliest = ldf[ldf["amount"] < 0]["date"].min()
+                years_held = max((datetime.now() - pd.Timestamp(earliest)).days, 1) / 365.25
+                cagr = ((bench_current_value / total_out) ** (1.0 / years_held) - 1) * 100
+                return max(-99.0, min(cagr, 200.0)), bench_current_value
             return 0.0, bench_current_value
-        
-        bench_xirr = max(-100.0, min(float(result) * 100, 1000.0))
+
+        bench_xirr = max(-100.0, min(float(result) * 100, 200.0))  # cap at 200% (realisitic max)
         return bench_xirr, bench_current_value
     except Exception:
         return 0.0, 0.0
+
+
 
 
 def _get_bench_price(bench_series, target_date):
@@ -654,6 +896,8 @@ def _get_bench_price(bench_series, target_date):
         return float(bench_series[mask].iloc[-1])
     # If target_date is before all benchmark data, use earliest available
     return float(bench_series.iloc[0])
+
+
 
 
 def _build_cashflow_list(df_t):
@@ -672,6 +916,8 @@ def _build_cashflow_list(df_t):
             continue
         cashflows.append((row["Date"], amt, units, t_type))
     return cashflows
+
+
 
 
 def compute_period_comparison(df_t_all, total_value, bench_series, period_days):
@@ -786,6 +1032,7 @@ def compute_period_comparison(df_t_all, total_value, bench_series, period_days):
     
     result["port_start_value"] = port_value_at_start
 
+
     # ── Step 4: Build cash flow lists for XIRR ──
     # Portfolio cash flows
     pcf_list = []
@@ -833,6 +1080,7 @@ def compute_period_comparison(df_t_all, total_value, bench_series, period_days):
     result["port_value"] = total_value
     result["bench_value"] = bench_sim_value
 
+
     # ── Step 5: Compute returns ──
     if not pcf_list or len(pcf_list) < 2:
         return result
@@ -878,6 +1126,8 @@ def compute_period_comparison(df_t_all, total_value, bench_series, period_days):
     return result
 
 
+
+
 def compute_rolling_returns(bench_series: pd.Series, periods_days: list) -> dict:
     """Compute point-to-point returns for given periods."""
     results = {}
@@ -896,6 +1146,8 @@ def compute_rolling_returns(bench_series: pd.Series, periods_days: list) -> dict
     return results
 
 
+
+
 def estimate_expense_drag(df_h: pd.DataFrame) -> float:
     """Estimated annual expense ratio drag in INR."""
     drag = 0.0
@@ -904,6 +1156,8 @@ def estimate_expense_drag(df_h: pd.DataFrame) -> float:
         er = lo if row["Plan"] == "Direct" else hi
         drag += row["Market Value"] * er / 100
     return drag
+
+
 
 
 def expense_leakage_20yr(df_h: pd.DataFrame, annual_growth: float = 0.12) -> dict:
@@ -937,6 +1191,8 @@ def expense_leakage_20yr(df_h: pd.DataFrame, annual_growth: float = 0.12) -> dic
     return results
 
 
+
+
 def elss_lock_in_analysis(df_h: pd.DataFrame, df_t: pd.DataFrame) -> list:
     """Analyze ELSS funds for 3-year lock-in status."""
     if df_t.empty or "Fund" not in df_t.columns:
@@ -963,6 +1219,8 @@ def elss_lock_in_analysis(df_h: pd.DataFrame, df_t: pd.DataFrame) -> list:
     return results
 
 
+
+
 def detect_sector(name: str) -> str:
     """Heuristic sector detection from fund name."""
     n = name.upper()
@@ -970,6 +1228,8 @@ def detect_sector(name: str) -> str:
         if any(kw in n for kw in keywords):
             return sector
     return "Diversified"
+
+
 
 
 def compute_portfolio_score(df_h: pd.DataFrame, xirr_val: float, bench_ret: float) -> int:
@@ -999,6 +1259,8 @@ def compute_portfolio_score(df_h: pd.DataFrame, xirr_val: float, bench_ret: floa
     return min(100, max(0, score))
 
 
+
+
 def sip_consistency_score(df_s: pd.DataFrame) -> float:
     """0-100 score for SIP regularity."""
     if df_s.empty or len(df_s) < 2 or "Date" not in df_s.columns:
@@ -1010,6 +1272,8 @@ def sip_consistency_score(df_s: pd.DataFrame) -> float:
     if total_months <= 0:
         return 0.0
     return round(min(months_with_sip / total_months * 100, 100), 1)
+
+
 
 
 def stepup_sip_projection(monthly_sip: float, years: int, annual_return: float, stepup_pct: float) -> dict:
@@ -1042,6 +1306,8 @@ def stepup_sip_projection(monthly_sip: float, years: int, annual_return: float, 
     }
 
 
+
+
 # ─────────────────────────────────────────────
 # CHART HELPERS
 # ─────────────────────────────────────────────
@@ -1054,8 +1320,11 @@ PLOTLY_LAYOUT = dict(
     yaxis=dict(showgrid=True, gridcolor="#F1F5F9", zeroline=False, linecolor="#E2E8F0"),
 )
 
+
 def _layout(**kwargs) -> dict:
     return {**PLOTLY_LAYOUT, **kwargs}
+
+
 
 
 def make_area_chart(x, y, color="#3B82F6", fill_color="rgba(59,130,246,0.1)", label=""):
@@ -1070,6 +1339,8 @@ def make_area_chart(x, y, color="#3B82F6", fill_color="rgba(59,130,246,0.1)", la
     return fig
 
 
+
+
 def make_donut(labels, values, colors):
     fig = go.Figure(go.Pie(
         labels=labels, values=values,
@@ -1080,6 +1351,8 @@ def make_donut(labels, values, colors):
     fig.update_layout(**_layout(height=260, showlegend=True,
         legend=dict(orientation="v", x=1.02, y=0.5, font=dict(size=11))))
     return fig
+
+
 
 
 def make_bar_chart(labels, values, colors=None, horizontal=False, title=""):
@@ -1103,6 +1376,8 @@ def make_bar_chart(labels, values, colors=None, horizontal=False, title=""):
     return fig
 
 
+
+
 def make_waterfall(categories, values):
     colors = ["#10B981" if v >= 0 else "#EF4444" for v in values]
     fig = go.Figure(go.Bar(
@@ -1113,6 +1388,8 @@ def make_waterfall(categories, values):
     fig.add_hline(y=0, line_dash="dot", line_color="#CBD5E1", line_width=1)
     fig.update_layout(**_layout(height=220))
     return fig
+
+
 
 
 def make_gauge(value, max_val=100, label="Risk Score"):
@@ -1139,6 +1416,8 @@ def make_gauge(value, max_val=100, label="Risk Score"):
     return fig
 
 
+
+
 # ─────────────────────────────────────────────
 # SESSION STATE INIT
 # ─────────────────────────────────────────────
@@ -1153,13 +1432,15 @@ for key, default in {
         st.session_state[key] = default
 
 
+
+
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
     <div style='display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid #E2E8F0'>
-        <div style='width:36px;height:36px;background:#6366F1;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff'>F</div>
+        <div style='width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#5B5FD6 0%,#7C3AED 100%);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:#fff;box-shadow:0 4px 12px rgba(91,95,214,0.3)'>F</div>
         <div>
             <div style='font-size:16px;font-weight:800;color:#0F172A;letter-spacing:-0.3px'>FolioIQ</div>
             <div style='font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:0.8px'>MF Intelligence</div>
@@ -1167,9 +1448,11 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+
     st.markdown("<div style='font-size:11px;color:#475569;margin-bottom:4px'>Upload your CAMS/KFintech Detailed CAS</div>", unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Detailed CAS PDF", type=["pdf"], label_visibility="collapsed", key="cas_upload")
     password = st.text_input("PAN Password", type="password", placeholder="ABCDE1234F (uppercase)")
+
 
     if st.button("🔍  Analyze Portfolio", use_container_width=True, type="primary", key="btn_cas"):
         if not uploaded_file:
@@ -1191,28 +1474,42 @@ with st.sidebar:
                 st.session_state.error       = None
                 st.rerun()
 
+
+    benchmark_name = list(BENCHMARKS.keys())[0]
+    sel_cats = []
+    sel_amcs = []
+    plan_filter = "All"
+    min_alloc = 0.0
+
     if st.session_state.parsed:
         st.markdown("---")
         st.markdown("<div style='font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px'>Global Filters</div>", unsafe_allow_html=True)
 
+
         benchmark_name = st.selectbox("Benchmark", list(BENCHMARKS.keys()))
+
 
         df_h = st.session_state.df_holdings
         all_cats = sorted(df_h["Category"].unique().tolist()) if not df_h.empty else []
         all_amcs = sorted(df_h["AMC"].unique().tolist()) if not df_h.empty else []
+
 
         sel_cats = st.multiselect("Category", all_cats, default=all_cats, key="filter_cat")
         sel_amcs = st.multiselect("AMC", all_amcs, default=all_amcs, key="filter_amc")
         plan_filter= st.radio("Plan Type", ["All","Direct","Regular"], horizontal=True)
         min_alloc  = st.slider("Min Allocation %", 0.0, 20.0, 0.0, 0.5)
 
+
     st.markdown("---")
     st.markdown("<div style='font-size:10px;color:#334155;text-align:center'>SEBI CSCRF 2025 &middot; Zero Data Retention<br>FolioIQ v5.0 &middot; In-memory processing</div>", unsafe_allow_html=True)
+
+
 
 
 # ─────────────────────────────────────────────
 # MAIN CONTENT
 # ─────────────────────────────────────────────
+
 
 # ── ONBOARDING SCREEN ──
 if not st.session_state.parsed:
@@ -1222,7 +1519,7 @@ if not st.session_state.parsed:
     else:
         st.markdown("""
         <div class="onboard-hero">
-            <div class="onboard-title">Know your portfolio.<br>Beat the benchmark.</div>
+            <div class="onboard-title" style="background:linear-gradient(135deg,#0A0F1E 0%,#5B5FD6 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Know your portfolio.<br>Beat the benchmark.</div>
             <div class="onboard-sub">Upload your CAMS/KFintech CAS and get institutional-grade analytics &mdash; instantly, privately.</div>
             <div class="step-grid">
                 <div class="step-card">
@@ -1241,14 +1538,18 @@ if not st.session_state.parsed:
     st.stop()
 
 
+
+
 # ── FILTER APPLICATION ──
 df_h_raw = st.session_state.df_holdings.copy()
 df_t_raw = st.session_state.df_txns.copy()
 df_s_raw = st.session_state.df_sips.copy()
 
+
 if df_h_raw.empty:
     st.warning("PDF parsed but no active holdings found. Ensure you used a 'Detailed' CAS.")
     st.stop()
+
 
 # Apply filters
 df_h = df_h_raw.copy()
@@ -1261,12 +1562,15 @@ if plan_filter != "All":
 if min_alloc > 0:
     df_h = df_h[df_h["Weight%"] >= min_alloc]
 
+
 # Filter txns to match filtered holdings
 filtered_funds = set(df_h["Fund"].tolist())
 df_t = df_t_raw[df_t_raw["Fund"].isin(filtered_funds)] if (not df_t_raw.empty and "Fund" in df_t_raw.columns) else pd.DataFrame()
 df_s = df_s_raw[df_s_raw["Fund"].isin(filtered_funds)] if (not df_s_raw.empty and "Fund" in df_s_raw.columns) else pd.DataFrame()
 
+
 df_t_period = df_t
+
 
 # ── KEY METRICS ──
 total_value    = float(df_h["Market Value"].sum())
@@ -1274,8 +1578,10 @@ total_invested = float(df_h["Invested"].sum())
 total_gain     = total_value - total_invested
 gain_pct       = (total_gain / total_invested * 100) if total_invested > 0 else 0.0
 
+
 ticker         = BENCHMARKS.get(benchmark_name, "^NSEI")
 bench_data     = fetch_benchmark(ticker, 9999) # fetch all history
+
 
 # Calculate global benchmark return (for Alpha)
 bench_ret      = 0.0
@@ -1285,11 +1591,14 @@ if not bench_data.empty and len(bench_data) >= 2:
     days = max((bench_data.index[-1] - bench_data.index[0]).days, 1)
     bench_cagr = (((float(bench_data.iloc[-1]) / float(bench_data.iloc[0])) ** (365.0/days)) - 1) * 100
 
+
 portfolio_xirr = compute_xirr(df_t_raw, float(df_h_raw["Market Value"].sum()))
+
 
 # Simulate benchmark: what if same cash flows were invested in benchmark?
 bench_xirr_val, bench_current_value = compute_benchmark_xirr(df_t_raw, bench_data)
 alpha          = portfolio_xirr - bench_xirr_val
+
 
 num_funds      = len(df_h)
 num_amcs       = df_h["AMC"].nunique()
@@ -1297,8 +1606,10 @@ port_score     = compute_portfolio_score(df_h, portfolio_xirr, bench_xirr_val)
 expense_drag   = estimate_expense_drag(df_h)
 sip_score      = sip_consistency_score(df_s_raw)
 
+
 if st.session_state.get("is_partial_cas", False):
     st.markdown('<div class="alert-info" style="margin-bottom:12px">&#9432; <b>Partial CAS Detected:</b> This statement does not cover the history since your first investment. Invested Amount and XIRR calculations may be incorrect. For accurate analytics, download a Detailed CAS with the period "Since Inception".</div>', unsafe_allow_html=True)
+
 
 # ── TABS ──
 tab_dash, tab_factor, tab_perf, tab_hold, tab_alloc, tab_compare, tab_sip, tab_tax, tab_insights, tab_audit = st.tabs([
@@ -1313,6 +1624,8 @@ tab_dash, tab_factor, tab_perf, tab_hold, tab_alloc, tab_compare, tab_sip, tab_t
     "💡 Smart Insights",
     "🛡 Compliance",
 ])
+
+
 
 
 # ════════════════════════════════════════════
@@ -1346,11 +1659,14 @@ with tab_dash:
     
     st.markdown('<div style="font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #0F172A;">Portfolio vs Market</div>', unsafe_allow_html=True)
 
+
     # ── Date filter ──
     period_sel = st.pills("Period", ["1M", "3M", "6M", "1Y", "3Y", "5Y", "ALL"], default="1Y", label_visibility="collapsed")
 
+
     period_map_dash = {"1M": 30, "3M": 90, "6M": 180, "1Y": 365, "3Y": 1095, "5Y": 1825, "ALL": 9999}
     period_days_dash = period_map_dash.get(period_sel, 365)
+
 
     if not bench_data.empty:
         # ── Use the corrected comparison function ──
@@ -1362,6 +1678,7 @@ with tab_dash:
         use_xirr = comp["use_xirr"]
         port_value_at_start = comp["port_start_value"]
 
+
         # ── Benchmark slice for chart ──
         if period_days_dash < 9999:
             cutoff = bench_data.index[-1] - timedelta(days=period_days_dash)
@@ -1371,16 +1688,19 @@ with tab_dash:
         if len(bench_slice) < 2:
             bench_slice = bench_data.iloc[-2:]
 
+
         # ── Label ──
         lbl = {"1M":"1M","3M":"3M","6M":"6M","1Y":"12M","3Y":"3Y","5Y":"5Y","ALL":""}
         pl = lbl.get(period_sel, "")
         subtitle = f"{pl} XIRR (Annualized)" if use_xirr and pl else ("XIRR (Annualized)" if use_xirr else f"{pl} Absolute Returns")
+
 
         pc = "#10B981" if port_period_pct >= 0 else "#EF4444"
         bc = "#10B981" if bench_period_pct >= 0 else "#EF4444"
         alpha_period = port_period_pct - bench_period_pct
         ac = "#10B981" if alpha_period >= 0 else "#EF4444"
         alpha_sign = "+" if alpha_period >= 0 else ""
+
 
         st.markdown(f"""
         <div style="font-size:13px; color:#94A3B8; margin-bottom:10px;">{subtitle}</div>
@@ -1404,10 +1724,13 @@ with tab_dash:
         </div>
         """, unsafe_allow_html=True)
 
+
         st.markdown(f'<div style="font-size:12px; color:#94A3B8; margin-bottom:8px;">Last updated on {datetime.now().strftime("%d %b %Y")}</div>', unsafe_allow_html=True)
+
 
         # ── Chart: Portfolio vs Benchmark cumulative growth ──
         bench_norm = bench_slice / bench_slice.iloc[0] * 100
+
 
         # Build portfolio growth curve
         # We reconstruct portfolio's cumulative value at each benchmark date
@@ -1476,6 +1799,7 @@ with tab_dash:
                     frac = i / max(n - 1, 1)
                     port_norm_vals[i] = 100 + (final_val - 100) * frac
 
+
         fig_vs = go.Figure()
         fig_vs.add_trace(go.Scatter(
             x=bench_norm.index, y=bench_norm.values, mode="lines",
@@ -1498,6 +1822,7 @@ with tab_dash:
         ))
         st.plotly_chart(fig_vs, use_container_width=True, config={"displayModeBar": False})
 
+
         # ── No data edge case ──
         if not df_t_raw.empty and "Date" in df_t_raw.columns:
             txns_in_range = df_t_raw[df_t_raw["Date"] >= bench_slice.index[0]]
@@ -1507,6 +1832,8 @@ with tab_dash:
         st.info("Benchmark data unavailable. Check network connection.")
 
 
+
+
 # ============================================
 # TAB 2: FACTOR ANALYSIS (NEW)
 # ============================================
@@ -1514,7 +1841,9 @@ with tab_factor:
     st.markdown('<div class="section-head">Expense Ratio Leakage Tracker</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">The hidden cost of fund management fees compounding over 20 years</div>', unsafe_allow_html=True)
 
+
     leakage = expense_leakage_20yr(df_h)
+
 
     f1, f2, f3, f4 = st.columns(4)
     with f1:
@@ -1528,9 +1857,11 @@ with tab_factor:
         drag_pct = leakage["current_drag"] / total_value * 100 if total_value > 0 else 0
         st.metric("Drag % of Portfolio", f"{drag_pct:.2f}%")
 
+
     # Lost opportunity bar chart
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
     st.markdown("**Lost opportunity cost: Your portfolio vs Zero-expense scenario**")
+
 
     if leakage["lost_20yr_current"] > 0:
         fv_no_exp = total_value * (1.12) ** 20
@@ -1544,6 +1875,7 @@ with tab_factor:
         ))
         fig_leak.update_layout(**_layout(height=260))
         st.plotly_chart(fig_leak, use_container_width=True, config={"displayModeBar": False})
+
 
     # Direct vs Regular comparison
     st.markdown("**Direct vs Regular plan leakage comparison**")
@@ -1565,6 +1897,7 @@ with tab_factor:
         </div>
         """, unsafe_allow_html=True)
 
+
     # Per-fund expense table
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
     st.markdown("**Per-fund expense leakage breakdown**")
@@ -1575,14 +1908,17 @@ with tab_factor:
         leak_df["ER%"] = leak_df["ER%"].apply(lambda x: f"{x:.2f}%")
         st.dataframe(leak_df, use_container_width=True, hide_index=True)
 
+
     # Sector heuristic sunburst
     st.markdown("<div style='margin:20px 0'></div>", unsafe_allow_html=True)
     st.markdown('<div class="section-head">Sector Exposure (Heuristic)</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Estimated sector allocation based on fund names</div>', unsafe_allow_html=True)
 
+
     df_h_sectors = df_h.copy()
     df_h_sectors["Sector"] = df_h_sectors["Fund"].apply(detect_sector)
     sector_grp = df_h_sectors.groupby("Sector")["Market Value"].sum().sort_values(ascending=False)
+
 
     if len(sector_grp) > 0:
         fig_sun = go.Figure(go.Pie(
@@ -1597,87 +1933,443 @@ with tab_factor:
         fig_sun.update_layout(**_layout(height=350, showlegend=False))
         st.plotly_chart(fig_sun, use_container_width=True, config={"displayModeBar": False})
 
+
         st.markdown('<div class="alert-info">Note: Sector exposure is estimated from fund names only. For precise stock-level overlap analysis, portfolio disclosure data from AMFI would be needed.</div>', unsafe_allow_html=True)
 # ════════════════════════════════════════════
 with tab_perf:
-    st.markdown('<div class="section-head">Rolling returns comparison</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="section-sub">Your XIRR vs {benchmark_name} across periods</div>', unsafe_allow_html=True)
+    # ══════════════════════════════════════════════════════════════
+    # PER-FUND ANALYST-GRADE PERFORMANCE TAB  (v6.0)
+    # Logic: each fund gets its own correct TRI benchmark,
+    #        XIRR computed from actual CAS cashflows,
+    #        benchmark XIRR simulated using same cashflows.
+    #        Risk metrics seeded from category norms (Sharpe/Sortino/β/DD).
+    #        Verdict: Strong / Average / Weak
+    #        Action: Keep / Review / Replace with Index
+    # ══════════════════════════════════════════════════════════════
 
-    # Rolling returns for benchmark
-    all_periods = [30, 90, 180, 365, 1095]
-    period_labels_roll = ["1M", "3M", "6M", "1Y", "3Y"]
-    bench_full = fetch_benchmark(ticker, 1095)
-    bench_rolls = compute_rolling_returns(bench_full, all_periods)
 
-    # Portfolio rolling returns (simplified: scale XIRR by period fraction)
-    port_rolls = {}
-    for d, lbl in zip(all_periods, period_labels_roll):
-        fraction = d / 365.0
-        port_rolls[d] = portfolio_xirr * fraction if portfolio_xirr != 0 else 0.0
+    def _get_fund_benchmark(category, cap_type, fund_name):
+        n = fund_name.upper()
+        if ("NIFTY 50" in n or "NIFTY50" in n) and "MIDCAP" not in n and "SMALLCAP" not in n and "100" not in n and "500" not in n:
+            return ("^NSEI", "Nifty 50")
+        if "SENSEX" in n: return ("^BSESN", "Sensex")
+        if "NIFTY NEXT 50" in n or "NEXT 50" in n: return ("^NSMIDCP", "Nifty Next 50")
+        if "NIFTY MIDCAP" in n or "MIDCAP 150" in n: return ("^NSMIDCP", "Nifty Midcap 150")
+        if "NIFTY SMALLCAP" in n or "SMALLCAP 250" in n: return ("NIFTYSMALLCAP250.NS", "Nifty SmallCap 250")
+        if "NIFTY 500" in n or "NIFTY500" in n: return ("^CNX500", "Nifty 500")
+        if "NIFTY 100" in n: return ("^CNX100", "Nifty 100")
+        if category in ("Liquid","Debt"): return (None, "CRISIL Composite Bond Index")
+        if cap_type in FUND_BENCH_BY_CAP: return FUND_BENCH_BY_CAP[cap_type]
+        if category in FUND_BENCH_BY_CAT: return FUND_BENCH_BY_CAT[category]
+        return ("^NSEI", "Nifty 50")
 
-    col_perf1, col_perf2 = st.columns(2)
-    with col_perf1:
-        labels_r = period_labels_roll
-        bench_vals = [bench_rolls.get(d, 0) for d in all_periods]
-        port_vals  = [port_rolls.get(d, 0) for d in all_periods]
 
-        fig_roll = go.Figure()
-        fig_roll.add_trace(go.Bar(name="Your Portfolio", x=labels_r, y=port_vals,
-            marker=dict(color="#6366F1", cornerradius=4),
-            hovertemplate="%{x}: %{y:.2f}%<extra>Portfolio</extra>"))
-        fig_roll.add_trace(go.Bar(name=benchmark_name, x=labels_r, y=bench_vals,
-            marker=dict(color="#E2E8F0", cornerradius=4),
-            hovertemplate="%{x}: %{y:.2f}%<extra>Benchmark</extra>"))
-        fig_roll.add_hline(y=0, line_dash="dot", line_color="#CBD5E1", line_width=1)
-        fig_roll.update_layout(**_layout(showlegend=True,
-            legend=dict(orientation="h", y=1.1, x=0),
-            barmode="group", height=280))
-        st.plotly_chart(fig_roll, use_container_width=True, config={"displayModeBar": False})
+    def _analyze_fund(fund_name, fund_txns, cur_value, category, cap_type, plan, cat_gains_pct, period_days=9999):
+        bench_ticker, bench_display = _get_fund_benchmark(category, cap_type, fund_name)
+        bench_series = fetch_benchmark(bench_ticker, 9999) if bench_ticker else pd.Series(dtype=float)
 
-    with col_perf2:
-        st.markdown("**Alpha by period**")
-        alpha_vals = [port_rolls.get(d,0) - bench_rolls.get(d,0) for d in all_periods]
-        colors_alpha = ["#10B981" if v >= 0 else "#EF4444" for v in alpha_vals]
-        fig_alpha = go.Figure(go.Bar(
-            x=period_labels_roll, y=alpha_vals,
-            marker=dict(color=colors_alpha, cornerradius=4),
-            hovertemplate="%{x}: %{y:+.2f}%<extra>Alpha</extra>"
-        ))
-        fig_alpha.add_hline(y=0, line_dash="dot", line_color="#CBD5E1", line_width=1)
-        fig_alpha.update_layout(**_layout(height=280))
-        st.plotly_chart(fig_alpha, use_container_width=True, config={"displayModeBar": False})
-
-    # Fund-level XIRR table
-    st.markdown('<div class="section-head" style="margin-top:16px">Fund-level performance</div>', unsafe_allow_html=True)
-
-    perf_df = df_h[["Fund","AMC","Category","Plan","Market Value","Invested","Gain","Gain%","Weight%"]].copy()
-    perf_df = perf_df.sort_values("Gain%", ascending=False).reset_index(drop=True)
-    perf_df["Market Value"] = perf_df["Market Value"].apply(fmt_inr)
-    perf_df["Invested"]     = perf_df["Invested"].apply(fmt_inr)
-    perf_df["Gain"]         = perf_df["Gain"].apply(fmt_inr)
-    perf_df["Gain%"]        = perf_df["Gain%"].apply(lambda x: f"{x:+.2f}%")
-    perf_df["Weight%"]      = perf_df["Weight%"].apply(lambda x: f"{x:.1f}%")
-
-    st.dataframe(perf_df, use_container_width=True, hide_index=True,
-        column_config={
-            "Fund": st.column_config.TextColumn("Fund", width=300),
-            "Gain%": st.column_config.TextColumn("Return %", width=90),
-        }
-    )
-
-    # Benchmark chart
-    st.markdown('<div class="section-head" style="margin-top:16px">Benchmark price trend (1Y)</div>', unsafe_allow_html=True)
-    if not bench_full.empty:
-        period_days_perf = 365
-        if period_days_perf < 9999:
-            cut = bench_full.index[-1] - timedelta(days=period_days_perf)
-            b_slice = bench_full[bench_full.index >= cut]
+        # ── Period filter: slice transactions to the selected time window ──
+        if not fund_txns.empty and "Date" in fund_txns.columns and period_days < 9999:
+            cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=period_days)
+            # Handle tz-aware dates
+            if hasattr(fund_txns["Date"].dtype, "tz") and fund_txns["Date"].dt.tz is not None:
+                cutoff = cutoff.tz_localize(fund_txns["Date"].dt.tz)
+            pre_txns    = fund_txns[fund_txns["Date"] < cutoff]
+            period_txns = fund_txns[fund_txns["Date"] >= cutoff]
+            # Fraction of current value attributable to pre-period purchases
+            pre_bought   = pre_txns.loc[pre_txns["Units"] > 0, "Amount"].abs().sum() if not pre_txns.empty else 0.0
+            total_bought = fund_txns.loc[fund_txns["Units"] > 0, "Amount"].abs().sum() if not fund_txns.empty else 0.0
+            frac         = pre_bought / total_bought if total_bought > 0 else 0.0
+            opening_val  = cur_value * frac
+            if opening_val > 0:
+                # Synthetic opening position: full pre-period value treated as a single purchase at cutoff
+                opening_row = pd.DataFrame([{
+                    "Date": cutoff, "Amount": -opening_val, "Units": 1.0,
+                    "Type": "PURCHASE", "Fund": fund_name,
+                    "AMC": "", "Category": category, "NAV": 0.0
+                }])
+                txns_to_analyse = pd.concat([opening_row, period_txns], ignore_index=True)
+            else:
+                txns_to_analyse = period_txns if not period_txns.empty else fund_txns
         else:
-            b_slice = bench_full
-        color = "#10B981" if float(b_slice.iloc[-1]) > float(b_slice.iloc[0]) else "#EF4444"
-        fill  = "rgba(16,185,129,0.07)" if color == "#10B981" else "rgba(239,68,68,0.07)"
-        st.plotly_chart(make_area_chart(b_slice.index, b_slice.values, color, fill, benchmark_name),
-            use_container_width=True, config={"displayModeBar": False})
+            txns_to_analyse = fund_txns
+
+        fund_xi  = compute_xirr(txns_to_analyse, cur_value)
+        bench_xi, bench_cur = (0.0, 0.0)
+        if not bench_series.empty:
+            bench_xi, bench_cur = compute_benchmark_xirr(txns_to_analyse, bench_series)
+        alpha_f = fund_xi - bench_xi
+        roll_periods = [30, 180, 365, 1095, 1825]
+        roll_labels  = ["1M","6M","1Y","3Y","5Y"]
+        bench_rolls  = compute_rolling_returns(bench_series, roll_periods) if not bench_series.empty else {}
+        fund_rolls   = {d: fund_xi*(d/365.0) for d in roll_periods}
+        beats        = sum(1 for d in roll_periods if fund_rolls.get(d,0) > bench_rolls.get(d,0))
+        consistency  = round(beats / len(roll_periods) * 10, 1)
+        tier = RISK_TIERS.get(category, RISK_TIERS["Other"])
+        vol, beta, risk_label = tier
+        rf      = 6.5
+        sharpe  = max(0.0, (fund_xi - rf) / vol) if vol > 0 and fund_xi > 0 else 0.0
+        sortino = max(0.0, (fund_xi - rf) / (vol*0.65)) if vol > 0 and fund_xi > 0 else 0.0
+        max_dd  = -MAX_DD_ESTIMATE.get(category, 25)
+        lo, hi  = EXP_RATIOS.get(category, (0.50, 1.50))
+        er      = lo if plan=="Direct" else hi
+        same_cat   = cat_gains_pct.get(category, [])
+        fund_gain  = float(((cur_value - fund_txns["Amount"].abs().sum()) /
+                            max(fund_txns["Amount"].abs().sum(), 1) * 100)
+                           if not fund_txns.empty else 0)
+        cat_rank  = sum(1 for g in same_cat if g > fund_gain) + 1
+        cat_total = len(same_cat)
+        if alpha_f >= 2.0 and consistency >= 6:   verdict, v_cls = "Strong",  "verdict-strong"
+        elif alpha_f >= -1.0:                      verdict, v_cls = "Average", "verdict-average"
+        else:                                       verdict, v_cls = "Weak",    "verdict-weak"
+        if verdict == "Strong" and plan == "Direct":
+            action, a_icon, a_col = "Keep",               "✅", "#059669"
+        elif verdict == "Weak" or (alpha_f < -2 and er > 1.2):
+            action, a_icon, a_col = "Replace with Index", "🔄", "#DC2626"
+        else:
+            action, a_icon, a_col = "Review",             "⚠️", "#D97706"
+        return {
+            "fund_name":fn,"category":category,"cap_type":cap_type,"plan":plan,
+            "bench_display":bench_display,"bench_ticker":bench_ticker,
+            "fund_xi":fund_xi,"bench_xi":bench_xi,"alpha":alpha_f,
+            "bench_cur":bench_cur,"cur_value":cur_value,
+            "consistency":consistency,"vol":vol,"beta":beta,"risk_label":risk_label,
+            "sharpe":sharpe,"sortino":sortino,"max_dd":max_dd,"er":er,
+            "cat_rank":cat_rank,"cat_total":cat_total,
+            "verdict":verdict,"v_cls":v_cls,
+            "action":action,"a_icon":a_icon,"a_col":a_col,
+            "bench_rolls":bench_rolls,"fund_rolls":fund_rolls,
+            "roll_labels":roll_labels,"roll_periods":roll_periods,
+        }
+
+
+    # ── Header ────────────────────────────────────────────────
+    st.markdown('''
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
+        <div>
+            <div style="font-size:16px;font-weight:800;color:#0F172A;letter-spacing:-0.4px">Per-Fund Performance Analysis</div>
+            <div style="font-size:11px;color:#94A3B8;margin-top:2px">
+                Each fund compared against its correct TRI benchmark using your actual cashflows &nbsp;·&nbsp;
+                XIRR · Sharpe · Consistency · Strong / Average / Weak verdict
+            </div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+
+    perf_period = st.pills(
+        "Period", ["1M","6M","1Y","3Y","5Y","All Time"],
+        default="1Y", label_visibility="collapsed", key="perf_period_pills"
+    )
+    perf_days = {"1M":30,"6M":180,"1Y":365,"3Y":1095,"5Y":1825,"All Time":9999}.get(perf_period, 365)
+
+
+    # Build per-category gain% list for peer ranking
+    cat_gains_pct = {}
+    for _, row in df_h.iterrows():
+        cat_gains_pct.setdefault(row["Category"], []).append(float(row["Gain%"]))
+
+
+    # Run analysis
+    fund_results = []
+    prog = st.progress(0, text="Analysing funds…")
+    total_f = len(df_h)
+    for idx, (_, row) in enumerate(df_h.iterrows()):
+        fn       = row["Fund"]
+        cur_val  = float(row["Market Value"])
+        category = row["Category"]
+        cap_type = row["Cap Type"]
+        plan     = row["Plan"]
+        fund_txns = df_t_raw[df_t_raw["Fund"]==fn] if not df_t_raw.empty and "Fund" in df_t_raw.columns else pd.DataFrame()
+        res = _analyze_fund(fn, fund_txns, cur_val, category, cap_type, plan, cat_gains_pct, perf_days)
+        fund_results.append(res)
+        prog.progress(int((idx+1)/total_f*100), text=f"Analysing {idx+1}/{total_f}…")
+    prog.empty()
+
+
+    if not fund_results:
+        st.info("No funds to analyse.")
+    else:
+        # ── Portfolio-level summary ───────────────────────────
+        st.markdown("<div style='margin:16px 0 10px'></div>", unsafe_allow_html=True)
+
+
+        n_strong  = sum(1 for r in fund_results if r["verdict"]=="Strong")
+        n_average = sum(1 for r in fund_results if r["verdict"]=="Average")
+        n_weak    = sum(1 for r in fund_results if r["verdict"]=="Weak")
+        n_replace = sum(1 for r in fund_results if r["action"]=="Replace with Index")
+        avg_alpha = float(np.mean([r["alpha"] for r in fund_results]))
+
+
+        # Summary tiles
+        st.markdown(f"""
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px">
+            <div class="metric-card" style="text-align:center;padding:14px 10px">
+                <div class="card-label">Portfolio XIRR</div>
+                <div style="font-size:20px;font-weight:800;color:#0F172A">{portfolio_xirr:.2f}%</div>
+            </div>
+            <div class="metric-card" style="text-align:center;padding:14px 10px">
+                <div class="card-label">Benchmark XIRR</div>
+                <div style="font-size:20px;font-weight:800;color:#0F172A">{bench_xirr_val:.2f}%</div>
+            </div>
+            <div class="metric-card" style="text-align:center;padding:14px 10px;border-left:3px solid {"#10B981" if alpha>=0 else "#EF4444"}">
+                <div class="card-label">Alpha</div>
+                <div style="font-size:20px;font-weight:800;color:{"#10B981" if alpha>=0 else "#EF4444"}">{"+" if alpha>=0 else ""}{alpha:.2f}%</div>
+            </div>
+            <div class="metric-card" style="text-align:center;padding:14px 10px;border-left:3px solid #10B981">
+                <div class="card-label">🟢 Strong</div>
+                <div style="font-size:22px;font-weight:800;color:#10B981">{n_strong}</div>
+            </div>
+            <div class="metric-card" style="text-align:center;padding:14px 10px;border-left:3px solid #F59E0B">
+                <div class="card-label">🟡 Average</div>
+                <div style="font-size:22px;font-weight:800;color:#D97706">{n_average}</div>
+            </div>
+            <div class="metric-card" style="text-align:center;padding:14px 10px;border-left:3px solid #EF4444">
+                <div class="card-label">🔴 Weak</div>
+                <div style="font-size:22px;font-weight:800;color:#EF4444">{n_weak}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+        if n_replace > 0:
+            st.markdown(f'''<div class="alert-warn">⚠ <b>{n_replace} fund(s)</b> recommended to be
+                <b>Replaced with Index funds</b>. These funds are underperforming their benchmark
+                on a risk-adjusted basis. Switching to a low-cost index fund in the same category
+                would likely improve returns.</div>''', unsafe_allow_html=True)
+        if avg_alpha < -2:
+            st.markdown(f'''<div class="alert-danger">🚨 Average alpha of <b>{avg_alpha:+.2f}%</b>
+                across all funds. Portfolio is significantly underperforming benchmarks.
+                Review fund selection, consider index funds for core allocation.</div>''', unsafe_allow_html=True)
+        elif avg_alpha >= 2:
+            st.markdown(f'''<div class="alert-success">✅ Average alpha of <b>{avg_alpha:+.2f}%</b>.
+                Portfolio is beating benchmarks consistently. Keep monitoring.</div>''', unsafe_allow_html=True)
+
+
+        # ── Filters & sort ────────────────────────────────────
+        st.markdown("<div style='margin:16px 0 10px'></div>", unsafe_allow_html=True)
+        ff1, ff2, ff3 = st.columns(3)
+        with ff1:
+            v_filt = st.selectbox("Filter by Verdict", ["All","Strong","Average","Weak"], key="pf_verdict")
+        with ff2:
+            a_filt = st.selectbox("Filter by Action",  ["All","Keep","Review","Replace with Index"], key="pf_action")
+        with ff3:
+            s_filt = st.selectbox("Sort by", ["Alpha ↓","Alpha ↑","Fund XIRR","Consistency","Name"], key="pf_sort")
+
+
+        filtered = fund_results.copy()
+        if v_filt != "All": filtered = [r for r in filtered if r["verdict"]==v_filt]
+        if a_filt != "All": filtered = [r for r in filtered if r["action"]==a_filt]
+        smap = {
+            "Alpha ↓":    (lambda r: r["alpha"],       True),
+            "Alpha ↑":    (lambda r: r["alpha"],       False),
+            "Fund XIRR":  (lambda r: r["fund_xi"],     True),
+            "Consistency":(lambda r: r["consistency"],  True),
+            "Name":       (lambda r: r["fund_name"],   False),
+        }
+        sk, sr = smap.get(s_filt, (lambda r: r["alpha"], True))
+        filtered.sort(key=sk, reverse=sr)
+
+
+        st.markdown(f"<div style='font-size:11px;color:#94A3B8;margin-bottom:10px'>{len(filtered)} funds shown</div>", unsafe_allow_html=True)
+
+
+        # ── Fund cards ────────────────────────────────────────
+        for res in filtered:
+            fn_r   = res["fund_name"]
+            cat_r  = res["category"]
+            plan_r = res["plan"]
+            cc_r   = CATEGORY_COLORS.get(cat_r, "#94A3B8")
+            ac_r   = "#10B981" if res["alpha"] >= 0 else "#EF4444"
+            as_r   = "+" if res["alpha"] >= 0 else ""
+            fxc_r  = "#10B981" if res["fund_xi"] >= 0 else "#EF4444"
+            bxc_r  = "#10B981" if res["bench_xi"] >= 0 else "#EF4444"
+            mx_xi  = max(abs(res["fund_xi"]), abs(res["bench_xi"]), 0.01)
+            fw_r   = min(abs(res["fund_xi"])  / mx_xi * 100, 100)
+            bw_r   = min(abs(res["bench_xi"]) / mx_xi * 100, 100)
+            fbar_c = "#10B981" if res["fund_xi"] >= 0 else "#EF4444"
+            bbar_c = "#3B82F6"
+            rl_f   = [res["fund_rolls"].get(d, 0)  for d in res["roll_periods"]]
+            rl_b   = [res["bench_rolls"].get(d, 0) for d in res["roll_periods"]]
+            rlab_r = res["risk_label"]
+            rc_map = {"Very Low":"#10B981","Low":"#10B981","Moderate":"#D97706",
+                      "Moderate-High":"#EA580C","High":"#EF4444"}
+            rc_r   = rc_map.get(rlab_r, "#94A3B8")
+            short_r = fn_r[:72] + ("…" if len(fn_r) > 72 else "")
+
+
+            with st.expander(f"**{short_r}**  ·  {res['bench_display']}  ·  {res['verdict']}", expanded=False):
+                # Row 1: name + badges + action
+                top_l, top_r = st.columns([3, 2])
+                with top_l:
+                    st.markdown(f"""
+                    <div style="margin-bottom:12px">
+                        <div style="font-size:14px;font-weight:800;color:#0F172A;margin-bottom:8px">{fn_r}</div>
+                        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+                            <span style="background:{"#EFF6FF" if cat_r=="Equity" else "#F0FDF4" if cat_r=="Debt" else "#FAF5FF" if cat_r=="ELSS" else "#FFF7ED"};
+                                  color:{"#1D4ED8" if cat_r=="Equity" else "#15803D" if cat_r=="Debt" else "#7C3AED" if cat_r=="ELSS" else "#C2410C"};
+                                  border:1px solid #E2E8F0;border-radius:20px;
+                                  font-size:9px;font-weight:700;padding:2px 8px;text-transform:uppercase;letter-spacing:0.6px">{cat_r}</span>
+                            <span style="background:{"#F0FDF4" if plan_r=="Direct" else "#FFF7ED"};
+                                  color:{"#15803D" if plan_r=="Direct" else "#C2410C"};
+                                  border:1px solid #E2E8F0;border-radius:20px;
+                                  font-size:9px;font-weight:700;padding:2px 8px;text-transform:uppercase;letter-spacing:0.6px">{plan_r}</span>
+                            <span style="font-size:10px;color:#94A3B8;font-weight:600">{res["cap_type"]}</span>
+                            <span style="font-size:10px;color:#94A3B8">Benchmark: <b style="color:#64748B">{res["bench_display"]}</b></span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with top_r:
+                    rk_txt = f"{res['cat_rank']}/{res['cat_total']} in {cat_r}" if res["cat_total"]>1 else "—"
+                    action_bg  = "#F0FDF4" if res["action"]=="Keep" else "#FEF2F2" if "Replace" in res["action"] else "#FFFBEB"
+                    action_brd = "#BBF7D0" if res["action"]=="Keep" else "#FECACA" if "Replace" in res["action"] else "#FDE68A"
+                    st.markdown(f"""
+                    <div style="text-align:right">
+                        <div style="display:flex;align-items:center;justify-content:flex-end;gap:7px;margin-bottom:7px">
+                            <span class="{res['v_cls']}">{res["verdict"]}</span>
+                            <span style="font-size:11px;font-weight:700;color:{res["a_col"]};
+                                  background:{action_bg};border:1px solid {action_brd};
+                                  padding:3px 10px;border-radius:20px">
+                                {res["a_icon"]} {res["action"]}
+                            </span>
+                        </div>
+                        <div style="font-size:11px;color:#94A3B8">Category rank: <b style="color:#64748B">{rk_txt}</b></div>
+                        <div style="font-size:11px;color:#94A3B8;margin-top:2px">Consistency: <b style="color:#64748B">{res["consistency"]}/10</b></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+
+                # Row 2: 5 metric tiles
+                mt = st.columns(5)
+                with mt[0]:
+                    st.markdown(f"""<div class="metric-card" style="text-align:center;padding:14px 10px">
+                        <div class="card-label">Fund XIRR</div>
+                        <div style="font-size:20px;font-weight:900;color:{fxc_r}">{res["fund_xi"]:.2f}%</div>
+                        <div class="card-sub">Annualised</div></div>""", unsafe_allow_html=True)
+                with mt[1]:
+                    st.markdown(f"""<div class="metric-card" style="text-align:center;padding:14px 10px">
+                        <div class="card-label">Benchmark XIRR</div>
+                        <div style="font-size:20px;font-weight:900;color:{bxc_r}">{res["bench_xi"]:.2f}%</div>
+                        <div class="card-sub">{res["bench_display"]}</div></div>""", unsafe_allow_html=True)
+                with mt[2]:
+                    card_brd = "#10B981" if res["alpha"]>=0 else "#EF4444"
+                    st.markdown(f"""<div class="metric-card" style="text-align:center;padding:14px 10px;border-left:3px solid {card_brd}">
+                        <div class="card-label">Alpha</div>
+                        <div style="font-size:20px;font-weight:900;color:{ac_r}">{as_r}{res["alpha"]:.2f}%</div>
+                        <div class="card-sub">{"Outperforming" if res["alpha"]>=0 else "Underperforming"}</div></div>""", unsafe_allow_html=True)
+                with mt[3]:
+                    st.markdown(f"""<div class="metric-card" style="text-align:center;padding:14px 10px">
+                        <div class="card-label">Risk Level</div>
+                        <div style="font-size:13px;font-weight:900;color:{rc_r};margin:4px 0">{rlab_r}</div>
+                        <div class="card-sub">Sharpe {res["sharpe"]:.2f} · β {res["beta"]:.2f}</div></div>""", unsafe_allow_html=True)
+                with mt[4]:
+                    st.markdown(f"""<div class="metric-card" style="text-align:center;padding:14px 10px">
+                        <div class="card-label">Max DD (est.)</div>
+                        <div style="font-size:20px;font-weight:900;color:#EF4444">{res["max_dd"]:.0f}%</div>
+                        <div class="card-sub">ER {res["er"]:.2f}% · {plan_r}</div></div>""", unsafe_allow_html=True)
+
+
+                # Row 3: XIRR bar visual
+                st.markdown(f"""
+                <div style="background:#F8FAFC;border-radius:10px;padding:14px 16px;margin-top:12px">
+                    <div style="font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px">XIRR comparison (same cashflows)</div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">
+                        <div style="font-size:11px;font-weight:700;color:#0F172A;width:96px;flex-shrink:0">Your fund</div>
+                        <div style="flex:1;background:#E2E8F0;border-radius:4px;height:10px;overflow:hidden">
+                            <div style="height:10px;border-radius:4px;background:{fbar_c};width:{fw_r:.1f}%"></div>
+                        </div>
+                        <div style="font-size:13px;font-weight:800;color:{fxc_r};width:54px;text-align:right">{res["fund_xi"]:.2f}%</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px">
+                        <div style="font-size:11px;font-weight:700;color:#0F172A;width:96px;flex-shrink:0">{res["bench_display"][:14]}</div>
+                        <div style="flex:1;background:#E2E8F0;border-radius:4px;height:10px;overflow:hidden">
+                            <div style="height:10px;border-radius:4px;background:{bbar_c};width:{bw_r:.1f}%"></div>
+                        </div>
+                        <div style="font-size:13px;font-weight:800;color:{bxc_r};width:54px;text-align:right">{res["bench_xi"]:.2f}%</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+                # Row 4: Rolling returns chart
+                if any(abs(v) > 0 for v in rl_f + rl_b):
+                    st.markdown("<div style='margin:12px 0 4px'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px'>Rolling Returns — fund (est.) vs benchmark</div>", unsafe_allow_html=True)
+                    fig_rr = go.Figure()
+                    fig_rr.add_trace(go.Bar(name="Fund (est.)", x=res["roll_labels"], y=rl_f,
+                        marker=dict(color="#6366F1", cornerradius=4),
+                        hovertemplate="%{x}: %{y:.2f}%<extra>Fund</extra>"))
+                    fig_rr.add_trace(go.Bar(name=res["bench_display"], x=res["roll_labels"], y=rl_b,
+                        marker=dict(color="#E2E8F0", cornerradius=4),
+                        hovertemplate="%{x}: %{y:.2f}%<extra>Benchmark</extra>"))
+                    fig_rr.add_hline(y=0, line_dash="dot", line_color="#CBD5E1", line_width=1)
+                    fig_rr.update_layout(**_layout(height=200, barmode="group", showlegend=True,
+                        legend=dict(orientation="h", y=1.18, x=0, font=dict(size=10))))
+                    st.plotly_chart(fig_rr, use_container_width=True, config={"displayModeBar":False})
+
+
+                # Row 5: Risk ratio details
+                st.markdown("<div style='margin:8px 0 6px'></div>", unsafe_allow_html=True)
+                ri4 = st.columns(4)
+                ri_items = [
+                    ("Volatility (est.)",   f"{res['vol']:.1f}% p.a.",     "Annual std dev (category-seeded)"),
+                    ("Beta (est.)",         f"{res['beta']:.2f}",           "Sensitivity vs benchmark (1.0=market)"),
+                    ("Sharpe Ratio (est.)", f"{res['sharpe']:.2f}",         "(XIRR−6.5%) ÷ volatility"),
+                    ("Sortino Ratio (est.)",f"{res['sortino']:.2f}",        "Downside-adjusted return ratio"),
+                ]
+                for col_ri, (lbl_ri, val_ri, desc_ri) in zip(ri4, ri_items):
+                    with col_ri:
+                        st.markdown(f"""
+                        <div style="background:#F8FAFC;border-radius:8px;padding:10px 12px;text-align:center">
+                            <div style="font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:3px">{lbl_ri}</div>
+                            <div style="font-size:17px;font-weight:800;color:#0F172A">{val_ri}</div>
+                            <div style="font-size:9px;color:#94A3B8;margin-top:2px">{desc_ri}</div>
+                        </div>""", unsafe_allow_html=True)
+
+
+        # ── Summary scorecard table ──────────────────────────
+        st.markdown("<div style='margin:28px 0 12px'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-head'>Fund Scorecard — Summary Table</div>", unsafe_allow_html=True)
+        srows = []
+        for r in fund_results:
+            srows.append({
+                "Fund":          r["fund_name"][:55],
+                "Category":      r["category"],
+                "Plan":          r["plan"],
+                "Benchmark":     r["bench_display"],
+                "Fund XIRR%":    round(r["fund_xi"],   2),
+                "Bench XIRR%":   round(r["bench_xi"],  2),
+                "Alpha%":        round(r["alpha"],      2),
+                "Consistency":   r["consistency"],
+                "Sharpe":        round(r["sharpe"],     2),
+                "Risk":          r["risk_label"],
+                "Verdict":       r["verdict"],
+                "Action":        r["action"],
+            })
+        sdf = pd.DataFrame(srows).sort_values("Alpha%", ascending=False)
+        st.dataframe(sdf, use_container_width=True, hide_index=True,
+            column_config={
+                "Fund":        st.column_config.TextColumn("Fund",      width=220),
+                "Fund XIRR%":  st.column_config.NumberColumn("Fund XIRR%",  format="%.2f%%"),
+                "Bench XIRR%": st.column_config.NumberColumn("Bench XIRR%", format="%.2f%%"),
+                "Alpha%":      st.column_config.NumberColumn("Alpha%",       format="%+.2f%%"),
+                "Consistency": st.column_config.NumberColumn("Consistency",  format="%.1f"),
+                "Sharpe":      st.column_config.NumberColumn("Sharpe",       format="%.2f"),
+            })
+        st.download_button(
+            "⬇ Download Fund Scorecard CSV",
+            sdf.to_csv(index=False).encode("utf-8"),
+            "folioiq_scorecard.csv", "text/csv",
+            use_container_width=True,
+        )
+        st.markdown('''<div class="alert-info" style="margin-top:10px;font-size:11px">
+            <b>Methodology:</b> Fund XIRR computed from your actual CAS cashflows.
+            Benchmark XIRR simulates the same cashflows invested in the mapped TRI benchmark index.
+            Rolling returns and risk ratios (Sharpe, Sortino, β, Volatility, Max Drawdown) are
+            <b>estimates seeded from category-level norms</b> — daily NAV history is required for
+            precise computation. Verdicts prioritise long-term consistency over short-term rallies.
+            Use the <b>Performance tab</b> alongside the <b>Smart Insights tab</b> for complete picture.
+        </div>''', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════
@@ -1694,6 +2386,7 @@ with tab_hold:
     with h_col4:
         cap_filter = st.selectbox("Cap type", ["All"] + sorted(df_h["Cap Type"].unique().tolist()))
 
+
     disp = df_h.copy()
     if search_q:
         disp = disp[disp["Fund"].str.contains(search_q, case=False, na=False)]
@@ -1701,7 +2394,9 @@ with tab_hold:
         disp = disp[disp["Cap Type"] == cap_filter]
     disp = disp.sort_values(sort_by, ascending=sort_asc)
 
+
     st.markdown(f"<div style='font-size:12px;color:#94A3B8;margin-bottom:10px'>{len(disp)} funds · ₹{disp['Market Value'].sum():,.0f} total value</div>", unsafe_allow_html=True)
+
 
     # Rich holdings list
     for _, row in disp.iterrows():
@@ -1712,6 +2407,7 @@ with tab_hold:
         g_sign= "+" if row["Gain%"] >= 0 else ""
         badge_cat  = f'<span class="badge badge-{cat.lower()}">{cat}</span>'
         badge_plan = f'<span class="badge badge-{plan.lower()}">{plan}</span>'
+
 
         st.markdown(f"""
         <div style='background:#fff;border:1px solid #E2E8F0;border-radius:10px;padding:14px 18px;margin-bottom:6px'>
@@ -1752,11 +2448,14 @@ with tab_hold:
         """, unsafe_allow_html=True)
 
 
+
+
 # ════════════════════════════════════════════
 # TAB 4: ALLOCATION
 # ════════════════════════════════════════════
 with tab_alloc:
     a1, a2, a3 = st.columns(3)
+
 
     with a1:
         st.markdown("**Equity vs Debt vs Other**")
@@ -1773,12 +2472,14 @@ with tab_alloc:
         st.plotly_chart(make_donut(donut_labs_f, donut_vals_f, donut_cols_f),
             use_container_width=True, config={"displayModeBar": False})
 
+
     with a2:
         st.markdown("**Cap-size breakdown**")
         cap_grp = df_h.groupby("Cap Type")["Market Value"].sum().sort_values(ascending=False)
         cap_colors = [SECTOR_COLORS[i % len(SECTOR_COLORS)] for i in range(len(cap_grp))]
         st.plotly_chart(make_bar_chart(cap_grp.index.tolist(), cap_grp.values.tolist(),
             cap_colors, horizontal=True), use_container_width=True, config={"displayModeBar": False})
+
 
     with a3:
         st.markdown("**Plan type: Direct vs Regular**")
@@ -1788,6 +2489,7 @@ with tab_alloc:
         st.plotly_chart(make_donut(plan_grp.index.tolist(), plan_grp.values.tolist(), pc),
             use_container_width=True, config={"displayModeBar": False})
 
+
     # Regular plan warning
     reg_pct = df_h[df_h["Plan"]=="Regular"]["Market Value"].sum() / total_value * 100 if total_value > 0 else 0
     if reg_pct > 10:
@@ -1795,7 +2497,9 @@ with tab_alloc:
     else:
         st.markdown('<div class="alert-success" style="margin-top:8px">✅ Portfolio is predominantly in <b>Direct plans</b>. Excellent cost efficiency.</div>', unsafe_allow_html=True)
 
+
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
+
 
     # Concentration heatmap
     st.markdown("**Fund concentration heatmap**")
@@ -1819,12 +2523,15 @@ with tab_alloc:
     st.plotly_chart(fig_heat, use_container_width=True, config={"displayModeBar": False})
 
 
+
+
 # ════════════════════════════════════════════
 # TAB: FUND COMPARISON
 # ════════════════════════════════════════════
 with tab_compare:
     st.markdown('<div class="section-head">Fund Comparison Matrix</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Select 2-3 funds from your portfolio to compare side-by-side</div>', unsafe_allow_html=True)
+
 
     fund_options = df_h["Fund"].tolist()
     selected_funds = st.multiselect(
@@ -1834,6 +2541,7 @@ with tab_compare:
         max_selections=4,
         key="compare_funds"
     )
+
 
     if selected_funds and len(selected_funds) >= 2:
         compare_cols = st.columns(len(selected_funds))
@@ -1861,6 +2569,7 @@ with tab_compare:
                 </div>
                 """, unsafe_allow_html=True)
 
+
         # Return comparison chart
         st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
         st.markdown("**Return comparison**")
@@ -1881,6 +2590,8 @@ with tab_compare:
         st.info("Select funds from the dropdown above to begin comparison.")
 
 
+
+
 # ════════════════════════════════════════════
 # TAB: SIP TRACKER
 # ════════════════════════════════════════════
@@ -1895,11 +2606,13 @@ with tab_sip:
         sip_count = df_s_raw["Fund"].nunique() if not df_s_raw.empty else 0
         avg_sip_amt = total_sip_invested / max(len(df_s_raw), 1) if not df_s_raw.empty else 0
 
+
         s1, s2, s3, s4 = st.columns(4)
         with s1: st.metric("SIP Transactions", f"{len(df_s_raw):,}")
         with s2: st.metric("Total SIP Invested", fmt_inr(total_sip_invested))
         with s3: st.metric("Unique SIP Funds", f"{sip_count}")
         with s4: st.metric("Avg SIP Amount", fmt_inr(avg_sip_amt))
+
 
         if not df_s_raw.empty:
             st.markdown("**SIP transaction history**")
@@ -1909,6 +2622,7 @@ with tab_sip:
             sip_disp["NAV"]    = sip_disp["NAV"].apply(lambda x: f"₹{x:.4f}")
             st.dataframe(sip_disp[["Date","Fund","AMC","Amount","NAV"]],
                 use_container_width=True, hide_index=True)
+
 
     # SIP vs Lumpsum split from all txns
     if not df_t_raw.empty:
@@ -1924,10 +2638,12 @@ with tab_sip:
         fig_sl.update_layout(**_layout(height=200))
         st.plotly_chart(fig_sl, use_container_width=True, config={"displayModeBar": False})
 
+
     # Step-Up SIP Calculator
     st.markdown("---")
     st.markdown('<div class="section-head">Step-Up SIP Calculator</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">See how increasing your SIP by 10% yearly can supercharge wealth creation</div>', unsafe_allow_html=True)
+
 
     su1, su2, su3, su4 = st.columns(4)
     with su1:
@@ -1939,7 +2655,9 @@ with tab_sip:
     with su4:
         stepup_rate = st.slider("Annual Step-Up %", 0.0, 25.0, 10.0, 1.0, key="stepup_rate")
 
+
     projection = stepup_sip_projection(sip_monthly, sip_years, sip_return, stepup_rate)
+
 
     p1, p2, p3 = st.columns(3)
     with p1:
@@ -1967,6 +2685,7 @@ with tab_sip:
         </div>
         """, unsafe_allow_html=True)
 
+
     # Step-up growth chart
     r_m = sip_return / 100 / 12
     flat_curve, stepup_curve, inv_flat, inv_step = [], [], [], []
@@ -1984,6 +2703,7 @@ with tab_sip:
         inv_step.append(step_inv_acc)
         current_amt *= (1 + stepup_rate / 100)
 
+
     fig_stepup = go.Figure()
     years_x = list(range(1, sip_years + 1))
     fig_stepup.add_trace(go.Scatter(x=years_x, y=stepup_curve, mode="lines", name="Step-Up SIP",
@@ -1995,6 +2715,7 @@ with tab_sip:
     fig_stepup.update_layout(**_layout(height=280, showlegend=True,
         legend=dict(orientation="h", y=1.12, x=0, font=dict(size=11))))
     st.plotly_chart(fig_stepup, use_container_width=True, config={"displayModeBar": False})
+
 
     # SIP consistency
     if sip_score > 0:
@@ -2016,12 +2737,15 @@ with tab_sip:
         """, unsafe_allow_html=True)
 
 
+
+
 # ════════════════════════════════════════════
 # TAB: SMART INSIGHTS
 # ════════════════════════════════════════════
 with tab_insights:
     st.markdown('<div class="section-head">Smart Insights & Alerts</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">AI-powered nudges and actionable recommendations</div>', unsafe_allow_html=True)
+
 
     # ELSS Lock-in Analysis
     st.markdown("**ELSS Tax Saver Lock-in Tracker**")
@@ -2051,7 +2775,9 @@ with tab_insights:
     else:
         st.markdown('<div class="alert-info">No ELSS funds found in your portfolio.</div>', unsafe_allow_html=True)
 
+
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
+
 
     # Liquidity Layer
     st.markdown("**Emergency Liquidity Layer**")
@@ -2075,11 +2801,14 @@ with tab_insights:
     else:
         st.markdown('<div class="alert-warn">No liquid/overnight funds found. Consider adding one for emergency access to cash within minutes.</div>', unsafe_allow_html=True)
 
+
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
+
 
     # Smart Nudges
     st.markdown("**Smart Nudges**")
     nudges = []
+
 
     # Regular plan nudge
     reg_count = len(df_h[df_h["Plan"] == "Regular"])
@@ -2087,12 +2816,14 @@ with tab_insights:
         reg_val = float(df_h[df_h["Plan"] == "Regular"]["Market Value"].sum())
         nudges.append(("warn", f"You have {reg_count} fund(s) worth {fmt_inr(reg_val)} in Regular plans. Switching to Direct saves ~0.5-1.5% annually."))
 
+
     # Concentration nudge
     if not df_h.empty:
         top_weight = float(df_h["Weight%"].max())
         if top_weight > 25:
             top_fund = df_h.loc[df_h["Weight%"].idxmax(), "Fund"][:40]
             nudges.append(("warn", f"High concentration: '{top_fund}' is {top_weight:.1f}% of your portfolio. Consider diversifying below 20%."))
+
 
     # Small cap nudge
     sc_val = df_h[df_h["Cap Type"] == "Small Cap"]["Market Value"].sum()
@@ -2102,11 +2833,13 @@ with tab_insights:
     elif sc_pct > 15:
         nudges.append(("info", f"Small cap allocation: {sc_pct:.1f}%. Good exposure for long-term wealth creation."))
 
+
     # Low fund count nudge
     if num_funds < 3:
         nudges.append(("warn", "Your portfolio has very few funds. Consider diversifying across categories for better risk management."))
     elif num_funds > 15:
         nudges.append(("info", f"You hold {num_funds} funds. Consider consolidating — too many funds can reduce alpha and increase complexity."))
+
 
     # Alpha nudge
     if alpha >= 5:
@@ -2114,17 +2847,21 @@ with tab_insights:
     elif alpha < -5:
         nudges.append(("danger", f"Portfolio is significantly underperforming {benchmark_name} by {abs(alpha):.2f}%. Review fund selection and expense ratios."))
 
+
     # Expense drag nudge
     if expense_drag / total_value * 100 > 1.0 and total_value > 0:
         nudges.append(("warn", f"Your expense ratio drag ({expense_drag/total_value*100:.2f}%) is above 1%. This erodes long-term compounding significantly."))
+
 
     for nudge_type, nudge_msg in nudges:
         icon = {"success": "✅", "warn": "⚠️", "danger": "🚨", "info": "💡"}.get(nudge_type, "💡")
         css_class = f"alert-{nudge_type}"
         st.markdown(f'<div class="{css_class}" style="margin-bottom:8px">{icon} {nudge_msg}</div>', unsafe_allow_html=True)
 
+
     if not nudges:
         st.markdown('<div class="alert-success">✅ No issues detected. Your portfolio looks healthy!</div>', unsafe_allow_html=True)
+
 
     # Portfolio Score breakdown
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
@@ -2152,6 +2889,8 @@ with tab_insights:
         """, unsafe_allow_html=True)
 
 
+
+
 # ════════════════════════════════════════════
 # TAB: TAX & GOALS
 # ════════════════════════════════════════════
@@ -2159,12 +2898,15 @@ with tab_tax:
     st.markdown('<div class="section-head">Tax liability estimator</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Estimates based on current holdings. Not financial/tax advice — consult a CA.</div>', unsafe_allow_html=True)
 
+
     t1, t2, t3 = st.columns(3)
+
 
     # ELSS lock-in tracker
     elss_df  = df_h[df_h["Category"] == "ELSS"]
     elss_val = float(elss_df["Market Value"].sum())
     elss_inv = float(elss_df["Invested"].sum())
+
 
     # STCG/LTCG heuristic
     equity_gain   = float(df_h[df_h["Category"].isin(["Equity","ELSS","Index"])]["Gain"].sum())
@@ -2172,6 +2914,7 @@ with tab_tax:
     stcg_equity   = max(0, equity_gain) * 0.20  # 20% post-budget 2024
     ltcg_equity   = max(0, equity_gain - 125000) * 0.125 if equity_gain > 125000 else 0
     stcg_debt     = max(0, debt_gain) * 0.30    # taxed at slab
+
 
     with t1:
         st.markdown(f"""
@@ -2182,6 +2925,7 @@ with tab_tax:
         </div>
         """, unsafe_allow_html=True)
 
+
     with t2:
         st.markdown(f"""
         <div class="metric-card">
@@ -2190,6 +2934,7 @@ with tab_tax:
             <div class="card-sub">12.5% on gains above ₹1.25L · if redeemed today</div>
         </div>
         """, unsafe_allow_html=True)
+
 
     with t3:
         st.markdown(f"""
@@ -2200,11 +2945,14 @@ with tab_tax:
         </div>
         """, unsafe_allow_html=True)
 
+
     st.markdown("<div style='margin:16px 0'></div>", unsafe_allow_html=True)
+
 
     # Goal tracker
     st.markdown('<div class="section-head">Goal tracker</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-sub">Set your financial goals and track progress</div>', unsafe_allow_html=True)
+
 
     g1, g2, g3 = st.columns(3)
     goals = [
@@ -2227,7 +2975,10 @@ with tab_tax:
             </div>
             """, unsafe_allow_html=True)
 
+
     st.caption("⚠ Goal amounts and tax figures above are illustrative estimates. Consult a SEBI-registered financial advisor for personalised advice.")
+
+
 
 
 # ════════════════════════════════════════════
@@ -2236,14 +2987,17 @@ with tab_tax:
 with tab_audit:
     st.markdown('<div class="section-head">Compliance & data privacy audit</div>', unsafe_allow_html=True)
 
+
     st.markdown('<div class="alert-info" style="margin-bottom:10px">🔒 <b>Zero data retention:</b> Your CAS PDF and all derived data are processed entirely in-memory. Nothing is written to permanent storage or transmitted to third parties.</div>', unsafe_allow_html=True)
     st.markdown('<div class="alert-success" style="margin-bottom:10px">✅ <b>SEBI CSCRF 2025 compliant:</b> Cyber Security and Cyber Resilience Framework standards observed.</div>', unsafe_allow_html=True)
     st.markdown('<div class="alert-success" style="margin-bottom:10px">✅ <b>CDSL/NSDL verified:</b> Data sourced from regulator-issued CAS — no third-party data intermediaries.</div>', unsafe_allow_html=True)
+
 
     if alpha < 0:
         st.markdown(f'<div class="alert-warn" style="margin-bottom:10px">⚠ <b>Advisory:</b> Portfolio XIRR ({portfolio_xirr:.2f}%) is trailing {benchmark_name} ({bench_ret:.1f}%). Review plan types (regular vs direct), fund selection, and expense ratios.</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="alert-success" style="margin-bottom:10px">🏆 <b>Alpha signal:</b> Portfolio is outperforming {benchmark_name} by {alpha:.2f}%.</div>', unsafe_allow_html=True)
+
 
     reg_funds = df_h[df_h["Plan"] == "Regular"]["Fund"].tolist()
     if reg_funds:
@@ -2251,6 +3005,7 @@ with tab_audit:
         with st.expander("View regular plan funds"):
             for f in reg_funds:
                 st.markdown(f"- {f}")
+
 
     st.markdown("---")
     st.markdown("**Portfolio statistics**")
@@ -2278,6 +3033,7 @@ with tab_audit:
         | Alpha vs {benchmark_name} | {alpha:+.2f}% |
         """)
 
+
 # ── FOOTER ──
 st.markdown("""
 <div class="footer-note">
@@ -2285,4 +3041,3 @@ st.markdown("""
     Factor Analysis &middot; Smart Insights &middot; Step-Up SIP &middot; Fund Comparison &middot; Built with &#10084; for Indian MF investors
 </div>
 """, unsafe_allow_html=True)
-
