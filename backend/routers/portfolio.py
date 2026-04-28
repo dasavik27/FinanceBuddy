@@ -641,3 +641,58 @@ def _get_fund_benchmark(category: str, cap_type: str, fund_name: str):
 
 # expose for performance endpoint
 from logic_adapter import MAX_DD_ESTIMATE, EXP_RATIOS  # noqa re-export
+
+
+# ─────────────────────────────────────────────
+# FIFO REDEMPTION TAX SIMULATOR
+# ─────────────────────────────────────────────
+@router.get("/{session_id}/fifo")
+def fifo_simulation(
+    session_id: str,
+    fund:       str,
+    units:      float,
+    nav:        float,
+):
+    """
+    Simulate redemption of `units` units of `fund` at `nav`.
+    Uses FIFO logic from logic.py calculate_redemption_impact.
+    """
+    from logic_adapter import calculate_redemption_impact
+
+    s    = _get_session(session_id)
+    df_t = s["df_txns"]
+
+    if df_t.empty:
+        raise HTTPException(status_code=422, detail="No transaction data available for FIFO simulation.")
+
+    result = calculate_redemption_impact(df_t, fund, float(units), float(nav))
+
+    if not result:
+        raise HTTPException(status_code=422, detail="Could not simulate — no purchase transactions found for this fund.")
+
+    # Serialise the details DataFrame
+    details = result.get("details", pd.DataFrame())
+    if not details.empty:
+        details = details.copy()
+        if "Acquisition Date" in details.columns:
+            details["Acquisition Date"] = pd.to_datetime(details["Acquisition Date"]).dt.strftime("%d %b %Y")
+        for col in ["Cost", "Value", "Gain"]:
+            if col in details.columns:
+                details[col] = details[col].round(2)
+        details_list = details.to_dict(orient="records")
+    else:
+        details_list = []
+
+    return {
+        "total_units":  round(result["total_units"],  4),
+        "total_value":  round(result["total_value"],  2),
+        "total_cost":   round(result["total_cost"],   2),
+        "total_gain":   round(result["total_gain"],   2),
+        "stcg_gain":    round(result["stcg_gain"],    2),
+        "ltcg_gain":    round(result["ltcg_gain"],    2),
+        "stcg_tax":     round(result["stcg_tax"],     2),
+        "ltcg_tax":     round(result["ltcg_tax"],     2),
+        "total_tax":    round(result["total_tax"],    2),
+        "net_proceeds": round(result["net_proceeds"], 2),
+        "details":      details_list,
+    }

@@ -15,7 +15,7 @@ const TABS = [
   { label: '🔀 Compare',        path: '/dashboard/compare' },
   { label: '🧾 Tax',            path: '/dashboard/tax' },
   { label: '💡 Smart Insights', path: '/dashboard/insights' },
-  { label: '🔄 SIP Calculator', path: '/dashboard/sip' },
+  { label: '🔄 SIP & Lumpsum', path: '/dashboard/sip' },
 ]
 
 export default function Dashboard() {

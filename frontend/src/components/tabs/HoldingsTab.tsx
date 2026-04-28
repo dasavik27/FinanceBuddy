@@ -3,13 +3,53 @@ import {
   Box, Paper, Typography, TextField, InputAdornment,
   Table, TableHead, TableRow, TableCell, TableBody,
   TableSortLabel, Skeleton, Alert, Chip, Select,
-  MenuItem, FormControl, InputLabel, TableContainer,
+  MenuItem, FormControl, InputLabel, TableContainer, Grid,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
-import { useHoldings } from '../../hooks/useData'
+import { useHoldings, useAllocation } from '../../hooks/useData'
 import { CategoryBadge, PlanBadge, SectionHeader } from '../ui'
 import { fmtInr, fmtPct, gainColor } from '../../api/fmt'
 import type { Holding } from '../../api/client'
+
+// ── Donut chart (SVG, no dep) ─────────────────────────────────────────────────
+function DonutChart({ data, size = 160 }: { data: { label: string; value: number; pct: number; color: string }[]; size?: number }) {
+  const total  = data.reduce((a, b) => a + b.value, 0)
+  const cx = size / 2; const cy = size / 2; const r = size * 0.36; const ir = size * 0.22
+  let startAngle = -90
+  const slices = data.filter(d => d.value > 0).map(d => {
+    const angle = (d.value / total) * 360
+    const s = startAngle; startAngle += angle
+    return { ...d, startAngle: s, angle }
+  })
+
+  function polarToXY(cx: number, cy: number, r: number, angleDeg: number) {
+    const rad = (angleDeg * Math.PI) / 180
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
+  }
+  function arcPath(cx: number, cy: number, r: number, startDeg: number, endDeg: number) {
+    const s = polarToXY(cx, cy, r, startDeg)
+    const e = polarToXY(cx, cy, r, endDeg)
+    const large = endDeg - startDeg > 180 ? 1 : 0
+    return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 1 ${e.x} ${e.y}`
+  }
+
+  return (
+    <svg width={size} height={size}>
+      {slices.map((s, i) => {
+        const outerPath = arcPath(cx, cy, r, s.startAngle, s.startAngle + s.angle - 0.5)
+        const innerStart = polarToXY(cx, cy, ir, s.startAngle + s.angle - 0.5)
+        const innerEnd   = polarToXY(cx, cy, ir, s.startAngle)
+        const large = s.angle > 180 ? 1 : 0
+        const d = `${outerPath} L ${innerStart.x} ${innerStart.y} A ${ir} ${ir} 0 ${large} 0 ${innerEnd.x} ${innerEnd.y} Z`
+        return <path key={i} d={d} fill={s.color} opacity={0.9}>
+          <title>{s.label}: {s.pct?.toFixed(1)}%</title>
+        </path>
+      })}
+      <circle cx={cx} cy={cy} r={ir - 2} fill="#FFFFFF" />
+    </svg>
+  )
+}
+
 
 type SortKey = 'Market Value' | 'Gain%' | 'Weight%' | 'Gain' | 'Invested' | 'Fund'
 
@@ -25,6 +65,8 @@ export default function HoldingsTab() {
     search,
     cap_filter: capFilter,
   })
+
+  const { data: alloc, isLoading: allocL } = useAllocation()
 
   const holdings  = data?.holdings  ?? []
   const capTypes  = ['All', ...(data?.cap_types ?? [])]
@@ -46,6 +88,68 @@ export default function HoldingsTab() {
   return (
     <Box>
       <SectionHeader title="Holdings" subtitle="All mutual fund positions in your filtered portfolio" />
+
+      {/* ── Allocation row ───────────────────────────────────────────── */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        {/* Broad asset class donut */}
+        <Grid item xs={12} md={6}>
+          <Paper elevation={1} sx={{ p: 3, borderRadius: 3, height: '100%' }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>Asset Mix</Typography>
+            {allocL ? <Skeleton variant="circular" width={160} height={160} sx={{ mx: 'auto' }} /> : (
+              <>
+                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                  <DonutChart data={(alloc?.broad ?? []).filter((d: any) => d.value > 0)} />
+                </Box>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                  {(alloc?.broad ?? []).filter((d: any) => d.value > 0).map((d: any) => (
+                    <Box key={d.label} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ width: 10, height: 10, borderRadius: '50%', background: d.color, flexShrink: 0 }} />
+                        <Typography variant="body2" fontWeight={600}>{d.label}</Typography>
+                      </Box>
+                      <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 12, color: '#64748B' }}>
+                        {d.pct?.toFixed(1)}%
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </>
+            )}
+          </Paper>
+        </Grid>
+
+        {/* Cap size */}
+        <Grid item xs={12} md={6}>
+          <Paper elevation={1} sx={{ p: 3, borderRadius: 3, height: '100%' }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>Cap Breakdown</Typography>
+            {allocL ? <Skeleton variant="rectangular" height={180} sx={{ borderRadius: 2 }} /> : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {(alloc?.by_cap ?? []).map((d: any) => {
+                  const pct = d.pct ?? 0
+                  return (
+                    <Box key={d['Cap Type']}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="body2" fontWeight={600}>{d['Cap Type']}</Typography>
+                        <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 12, color: '#64748B' }}>
+                          {pct.toFixed(1)}% · {fmtInr(d['Market Value'], true)}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ background: '#F1F5F9', borderRadius: 999, height: 7, overflow: 'hidden' }}>
+                        <Box sx={{
+                          height: '100%', borderRadius: 999,
+                          background: 'linear-gradient(90deg, #1D4ED8, #60A5FA)',
+                          width: `${pct}%`, transition: 'width 600ms cubic-bezier(0,0,0,1)',
+                        }} />
+                      </Box>
+                    </Box>
+                  )
+                })}
+              </Box>
+            )}
+          </Paper>
+        </Grid>
+      </Grid>
+
 
       {/* ── Filter bar ──────────────────────────────────────────────── */}
       <Paper elevation={1} sx={{ p: 2, mb: 2, borderRadius: 3 }}>

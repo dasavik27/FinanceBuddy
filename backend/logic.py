@@ -5,6 +5,7 @@ import casparser
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import urllib.request
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -28,6 +29,31 @@ BENCHMARKS = {
     "S&P 500 (US)":      "^GSPC",
     "Nasdaq 100 (US)":   "^IXIC",
 }
+
+
+def fetch_live_navs() -> dict:
+    """Fetch live NAVs from AMFI daily plain text feed."""
+    url = "https://www.amfiindia.com/spages/NAVAll.txt"
+    live_map = {}
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = response.read().decode('utf-8', errors='ignore')
+            for line in data.splitlines():
+                if ';' not in line:
+                    continue
+                parts = line.split(';')
+                if len(parts) >= 5:
+                    isin = parts[1].strip()
+                    nav_str = parts[4].strip()
+                    if isin and nav_str:
+                        try:
+                            live_map[isin] = float(nav_str)
+                        except ValueError:
+                            pass
+    except Exception:
+        pass
+    return live_map
 
 
 PERIOD_MAP = {
@@ -64,12 +90,12 @@ FUND_BENCH_BY_CAT = {
 
 # Risk tiers (annual vol%, beta, label) — category-seeded heuristics
 RISK_TIERS = {
-    "Liquid":  (0.5,  0.02, "Very Low"),
-    "Debt":    (3.5,  0.15, "Low"),
+    "Liquid":  (0.5,  0.02, "Low"),
+    "Debt":    (3.5,  0.15, "Low to Moderate"),
     "Hybrid":  (9.0,  0.55, "Moderate"),
-    "ELSS":    (15.0, 0.90, "High"),
-    "Index":   (13.0, 1.00, "Moderate-High"),
-    "Equity":  (17.0, 1.10, "High"),
+    "ELSS":    (15.0, 0.90, "Very High"),
+    "Index":   (13.0, 1.00, "Moderately High"),
+    "Equity":  (17.0, 1.10, "Very High"),
     "FOF":     (14.0, 0.80, "High"),
     "Other":   (10.0, 0.60, "Moderate"),
 }
@@ -166,6 +192,7 @@ def parse_cas(file_bytes: bytes, password: str):
         txns       = []
         sips       = []
         
+        live_nav_map = fetch_live_navs()
         is_partial_cas = False
 
 
@@ -189,6 +216,10 @@ def parse_cas(file_bytes: bytes, password: str):
                 cur_val = float(_get(val_obj, 'value', 0) or 0)
                 nav    = float(_get(val_obj, 'nav', 0) or 0) if val_obj else 0
                 cost   = float(_get(val_obj, 'cost', 0) or 0)
+
+                if isin in live_nav_map and live_nav_map[isin] > 0:
+                    nav = live_nav_map[isin]
+                    cur_val = bal * nav
 
 
                 # Derive fund metadata from scheme name

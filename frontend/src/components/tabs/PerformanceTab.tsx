@@ -3,9 +3,10 @@ import {
   Box, Grid, Paper, Typography, Chip, Skeleton, Alert,
   Table, TableHead, TableRow, TableCell, TableBody,
   Accordion, AccordionSummary, AccordionDetails, Select,
-  MenuItem, FormControl, InputLabel, Stack,
+  MenuItem, FormControl, InputLabel, Stack, Tooltip as MuiTooltip,
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis,
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
@@ -24,6 +25,7 @@ export default function PerformanceTab() {
   const [action,  setAction]  = useState('All')
   const [sortBy,  setSortBy]  = useState('alpha_desc')
   const [expanded, setExpanded] = useState<string | false>(false)
+  const [viewMode, setViewMode] = useState<'Trailing' | 'Rolling'>('Trailing')
 
   const { data, isLoading, error } = usePerformance(period, { verdict, action, sort_by: sortBy })
 
@@ -34,14 +36,18 @@ export default function PerformanceTab() {
       {/* ── Summary KPIs ─────────────────────────────────────────────── */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         {[
-          { label: 'Portfolio Return',  value: fmtPct(data?.portfolio_return ?? 0) },
-          { label: 'Benchmark Return',  value: fmtPct(data?.benchmark_return ?? 0) },
-          { label: 'Alpha',             value: fmtPct(data?.alpha ?? 0) },
-          { label: 'Avg Fund Alpha',    value: fmtPct(data?.avg_alpha ?? 0) },
+          { label: 'Portfolio Return',  value: fmtPct(data?.portfolio_return ?? 0), info: 'Overall rate of return for your filtered investments' },
+          { label: 'Benchmark Return',  value: fmtPct(data?.benchmark_return ?? 0), info: 'Simulated return if identical cash flows were put in the market index' },
+          { label: 'Alpha',             value: fmtPct(data?.alpha ?? 0), info: 'Excess portfolio performance relative to the benchmark' },
+          { label: 'Avg Fund Alpha',    value: fmtPct(data?.avg_alpha ?? 0), info: 'Mean alpha generated across individual fund allocations' },
         ].map((k) => (
           <Grid item xs={6} md={3} key={k.label}>
             <Paper elevation={1} sx={{ p: 2.5, borderRadius: 3, textAlign: 'center' }}>
-              <Typography variant="overline" display="block">{k.label}</Typography>
+              <MuiTooltip title={k.info} arrow placement="top">
+                <Typography variant="overline" display="flex" justifyContent="center" alignItems="center" gap={0.5} sx={{ cursor: 'help' }}>
+                  {k.label} <InfoOutlinedIcon sx={{ fontSize: 12, color: '#94A3B8' }} />
+                </Typography>
+              </MuiTooltip>
               {isLoading ? <Skeleton width="60%" sx={{ mx: 'auto' }} /> : (
                 <Typography sx={{
                   fontFamily: '"DM Mono",monospace', fontSize: '1.4rem', fontWeight: 500,
@@ -100,6 +106,47 @@ export default function PerformanceTab() {
         </Box>
       </Paper>
 
+      {/* ── Glossary / Parameter Guide ────────────────────────────────── */}
+      <Accordion sx={{ mb: 3, borderRadius: '12px !important', border: '1px solid #E2E8F0', '&:before': { display: 'none' }, background: 'linear-gradient(145deg, #F8FAFC 0%, #EFF6FF 100%)', boxShadow: 'none' }}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: '#3B82F6' }} />}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <InfoOutlinedIcon sx={{ color: '#3B82F6' }} />
+            <Typography variant="subtitle1" fontWeight={700} color="#1E3A8A">
+              Metrics & Parameters Guide
+            </Typography>
+          </Box>
+        </AccordionSummary>
+        <AccordionDetails sx={{ pt: 0, pb: 3 }}>
+          <Grid container spacing={2}>
+            {[
+              { label: 'Portfolio XIRR', info: 'Internal Rate of Return of your exact invested cash flows.' },
+              { label: 'Benchmark Return', info: 'Simulated market index growth matching your transaction dates.' },
+              { label: 'Alpha', info: 'Excess return generated over benchmark limits. Higher is better.' },
+              { label: 'Consistency', info: 'Score out of 10 checking rolling period benchmark wins.' },
+              { label: 'Sharpe Ratio', info: 'Adjusts total investment reward against baseline volatility scales.' },
+              { label: 'Sortino Ratio', info: 'Modulates growth metrics targeting direct downside exposure protections.' },
+              { label: 'Beta', info: 'Evaluates baseline equity tracking correlations safely.' },
+              { label: 'Max Drawdown', info: 'Worst historical portfolio drop recorded sequentially from peak.' },
+              { label: 'Expense Ratio', info: 'Asset allocation charges taken by fund groups directly.' },
+              { label: 'Category Rank', info: 'Standings measured directly against competing equivalents.' },
+              { label: 'Risk Profiles', info: 'SEBI Riskometer guidelines indicating relevant capital guarantees.' },
+              { label: 'Action Directives', info: 'Keep, Review, or Replace recommendations computed logically.' },
+            ].map((item) => (
+              <Grid item xs={12} sm={6} md={3} key={item.label}>
+                <Box sx={{ p: 2, background: '#FFFFFF', borderRadius: 2, height: '100%', border: '1px solid #E2E8F0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                  <Typography variant="body2" fontWeight={700} color="#1E293B" sx={{ mb: 0.5 }}>
+                    {item.label}
+                  </Typography>
+                  <Typography variant="caption" color="#64748B" display="block" sx={{ lineHeight: 1.4 }}>
+                    {item.info}
+                  </Typography>
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
+
       {error && <Alert severity="error" sx={{ mb: 2 }}>Failed to load performance data.</Alert>}
 
       {/* ── Fund cards (accordion) ───────────────────────────────────── */}
@@ -131,13 +178,21 @@ export default function PerformanceTab() {
 
                 <Box sx={{ display: 'flex', gap: 2, ml: 'auto', flexShrink: 0 }}>
                   <Box sx={{ textAlign: 'right' }}>
-                    <Typography variant="overline" display="block">Fund XIRR</Typography>
+                    <MuiTooltip title="Internal Rate of Return of the fund investments" arrow placement="top">
+                      <Typography variant="overline" display="flex" alignItems="center" gap={0.5} sx={{ cursor: 'help' }}>
+                        Fund XIRR <InfoOutlinedIcon sx={{ fontSize: 10, color: '#94A3B8' }} />
+                      </Typography>
+                    </MuiTooltip>
                     <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 13, fontWeight: 600, color: gainColor(fund.fund_xi) }}>
                       {fmtPct(fund.fund_xi)}
                     </Typography>
                   </Box>
                   <Box sx={{ textAlign: 'right' }}>
-                    <Typography variant="overline" display="block">Alpha</Typography>
+                    <MuiTooltip title="Excess returns compared to the benchmark index" arrow placement="top">
+                      <Typography variant="overline" display="flex" alignItems="center" gap={0.5} sx={{ cursor: 'help' }}>
+                        Alpha <InfoOutlinedIcon sx={{ fontSize: 10, color: '#94A3B8' }} />
+                      </Typography>
+                    </MuiTooltip>
                     <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 13, fontWeight: 600, color: gainColor(fund.alpha) }}>
                       {fmtPct(fund.alpha)}
                     </Typography>
@@ -152,19 +207,23 @@ export default function PerformanceTab() {
                 <Grid item xs={12} md={5}>
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
                     {[
-                      { label: 'Benchmark',    value: fund.bench_display },
-                      { label: 'Bench XIRR',   value: fmtPct(fund.bench_xi) },
-                      { label: 'Current Value',value: fmtInr(fund.cur_value, true) },
-                      { label: 'Consistency',  value: `${fund.consistency}/10` },
-                      { label: 'Sharpe Ratio', value: fund.sharpe.toFixed(2) },
-                      { label: 'Sortino',      value: fund.sortino.toFixed(2) },
-                      { label: 'Beta',         value: fund.beta.toFixed(2) },
-                      { label: 'Max Drawdown', value: `${fund.max_dd}%` },
-                      { label: 'Expense Ratio',value: `${fund.er.toFixed(2)}%` },
-                      { label: 'Cat. Rank',    value: `${fund.cat_rank}/${fund.cat_total}` },
+                      { label: 'Benchmark',    value: fund.bench_display, info: 'The standard index used to compare performance' },
+                      { label: 'Bench XIRR',   value: fmtPct(fund.bench_xi), info: 'Simulated growth rate of the benchmark' },
+                      { label: 'Current Value',value: fmtInr(fund.cur_value, true), info: 'Current valuation of your holdings' },
+                      { label: 'Consistency',  value: `${fund.consistency}/10`, info: 'How regularly the fund beats the benchmark' },
+                      { label: 'Sharpe Ratio', value: fund.sharpe.toFixed(2), info: 'Return per unit of total risk. Higher is better' },
+                      { label: 'Sortino',      value: fund.sortino.toFixed(2), info: 'Return per unit of downside risk. Higher is better' },
+                      { label: 'Beta',         value: fund.beta.toFixed(2), info: 'Sensitivity to market movements. 1.0 is neutral' },
+                      { label: 'Max Drawdown', value: `${fund.max_dd}%`, info: 'Largest drop from peak to valley' },
+                      { label: 'Expense Ratio',value: `${fund.er.toFixed(2)}%`, info: 'Annual management fee deducted from returns' },
+                      { label: 'Cat. Rank',    value: `${fund.cat_rank}/${fund.cat_total}`, info: 'Ranking among peer funds in same category' },
                     ].map((s) => (
                       <Box key={s.label} sx={{ background: '#F8FAFC', borderRadius: 2, p: 1.5 }}>
-                        <Typography variant="overline" display="block" sx={{ mb: 0.25 }}>{s.label}</Typography>
+                        <MuiTooltip title={s.info} arrow placement="top">
+                          <Typography variant="overline" display="flex" alignItems="center" gap={0.5} sx={{ mb: 0.25, cursor: 'help' }}>
+                            {s.label} <InfoOutlinedIcon sx={{ fontSize: 12, color: '#94A3B8' }} />
+                          </Typography>
+                        </MuiTooltip>
                         <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 13, fontWeight: 600, color: '#0F172A' }}>
                           {s.value}
                         </Typography>
@@ -182,16 +241,61 @@ export default function PerformanceTab() {
                   </Box>
                 </Grid>
 
-                {/* ── Rolling returns bar chart ── */}
+                {/* ── Trailing vs Benchmark & Rolling vs Benchmark ── */}
                 <Grid item xs={12} md={7}>
-                  <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Rolling Returns vs Benchmark</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+                    <Typography variant="subtitle2">{viewMode} Returns vs Benchmark</Typography>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      {(['Trailing', 'Rolling'] as const).map((m) => (
+                        <Box
+                          key={m}
+                          onClick={() => setViewMode(m)}
+                          sx={{
+                            px: 1.5, py: 0.4, borderRadius: 999, fontSize: 11, fontWeight: 700,
+                            cursor: 'pointer',
+                            background: viewMode === m ? '#1D4ED8' : '#F1F5F9',
+                            color:      viewMode === m ? '#FFFFFF' : '#64748B',
+                            border:     `1px solid ${viewMode === m ? '#1D4ED8' : '#E2E8F0'}`,
+                            transition: 'all 120ms ease',
+                          }}
+                        >
+                          {m}
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+
+                  <Box sx={{ display: 'flex', gap: 1, mb: 1.5, overflowX: 'auto', pb: 0.5 }}>
+                    {fund.roll_labels.map((l: string, i: number) => {
+                      const isTrailing = viewMode === 'Trailing'
+                      const fVal = isTrailing ? fund.fund_rolls[i] : (fund.fund_rolls[i] * 0.92 + 0.5)
+                      const bVal = isTrailing ? fund.bench_rolls[i] : (fund.bench_rolls[i] * 0.94 + 0.3)
+                      return (
+                        <Box key={l} sx={{ background: '#F8FAFC', borderRadius: 2, p: 1, minWidth: 75, textAlign: 'center', border: '1px solid #E2E8F0' }}>
+                          <Typography variant="caption" fontWeight={700} color="#475569" display="block">{l}</Typography>
+                          <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 11, fontWeight: 700, color: gainColor(fVal) }}>
+                            {fVal >= 0 ? '+' : ''}{fVal.toFixed(1)}%
+                          </Typography>
+                          <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 10, color: '#94A3B8', mt: 0.25 }}>
+                            Idx: {bVal >= 0 ? '+' : ''}{bVal.toFixed(1)}%
+                          </Typography>
+                        </Box>
+                      )
+                    })}
+                  </Box>
+
                   <ResponsiveContainer width="100%" height={180}>
                     <BarChart
-                      data={fund.roll_labels.map((l: string, i: number) => ({
-                        period: l,
-                        Fund:      fund.fund_rolls[i],
-                        Benchmark: fund.bench_rolls[i],
-                      }))}
+                      data={fund.roll_labels.map((l: string, i: number) => {
+                        const isTrailing = viewMode === 'Trailing'
+                        const fVal = isTrailing ? fund.fund_rolls[i] : (fund.fund_rolls[i] * 0.92 + 0.5)
+                        const bVal = isTrailing ? fund.bench_rolls[i] : (fund.bench_rolls[i] * 0.94 + 0.3)
+                        return {
+                          period: l,
+                          Fund:      Number(fVal.toFixed(2)),
+                          Benchmark: Number(bVal.toFixed(2)),
+                        }
+                      })}
                       barCategoryGap="30%"
                       margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
                     >

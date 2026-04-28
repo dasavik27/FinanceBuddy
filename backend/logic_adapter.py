@@ -49,6 +49,9 @@ from logic import (                          # noqa: E402  (import after stub)
     compute_portfolio_score,
     sip_consistency_score,
     stepup_sip_projection,
+    calculate_redemption_impact,
+    get_sector_profile,
+    compute_fund_overlap,
     # Chart helpers (Plotly figures — serialised to JSON for the API)
     make_area_chart,
     make_donut,
@@ -68,6 +71,7 @@ __all__ = [
     "estimate_expense_drag", "elss_lock_in_analysis",
     "compute_portfolio_score", "sip_consistency_score",
     "stepup_sip_projection",
+    "calculate_redemption_impact", "get_sector_profile", "compute_fund_overlap",
     "make_area_chart", "make_donut", "make_bar_chart",
     "make_waterfall", "make_gauge",
 ]

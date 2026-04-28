@@ -151,8 +151,8 @@ export function PlanBadge({ plan }: { plan: string }) {
 
 // ── Risk Pill ────────────────────────────────────────────────────────────────
 export function RiskPill({ label }: { label: string }) {
-  const low = ['Very Low','Low'].includes(label)
-  const high = ['High','Moderate-High'].includes(label)
+  const low = ['Very Low','Low','Low to Moderate'].includes(label)
+  const high = ['High','Moderate-High','Moderately High','Very High'].includes(label)
   return (
     <Box component="span" sx={{
       px: 1.25, py: 0.3, borderRadius: 999, fontSize: '0.625rem',
@@ -160,7 +160,7 @@ export function RiskPill({ label }: { label: string }) {
       background: low ? '#D1FAE5' : high ? '#FEE2E2' : '#FEF3C7',
       color:      low ? '#065F46'  : high ? '#991B1B' : '#92400E',
     }}>
-      {label}
+      Risk: {label}
     </Box>
   )
 }
