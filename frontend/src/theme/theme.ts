@@ -334,37 +334,16 @@ export const theme = createTheme({
     // ── LinearProgress ─────────────────────────────────────────────────────
     MuiLinearProgress: {
       styleOverrides: {
-        root: {
-          borderRadius: 999,
-          height: 7,
+        root: { 
+          borderRadius: 999, 
+          height: 7, 
           background: P.slate100,
+          '&.MuiLinearProgress-colorPrimary .MuiLinearProgress-bar': { background: `linear-gradient(90deg, ${P.blue}, #60A5FA)` },
+          '&.MuiLinearProgress-colorSuccess .MuiLinearProgress-bar': { background: `linear-gradient(90deg, ${P.green}, #34D399)` },
+          '&.MuiLinearProgress-colorWarning .MuiLinearProgress-bar': { background: `linear-gradient(90deg, ${P.amber}, #FCD34D)` },
+          '&.MuiLinearProgress-colorError .MuiLinearProgress-bar': { background: `linear-gradient(90deg, ${P.red}, #F87171)` },
         },
-        bar: {
-          borderRadius: 999,
-        },
-
-        colorPrimary: {
-          '& .MuiLinearProgress-bar': {
-            background: `linear-gradient(90deg, ${P.blue}, #60A5FA)`,
-          },
-        },
-
-        // ✅ FIX: use data attribute selector instead
-        root: {
-          borderRadius: 999,
-          height: 7,
-          background: P.slate100,
-
-          '&.MuiLinearProgress-colorSuccess .MuiLinearProgress-bar': {
-            background: `linear-gradient(90deg, ${P.green}, #34D399)`,
-          },
-          '&.MuiLinearProgress-colorWarning .MuiLinearProgress-bar': {
-            background: `linear-gradient(90deg, ${P.amber}, #FCD34D)`,
-          },
-          '&.MuiLinearProgress-colorError .MuiLinearProgress-bar': {
-            background: `linear-gradient(90deg, ${P.red}, #F87171)`,
-          },
-        },
+        bar: { borderRadius: 999 },
       },
     },
 
