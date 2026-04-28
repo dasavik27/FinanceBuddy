@@ -22,11 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
-app.include_router(benchmark.router, prefix="/api/benchmark", tags=["benchmark"])
-app.include_router(sip.router,       prefix="/api/sip",       tags=["sip"])
+app.include_router(portfolio.router, prefix="/portfolio", tags=["portfolio"])
+app.include_router(benchmark.router, prefix="/benchmark", tags=["benchmark"])
+app.include_router(sip.router,       prefix="/sip",       tags=["sip"])
 
 
-@app.get("/api/health")
+@app.get("/health")
 def health():
     return {"status": "ok", "version": "6.0.0"}
