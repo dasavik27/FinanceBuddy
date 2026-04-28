@@ -13,7 +13,7 @@ import {
   CartesianGrid, Tooltip, Cell,
 } from 'recharts'
 import { usePerformance } from '../../hooks/useData'
-import { VerdictChip, CategoryBadge, PlanBadge, RiskPill, PeriodSelector, SectionHeader } from '../ui'
+import { VerdictChip, CategoryBadge, PlanBadge, RiskPill, PeriodSelector, SectionHeader, TabLoader } from '../ui'
 import { fmtInr, fmtPct, gainColor } from '../../api/fmt'
 import type { FundResult } from '../../api/client'
 
@@ -28,6 +28,10 @@ export default function PerformanceTab() {
   const [viewMode, setViewMode] = useState<'Trailing' | 'Rolling'>('Trailing')
 
   const { data, isLoading, error } = usePerformance(period, { verdict, action, sort_by: sortBy })
+
+  if (isLoading) {
+    return <TabLoader message="Benchmarking your fund returns against standard models..." />
+  }
 
   const funds = data?.funds ?? []
 

@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import { motion } from 'framer-motion'
 import { useSummary, useOverview, useAllocation } from '../../hooks/useData'
-import { MetricCard, SectionHeader, PeriodSelector, ScoreRing, LoadingGrid } from '../ui'
+import { MetricCard, SectionHeader, PeriodSelector, ScoreRing, LoadingGrid, TabLoader } from '../ui'
 import { fmtInr, fmtPct, gainColor } from '../../api/fmt'
 
 const PERIODS = ['1M','3M','6M','1Y','3Y','5Y','ALL']
@@ -79,6 +79,10 @@ export default function OverviewTab() {
   const { data: sum,   isLoading: sumL }  = useSummary()
   const { data: ov,    isLoading: ovL }   = useOverview(period)
   const { data: alloc, isLoading: allocL } = useAllocation()
+
+  if (sumL || ovL || allocL) {
+    return <TabLoader message="Assembling your portfolio analytics cockpit..." />
+  }
 
   // Build chart data
   const chartData = ov?.chart?.dates?.map((d: string, i: number) => ({

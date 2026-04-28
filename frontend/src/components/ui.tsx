@@ -267,3 +267,19 @@ export function EmptyState({ message }: { message: string }) {
     </Box>
   )
 }
+// ── Tab Loader ─────────────────────────────────────────────────────────────
+import { CircularProgress } from '@mui/material'
+
+export function TabLoader({ message = "Retrieving institutional data feed..." }: { message?: string }) {
+  return (
+    <Box sx={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      minHeight: '400px', width: '100%', gap: 2,
+    }}>
+      <CircularProgress size={44} thickness={4.5} sx={{ color: '#1D4ED8' }} />
+      <Typography variant="body2" fontWeight={600} color="text.secondary" sx={{ letterSpacing: '0.02em' }}>
+        {message}
+      </Typography>
+    </Box>
+  )
+}

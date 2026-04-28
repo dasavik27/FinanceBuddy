@@ -7,7 +7,7 @@ import {
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import { useHoldings, useAllocation } from '../../hooks/useData'
-import { CategoryBadge, PlanBadge, SectionHeader } from '../ui'
+import { CategoryBadge, PlanBadge, SectionHeader, TabLoader } from '../ui'
 import { fmtInr, fmtPct, gainColor } from '../../api/fmt'
 import type { Holding } from '../../api/client'
 
@@ -67,6 +67,10 @@ export default function HoldingsTab() {
   })
 
   const { data: alloc, isLoading: allocL } = useAllocation()
+
+  if (isLoading || allocL) {
+    return <TabLoader message="Loading absolute holdings allocations..." />
+  }
 
   const holdings  = data?.holdings  ?? []
   const capTypes  = ['All', ...(data?.cap_types ?? [])]

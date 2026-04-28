@@ -4,7 +4,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import DangerousIcon    from '@mui/icons-material/Dangerous'
 import InfoIcon         from '@mui/icons-material/Info'
 import { useInsights }  from '../../hooks/useData'
-import { SectionHeader, ScoreRing, ProgressRow } from '../ui'
+import { SectionHeader, ScoreRing, ProgressRow, TabLoader } from '../ui'
 import { fmtInr, fmtPct } from '../../api/fmt'
 
 const NUDGE_ICON: Record<string, any> = {
@@ -22,6 +22,10 @@ const NUDGE_STYLE: Record<string, { bg: string; color: string; border: string }>
 
 export default function InsightsTab() {
   const { data, isLoading, error } = useInsights()
+
+  if (isLoading) {
+    return <TabLoader message="Executing heuristics and risk allocation models..." />
+  }
 
   const scoreBreakdown = [
     { label: 'Alpha vs Benchmark',   max: 30, pct: 0.7 },

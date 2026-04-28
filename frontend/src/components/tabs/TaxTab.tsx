@@ -8,7 +8,7 @@ import {
 import { useQuery }      from '@tanstack/react-query'
 import { useTax }        from '../../hooks/useData'
 import { useSessionId }  from '../../store/appStore'
-import { SectionHeader, MetricCard } from '../ui'
+import { SectionHeader, MetricCard, TabLoader } from '../ui'
 import { fmtInr, gainColor } from '../../api/fmt'
 import { apiClient }     from '../../api/client'
 
@@ -318,7 +318,7 @@ function FifoSimulatorWrapper() {
     enabled:  !!sid,
     staleTime: 5 * 60_000,
   })
-  if (isLoading) return <Skeleton variant="rectangular" height={400} sx={{ borderRadius: 3 }} />
+  if (isLoading) return <TabLoader message="Fetching target redemption parameters..." />
   const holdings = data?.holdings ?? []
   if (!holdings.length) return null
   return <FifoSimulator holdings={holdings} />
@@ -329,6 +329,10 @@ function FifoSimulatorWrapper() {
 // ─────────────────────────────────────────────────────────
 export default function TaxTab() {
   const { data, isLoading, error } = useTax()
+
+  if (isLoading) {
+    return <TabLoader message="Simulating tax constraints against current models..." />
+  }
 
   return (
     <Box>
