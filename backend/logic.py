@@ -139,17 +139,18 @@ def _get(obj, key, default=None):
 @st.cache_data(show_spinner=False)
 def parse_cas(file_bytes: bytes, password: str):
     """Parse CAMS/KFintech CAS PDF. Zero disk retention after parsing."""
+    import tempfile
+    import os
+    
+    temp_path = os.path.join(tempfile.gettempdir(), "_vault_tmp.pdf")
     try:
-        with open("_vault_tmp.pdf", "wb") as f:
+        with open(temp_path, "wb") as f:
             f.write(file_bytes)
 
+        data = casparser.read_cas_pdf(temp_path, password)
 
-        data = casparser.read_cas_pdf("_vault_tmp.pdf", password)
-
-
-        import os
         try:
-            os.remove("_vault_tmp.pdf")
+            os.remove(temp_path)
         except Exception:
             pass
 
