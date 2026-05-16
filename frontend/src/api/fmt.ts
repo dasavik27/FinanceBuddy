@@ -3,24 +3,33 @@
 export function fmtInr(n: number | null | undefined, compact = false): string {
   if (n == null || isNaN(n)) return '₹0'
   const neg = n < 0
-  const abs = Math.abs(Math.round(n))
+  const absVal = Math.abs(n)
   let result: string
+  
   if (compact) {
-    if (abs >= 1_00_00_000) result = `₹${(abs / 1_00_00_000).toFixed(2)} Cr`
-    else if (abs >= 1_00_000) result = `₹${(abs / 1_00_000).toFixed(2)} L`
-    else result = `₹${abs.toLocaleString('en-IN')}`
+    const absRound = Math.round(absVal)
+    if (absRound >= 1_00_00_000) result = `₹${(absVal / 1_00_00_000).toFixed(2)} Cr`
+    else if (absRound >= 1_00_000) result = `₹${(absVal / 1_00_000).toFixed(2)} L`
+    else result = `₹${Math.round(absVal).toLocaleString('en-IN')}`
   } else {
-    // Indian numbering
-    const s = String(abs)
-    if (s.length <= 3) result = `₹${s}`
-    else {
-      const last3 = s.slice(-3)
-      const rest  = s.slice(0, -3)
-      const parts = []
+    // Indian numbering with decimals
+    const parts = absVal.toFixed(2).split('.')
+    const integerPart = parts[0]
+    const decimalPart = parts[1] === '00' ? '' : `.${parts[1]}`
+    
+    if (integerPart.length <= 3) {
+      result = `₹${integerPart}${decimalPart}`
+    } else {
+      const last3 = integerPart.slice(-3)
+      const rest  = integerPart.slice(0, -3)
+      const commaParts = []
       let tmp = rest
-      while (tmp.length > 2) { parts.unshift(tmp.slice(-2)); tmp = tmp.slice(0, -2) }
-      if (tmp) parts.unshift(tmp)
-      result = `₹${parts.join(',')},${last3}`
+      while (tmp.length > 2) { 
+        commaParts.unshift(tmp.slice(-2))
+        tmp = tmp.slice(0, -2) 
+      }
+      if (tmp) commaParts.unshift(tmp)
+      result = `₹${commaParts.join(',')},${last3}${decimalPart}`
     }
   }
   return neg ? `-${result}` : result

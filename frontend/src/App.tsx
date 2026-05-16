@@ -1,8 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useSessionId } from './store/appStore'
-import Layout    from './components/Layout'
+import Layout    from './components/layout/Layout'
 import Landing   from './components/Landing'
-import Dashboard from './components/Dashboard'
+import Dashboard from './components/layout/Dashboard'
 
 export default function App() {
   const sid = useSessionId()

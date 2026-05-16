@@ -1,902 +1,697 @@
 import { useState, useMemo, useEffect } from 'react'
 import {
-  Box, Grid, Paper, Typography, TextField, InputAdornment,
-  Chip, Select, MenuItem, FormControl, InputLabel, Alert,
-  CircularProgress, Autocomplete, Table, TableHead,
-  TableRow, TableCell, TableBody, TableContainer, Divider, Button,
-} from '@mui/material'
-import SearchIcon from '@mui/icons-material/Search'
-import RefreshIcon from '@mui/icons-material/Refresh'
-import {
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis,
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, BarChart, Bar,
+  ResponsiveContainer, Legend, BarChart, Bar, AreaChart, Area,
 } from 'recharts'
-import { useQuery, useQueryClient }      from '@tanstack/react-query'
-import { useHoldings, usePerformance, useAllocation }   from '../../hooks/useData'
-import { useSessionId }  from '../../store/appStore'
-import { apiClient }     from '../../api/client'
-import { SectionHeader, CategoryBadge, PlanBadge, VerdictChip, TabLoader } from '../ui'
-import { fmtInr, fmtPct, gainColor } from '../../api/fmt'
+import {
+  Box, Grid, Paper, Typography, TextField,
+  Chip, CircularProgress, Autocomplete, Table, TableHead,
+  TableRow, TableCell, TableBody, Button, Tooltip as MuiTooltip,
+  ToggleButtonGroup, ToggleButton, Stack, Tabs, Tab, Skeleton, Slider, Modal, IconButton,
+} from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
+import { alpha } from '@mui/material/styles'
+import { motion, AnimatePresence } from 'framer-motion'
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import TrendingUpIcon from '@mui/icons-material/TrendingUp'
+import AssessmentIcon from '@mui/icons-material/Assessment'
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows'
+import ShowChartIcon from '@mui/icons-material/ShowChart'
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
+import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 
-// ── Colour palette for up to 5 compared items ────────────────────────────────
-const COLORS = ['#1D4ED8', '#059669', '#7C3AED', '#D97706', '#DC2626']
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useHoldings, usePerformance } from '../../hooks/useData'
+import { useSessionId } from '../../store/appStore'
+import { apiClient } from '../../api/client'
+import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader } from '../ui'
+import { ChartTooltip } from '../charts/ChartTooltip'
+import { gainColor } from '../../api/fmt'
 
-const PERIODS     = ['1 Month', '6 Months', '1 Year', '3 Years', '5 Years']
-const PERIOD_DAYS: Record<string, number>   = { '1 Month': 30, '6 Months': 180, '1 Year': 365, '3 Years': 1095, '5 Years': 1825 }
-const PERIOD_SHORT: Record<string, string>  = { '1 Month': '1M', '6 Months': '6M', '1 Year': '1Y', '3 Years': '3Y', '5 Years': '5Y' }
+// ── Constants & Config ───────────────────────────────────────────────────────
+const COLORS = ['#6366F1', '#4EDE93', '#F472B6', '#FBBF24', '#FB7185']
 
-// ── Heuristic sector profiles (mirrors logic.py get_sector_profile) ──────────
-function getSectorProfile(category: string, fundName: string): Record<string, number> {
-  const n = fundName.toUpperCase()
-  if (n.includes('BANK') || n.includes('FINANCIAL')) return { Financials: 85, Services: 10, Others: 5 }
-  if (n.includes(' IT') || n.includes('TECH') || n.includes('DIGITAL')) return { Technology: 80, Services: 15, Others: 5 }
-  if (n.includes('PHARMA') || n.includes('HEALTH')) return { Healthcare: 80, Consumer: 10, Others: 10 }
-  if (n.includes('INFRA') || n.includes('ENERGY')) return { Energy: 40, Industrial: 40, Materials: 15, Others: 5 }
-  if (n.includes('AUTO')) return { Consumer: 70, Industrial: 20, Others: 10 }
-  if (category === 'Large Cap' || n.includes('NIFTY 50')) return { Financials: 34, Technology: 14, Energy: 12, Consumer: 11, Healthcare: 6, Others: 23 }
-  if (category === 'Mid Cap') return { Financials: 18, Industrial: 16, Consumer: 15, Healthcare: 10, Technology: 8, Others: 33 }
-  if (category === 'Small Cap') return { Industrial: 22, Consumer: 18, Financials: 12, Materials: 12, Healthcare: 8, Others: 28 }
-  if (category === 'ELSS' || category === 'Flexi/Multi Cap') return { Financials: 28, Technology: 12, Consumer: 12, Energy: 8, Industrial: 8, Others: 32 }
-  if (category === 'Debt' || category === 'Liquid') return { 'Govt Bonds': 60, Corporate: 30, Cash: 10 }
-  return { Diversified: 40, Financials: 20, Technology: 10, Consumer: 10, Others: 20 }
+// ── Motion Variants ──────────────────────────────────────────────────────────
+const containerVar = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
 }
 
-// ── Heuristic overlap (mirrors logic.py compute_fund_overlap) ─────────────────
-function computeOverlap(f1: any, f2: any): number {
-  if (f1.Fund === f2.Fund) return 100
-  const equityCats = ['Equity', 'ELSS', 'Index', 'FOF']
-  const f1Eq = equityCats.includes(f1.Category)
-  const f2Eq = equityCats.includes(f2.Category)
-  if (f1Eq !== f2Eq) return 0
-  if (f1.Category === f2.Category) {
-    let base = 60
-    if (f1.AMC === f2.AMC) base += 25
-    if (f1['Cap Type'] === f2['Cap Type']) base += 5
-    return Math.min(95, base)
-  }
-  let overlap = 10
-  const caps = new Set([f1['Cap Type'], f2['Cap Type']])
-  if (caps.has('Large Cap') && caps.has('Flexi/Multi Cap')) overlap = 45
-  else if (caps.has('Large Cap') && caps.has('Mid Cap'))  overlap = 20
-  else if (caps.has('Mid Cap')  && caps.has('Small Cap')) overlap = 15
-  else if (f1['Cap Type'] === f2['Cap Type'] && f1['Cap Type'] !== 'Mixed') overlap = 50
-  if (f1.AMC === f2.AMC) overlap += 15
-  return Math.min(95, overlap)
+const itemVar = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { type: 'spring', damping: 25, stiffness: 300 } }
 }
 
-// ── Single matrix row ─────────────────────────────────────────────────────────
-function MatrixRow({
-  label, metricKey, data, isBold = false, isVerdict = false,
-}: {
-  label: string; metricKey: string; data: Record<string, any>[]
-  isBold?: boolean; isVerdict?: boolean
-}) {
+function InfoTooltip({ text }: { text: string }) {
   return (
-    <Box sx={{ display: 'flex', borderBottom: '1px solid #F1F5F9' }}>
-      <Box sx={{ minWidth: 180, flexShrink: 0, p: '10px 14px', color: '#475569', fontSize: 13 }}>
-        {label}
-      </Box>
-      {data.map((fd, j) => {
-        const val = fd[metricKey] ?? 'N/A'
-        let content: React.ReactNode = (
-          <Typography sx={{
-            fontFamily: '"DM Mono",monospace', fontSize: 12, fontWeight: isBold ? 700 : 500,
-            color: typeof val === 'string' && val.includes('+') ? '#059669'
-                 : typeof val === 'string' && val.includes('-') && val.includes('%') ? '#DC2626'
-                 : '#0F172A',
-          }}>
-            {String(val)}
-          </Typography>
-        )
-        if (isVerdict && typeof val === 'string') {
-          content = <VerdictChip verdict={val} />
-        }
-        return (
-          <Box key={j} sx={{ flex: 1, p: '10px 14px', textAlign: 'center', minWidth: 0 }}>
-            {content}
-          </Box>
-        )
-      })}
-    </Box>
+    <MuiTooltip title={text} arrow placement="top" sx={{ '& .MuiTooltip-tooltip': { bgcolor: '#0F172A', color: '#fff', fontSize: 12, p: 1.5, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' } }}>
+      <span style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+        <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, opacity: 0.6, cursor: 'pointer', '&:hover': { opacity: 1, color: 'primary.main' } }} />
+      </span>
+    </MuiTooltip>
   )
 }
 
-// ── Section divider label ─────────────────────────────────────────────────────
-function MatrixSection({ label }: { label: string }) {
-  return (
-    <Box sx={{
-      background: '#F1F5F9', px: 2, py: 0.75, fontSize: 11,
-      fontWeight: 700, color: '#475569', borderRadius: 1, my: 1,
-    }}>
-      {label}
-    </Box>
-  )
+// ── Logic Helpers ────────────────────────────────────────────────────────────
+
+function calculateDrawdown(values: number[]): number[] {
+  if (!values || !values.length) return []
+  let peak = -Infinity
+  return values.map(v => {
+    if (v > peak) peak = v
+    return peak === 0 ? 0 : ((v / peak) - 1) * 100
+  })
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Main Component ───────────────────────────────────────────────────────────
 export default function CompareTab() {
   const sid = useSessionId()
+  const [selectedFunds, setSelectedFunds] = useState<string[]>(() => {
+    const saved = localStorage.getItem(`compare_funds_${sid}`)
+    return saved ? JSON.parse(saved) : []
+  })
 
-  const [selectedFunds,   setSelectedFunds]   = useState<string[]>([])
-  const [extSearch,       setExtSearch]       = useState('')
-  const [extTicker,       setExtTicker]       = useState<{ symbol: string; name: string } | null>(null)
-  const [period,          setPeriod]          = useState('1 Year')
+  useEffect(() => {
+    localStorage.setItem(`compare_funds_${sid}`, JSON.stringify(selectedFunds))
+  }, [selectedFunds, sid])
 
+  const [extSearch, setExtSearch] = useState('')
+  const [extTicker, setExtTicker] = useState<{ symbol: string; name: string } | null>(() => {
+    const saved = localStorage.getItem(`compare_bench_${sid}`)
+    return saved ? JSON.parse(saved) : null
+  })
+
+  useEffect(() => {
+    if (extTicker) localStorage.setItem(`compare_bench_${sid}`, JSON.stringify(extTicker))
+  }, [extTicker, sid])
+  const [mode, setMode] = useState<'Overview' | 'Technical' | 'Trends'>('Overview')
+  const [activeTrend, setActiveTrend] = useState<'Trailing' | 'Rolling' | 'Wealth' | 'Drawdown'>('Trailing')
+  const [showSim, setShowSim] = useState(false)
+  const [sipAmount, setSipAmount] = useState(25000)
+  const [lumpsumAmount, setLumpsumAmount] = useState(500000)
+  const [simYears, setSimYears] = useState(15)
   const queryClient = useQueryClient()
-  const [refreshing, setRefreshing] = useState(false)
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    await queryClient.invalidateQueries()
-    setRefreshing(false)
+
+  const { data: holdData, isLoading: holdL, isFetching: holdF } = useHoldings({ sort_by: 'Market Value' })
+  const allHoldings = holdData?.holdings ?? []
+  const fundNames = allHoldings.map((h: any) => h.Fund)
+
+  const { data: searchRes } = useQuery({
+    queryKey: ['tickerSearch', extSearch],
+    queryFn: () => apiClient.searchTicker(extSearch),
+    enabled: extSearch.length >= 3,
+  })
+
+  // 1. Identify all assets for historical fetching
+  const selectedAssets = useMemo(() => {
+    const funds = selectedFunds.map((fname: string) => {
+      const h: any = allHoldings.find((x: any) => x.Fund === fname)
+      return { id: h?.ISIN || fname, name: fname, type: 'fund', short: fname.split(' ')[0] }
+    })
+    const bench = extTicker ? [{ id: extTicker.symbol, name: extTicker.name, type: 'bench', short: extTicker.name?.split(' ')[0] || extTicker.symbol }] : []
+    return [...funds, ...bench]
+  }, [selectedFunds, extTicker, allHoldings])
+
+  // 2. Multi-fetch individual histories
+  const historyResults = useQueries({
+    queries: selectedAssets.map((a: any) => ({
+      queryKey: ['assetHistory', a.id],
+      queryFn: () => apiClient.getBenchmarkHistory(a.id, 1825),
+      enabled: !!a.id,
+      staleTime: 24 * 60 * 60 * 1000,
+    }))
+  })
+
+  // 3. Multi-fetch rolling returns
+  const rollingResults = useQueries({
+    queries: selectedAssets.map((a: any) => ({
+      queryKey: ['rollingReturns', sid, a.id],
+      queryFn: () => apiClient.getRollingReturns(sid || '', a.id, 3),
+      enabled: !!sid && !!a.id && activeTrend === 'Rolling',
+      staleTime: 24 * 60 * 60 * 1000,
+    }))
+  })
+
+  const [period, setPeriod] = useState('1Y')
+  const { data: perfData, isLoading: perfL, isFetching: perfF, isError: perfE, error: perfErr } = usePerformance(period, { 
+    include_funds: selectedFunds.join(','),
+    benchmark: extTicker?.symbol || extTicker?.name || 'Nifty 50'
+  })
+
+  const historiesFetching = historyResults.some((r: any) => r.isFetching) || rollingResults.some((r: any) => r.isFetching)
+
+  const cleanCoreName = (name: string) => {
+    if (!name) return ''
+    return name.toLowerCase()
+      .replace(/(direct|regular|plan|growth|idcw|option|tax saver|fund|-|\b\w\b)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
   }
 
-  const pDays  = PERIOD_DAYS[period]
-  const pShort = PERIOD_SHORT[period]
+  // 4. Matrix calculation merging technicals + individual charts
+  const allMatrix = useMemo(() => {
+    return selectedAssets.map((asset: any, i: number) => {
+      const h: any = allHoldings.find((x: any) => x.Fund === asset.name)
+      const pFund: any = (perfData as any)?.funds?.find((x: any) => {
+        const hIsin = h?.ISIN?.toUpperCase()
+        const xIsin = x.isin?.toUpperCase()
+        if (hIsin && xIsin && hIsin === xIsin) return true
+        
+        if (x.fund === asset.name) return true
 
-  // All holdings (for fund selector + matrix data)
-  const { data: holdData, isLoading: holdL } = useHoldings({ sort_by: 'Market Value' })
-  const allHoldings = holdData?.holdings ?? []
-  const fundNames   = allHoldings.map((h: any) => h.Fund)
+        const coreX = cleanCoreName(x.fund)
+        const coreA = cleanCoreName(asset.name)
+        if (coreX && coreA && (coreX.includes(coreA) || coreA.includes(coreX))) return true
 
-  // Auto-select top 3 funds initially if none selected
-  useEffect(() => {
-    if (selectedFunds.length === 0 && fundNames.length > 0) {
-      setSelectedFunds(fundNames.slice(0, 3))
-    }
-  }, [fundNames, selectedFunds.length])
+        const tokensX = coreX.split(' ').filter(t => t.length > 2)
+        const tokensA = coreA.split(' ').filter(t => t.length > 2)
+        if (!tokensX.length || !tokensA.length) return false
+        const intersection = tokensX.filter(t => tokensA.includes(t))
+        return (intersection.length / Math.max(tokensX.length, tokensA.length)) >= 0.6
+      })
+      const hist = historyResults[i]?.data ?? {}
+      const isBench = asset.type === 'bench'
+      const bStats: any = (perfData as any)?.benchmark_stats
+      const trailingDict: Record<string, number> = {}
+      if (isBench && bStats?.returns) {
+        Object.assign(trailingDict, bStats.returns)
+      } else if (pFund?.roll_labels && pFund?.fund_rolls) {
+        pFund.roll_labels.forEach((lbl: string, idx: number) => {
+          if (pFund.fund_rolls[idx] != null) trailingDict[lbl] = pFund.fund_rolls[idx]
+        })
+      }
 
-  // External ticker search
-  const { data: searchRes, isFetching: searching } = useQuery({
-    queryKey:  ['tickerSearch', extSearch],
-    queryFn:   () => apiClient.searchTicker(extSearch),
-    enabled:   extSearch.length >= 3,
-    staleTime: 30_000,
-  })
-
-  // External ticker history
-  const { data: extHistory, isFetching: extLoading } = useQuery({
-    queryKey: ['extHistory', extTicker?.symbol, pDays],
-    queryFn:  () => extTicker?.symbol ? apiClient.getBenchmarkHistory(extTicker.symbol, pDays + 90) : Promise.resolve({ values: [], dates: [] }),
-    enabled:  !!extTicker?.symbol,
-  })
-
-  // Portfolio funds performance
-  const { data: perfData } = usePerformance(pShort)
-  const { data: alloc }    = useAllocation()
-
-  // Build matrix data for selected portfolio funds (live metrics from holdings)
-  const matrixFunds = useMemo(() => {
-    return selectedFunds.map((fname, i) => {
-      const h = allHoldings.find((x: any) => x.Fund === fname)
-      if (!h) return null
-      const pFund = perfData?.funds?.find((x: any) => x.fund === fname)
-      const gain1y = h['Gain%'] ?? 0
       return {
-        fund:     fname,
-        color:    COLORS[i],
-        icon:     (h.Category ?? 'E')[0],
-        category: h.Category,
-        plan:     h.Plan,
-        amc:      h.AMC,
-        capType:  h['Cap Type'],
+        name: asset.short,
+        shortName: asset.short,
+        fullName: asset.name,
+        id: asset.id,
+        isBench,
+        color: COLORS[i % COLORS.length],
+        // Technicals
+        alpha: isBench ? (bStats?.alpha ?? 0) : (pFund?.alpha || '—'),
+        beta: isBench ? (bStats?.beta ?? 1) : (pFund?.beta || '—'),
+        sharpe: isBench ? (bStats?.sharpe ?? '—') : (pFund?.sharpe || '—'),
+        sortino: isBench ? (bStats?.sortino ?? '—') : (pFund?.sortino || '—'),
+        volatility: isBench ? (bStats?.volatility ?? '—') : (pFund?.vol || '—'),
+        consistency: isBench ? '100%' : (pFund?.consistency || '—'),
+        risk: isBench ? 'Moderate' : (pFund?.verdict || 'Average'),
+        // Performance
+        return: isBench ? ((perfData as any)?.benchmark_return ?? 0) : (pFund?.return_period || 0),
+        trailing: trailingDict,
+        history: hist,
+        chartDates: hist.dates || [],
+        chartValues: hist.values || [], 
+        drawdownValues: calculateDrawdown(hist.values || []),
         data: {
-          [`${pShort} Return`]: pFund ? `${pFund.fund_xi >= 0 ? '+' : ''}${pFund.fund_xi.toFixed(2)}%` : `${gain1y >= 0 ? '+' : ''}${gain1y.toFixed(2)}%`,
-          'T_1M': pFund?.fund_rolls?.[0] !== undefined ? `${pFund.fund_rolls[0].toFixed(1)}% vs ${pFund.bench_rolls[0].toFixed(1)}%` : 'N/A',
-          'T_6M': pFund?.fund_rolls?.[1] !== undefined ? `${pFund.fund_rolls[1].toFixed(1)}% vs ${pFund.bench_rolls[1].toFixed(1)}%` : 'N/A',
-          'T_1Y': pFund?.fund_rolls?.[2] !== undefined ? `${pFund.fund_rolls[2].toFixed(1)}% vs ${pFund.bench_rolls[2].toFixed(1)}%` : 'N/A',
-          'T_3Y': pFund?.fund_rolls?.[3] !== undefined ? `${pFund.fund_rolls[3].toFixed(1)}% vs ${pFund.bench_rolls[3].toFixed(1)}%` : 'N/A',
-          'T_5Y': pFund?.fund_rolls?.[4] !== undefined ? `${pFund.fund_rolls[4].toFixed(1)}% vs ${pFund.bench_rolls[4].toFixed(1)}%` : 'N/A',
-
-          'R_1M': pFund?.fund_rolls?.[0] !== undefined ? `${(pFund.fund_rolls[0] * 0.92 + 0.5).toFixed(1)}% vs ${(pFund.bench_rolls[0] * 0.94 + 0.3).toFixed(1)}%` : 'N/A',
-          'R_6M': pFund?.fund_rolls?.[1] !== undefined ? `${(pFund.fund_rolls[1] * 0.92 + 0.5).toFixed(1)}% vs ${(pFund.bench_rolls[1] * 0.94 + 0.3).toFixed(1)}%` : 'N/A',
-          'R_1Y': pFund?.fund_rolls?.[2] !== undefined ? `${(pFund.fund_rolls[2] * 0.92 + 0.5).toFixed(1)}% vs ${(pFund.bench_rolls[2] * 0.94 + 0.3).toFixed(1)}%` : 'N/A',
-          'R_3Y': pFund?.fund_rolls?.[3] !== undefined ? `${(pFund.fund_rolls[3] * 0.92 + 0.5).toFixed(1)}% vs ${(pFund.bench_rolls[3] * 0.94 + 0.3).toFixed(1)}%` : 'N/A',
-          'R_5Y': pFund?.fund_rolls?.[4] !== undefined ? `${(pFund.fund_rolls[4] * 0.92 + 0.5).toFixed(1)}% vs ${(pFund.bench_rolls[4] * 0.94 + 0.3).toFixed(1)}%` : 'N/A',
-
-          Alpha:       pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(2)}%` : 'N/A',
-          Sharpe:      pFund ? pFund.sharpe?.toFixed(2) : 'N/A',
-          Sortino:     pFund ? pFund.sortino?.toFixed(2) : 'N/A',
-          Beta:        pFund ? pFund.beta?.toFixed(2) : 'N/A',
-          StdDev:      pFund ? `${pFund.vol?.toFixed(2)}%` : 'N/A',
-          Consistency: pFund ? `${pFund.consistency?.toFixed(1)}/10` : 'N/A',
-          Verdict:     pFund ? pFund.verdict : (gain1y >= 5 ? 'Strong' : gain1y >= 0 ? 'Average' : 'Weak'),
-          Value:       fmtInr(h['Market Value'], true),
-          Weight:      `${h['Weight%']?.toFixed(1)}%`,
-          Plan:        h.Plan,
+          '1Y Ret': trailingDict['1Y'] != null ? `${trailingDict['1Y'] >= 0 ? '+' : ''}${trailingDict['1Y'].toFixed(1)}%` : (pFund ? `${pFund.fund_xi?.toFixed(1)}%` : '—'),
+          '3Y Ret': trailingDict['3Y'] != null ? `${trailingDict['3Y'] >= 0 ? '+' : ''}${trailingDict['3Y'].toFixed(1)}%` : '—',
+          'Alpha': isBench ? '0.0%' : (pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(1)}%` : '—'),
+          'Sharpe': isBench ? (bStats?.sharpe?.toFixed(2) ?? '—') : (pFund?.sharpe?.toFixed(2) ?? '—'),
+          'Sortino': isBench ? (bStats?.sortino?.toFixed(2) ?? '—') : (pFund?.sortino?.toFixed(2) ?? '—'),
+          'Beta': isBench ? '1.00' : (pFund?.beta?.toFixed(2) ?? '—'),
+          'Volatility': isBench ? (bStats?.volatility != null ? `${bStats.volatility}%` : '—') : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : '—'),
+          'Consistency': isBench ? '10/10' : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : '—'),
+          'Verdict': isBench ? 'Target' : (pFund?.verdict ?? 'Average'),
+          'P/E Ratio': pFund?.pe_ratio != null ? pFund.pe_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : '—'),
+          'P/B Ratio': pFund?.pb_ratio != null ? pFund.pb_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : '—'),
+          'Day Chg.%': isBench ? ((perfData as any)?.benchmark_day_chg != null ? `${(perfData as any).benchmark_day_chg >= 0 ? '+' : ''}${(perfData as any).benchmark_day_chg.toFixed(2)}%` : '—') : (h?.['Day Chg.%'] != null ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%` : '—'),
+          AlphaVal: isBench ? 0 : (pFund?.alpha ?? 0),
+          SharpeVal: isBench ? (bStats?.sharpe ?? 0) : (pFund?.sharpe ?? 0),
+          VolVal: isBench ? (bStats?.volatility ?? 0) : (pFund?.vol ?? 100),
+          ConsistVal: isBench ? 10 : (pFund?.consistency ?? 0),
         },
-        holding: h,
       }
-    }).filter(Boolean) as any[]
-  }, [selectedFunds, allHoldings, pShort, perfData])
-
-  // External ticker metrics calculation
-  const extMetrics = useMemo(() => {
-    if (!extTicker || (!extHistory?.values?.length && !extHistory?.raw?.length)) return { sharpe: 'N/A', sortino: 'N/A', stdDev: 'N/A' }
-    const vals = (extHistory.raw || extHistory.values) as number[]
-    if (vals.length < 5) return { sharpe: 'N/A', sortino: 'N/A', stdDev: 'N/A' }
-
-    const dailyReturns: number[] = []
-    for (let i = 1; i < vals.length; i++) {
-      if (vals[i-1] !== 0) {
-        dailyReturns.push((vals[i] / vals[i-1]) - 1)
-      }
-    }
-    if (dailyReturns.length < 5) return { sharpe: 'N/A', sortino: 'N/A', stdDev: 'N/A' }
-
-    const mean = dailyReturns.reduce((a: number, b: number) => a + b, 0) / dailyReturns.length
-    let variance = 0
-    let downsideVariance = 0
-
-    for (const r of dailyReturns) {
-      variance += Math.pow(r - mean, 2)
-      if (r < 0) {
-        downsideVariance += Math.pow(r, 2)
-      }
-    }
-
-    const dailyVol = Math.sqrt(variance / dailyReturns.length)
-    const annualVol = dailyVol * Math.sqrt(252) * 100
-
-    const downsideVol = Math.sqrt(downsideVariance / dailyReturns.length)
-    const annualDownsideVol = downsideVol * Math.sqrt(252) * 100
-
-    const daysInPeriod = Math.min(vals.length - 1, pDays)
-    const periodRet = ((vals[vals.length - 1] / vals[vals.length - 1 - daysInPeriod]) - 1) * 100
-    
-    let annualRet = periodRet
-    if (pDays >= 1095 && vals.length > pDays) {
-      const years = pDays / 365
-      annualRet = (Math.pow(1 + periodRet / 100, 1 / years) - 1) * 100
-    }
-
-    const rf = 5.0
-    const sharpe = annualVol > 0 ? (annualRet - rf) / annualVol : 0
-    const sortino = annualDownsideVol > 0 ? (annualRet - rf) / annualDownsideVol : 0
-
-    return {
-      stdDev: annualVol.toFixed(2) + '%',
-      sharpe: sharpe.toFixed(2),
-      sortino: sortino.toFixed(2),
-      annualRet
-    }
-  }, [extTicker, extHistory, pShort, pDays])
-
-  // External ticker matrix entry
-  const extMatrixEntry = useMemo(() => {
-    if (!extTicker || (!extHistory?.values?.length && !extHistory?.raw?.length)) return null
-    const vals   = (extHistory.raw || extHistory.values) as number[]
-    const dates  = extHistory.dates  as string[]
-    const cutoff = (label: string, days: number) => {
-      if (vals.length <= days) return 'N/A'
-      const ret = ((vals[vals.length - 1] / vals[vals.length - 1 - days]) - 1) * 100
-      return `${ret >= 0 ? '+' : ''}${ret.toFixed(1)}%`
-    }
-    const ret1y = vals.length > 365 ? ((vals[vals.length-1]/vals[vals.length-366])-1)*100 : 0
-    const bRolls = perfData?.funds?.[0]?.bench_rolls ?? [1.5, 8.2, 12.4, 14.1, 13.8]
-
-    // Compute alpha and consistency
-    const alphaVal = extMetrics.annualRet !== undefined && typeof extMetrics.annualRet === 'number' 
-      ? extMetrics.annualRet - (perfData?.benchmark_return ?? 12.0) 
-      : 0.0
-    const consistencyScore = extMetrics.annualRet !== undefined && typeof extMetrics.annualRet === 'number' && extMetrics.annualRet > 0 
-      ? Math.min(10, Math.max(1, (extMetrics.annualRet / 2.5))).toFixed(1) 
-      : '1.0'
-
-    return {
-      fund:     extTicker.symbol,
-      color:    COLORS[selectedFunds.length],
-      icon:     'E',
-      category: 'External',
-      data: {
-        [`${pShort} Return`]: cutoff(pShort, pDays),
-        'T_1M': `${cutoff('1M', 30)} vs ${Number(bRolls[0]).toFixed(1)}%`, 
-        'T_6M': `${cutoff('6M', 180)} vs ${Number(bRolls[1]).toFixed(1)}%`,
-        'T_1Y': `${cutoff('1Y', 365)} vs ${Number(bRolls[2]).toFixed(1)}%`, 
-        'T_3Y': `${cutoff('3Y', 1095)} vs ${Number(bRolls[3]).toFixed(1)}%`, 
-        'T_5Y': `${cutoff('5Y', 1825)} vs ${Number(bRolls[4]).toFixed(1)}%`,
-
-        'R_1M': `${cutoff('1M', 30)} vs ${(Number(bRolls[0]) * 0.94 + 0.3).toFixed(1)}%`, 
-        'R_6M': `${cutoff('6M', 180)} vs ${(Number(bRolls[1]) * 0.94 + 0.3).toFixed(1)}%`,
-        'R_1Y': `${cutoff('1Y', 365)} vs ${(Number(bRolls[2]) * 0.94 + 0.3).toFixed(1)}%`, 
-        'R_3Y': `${cutoff('3Y', 1095)} vs ${(Number(bRolls[3]) * 0.94 + 0.3).toFixed(1)}%`, 
-        'R_5Y': `${cutoff('5Y', 1825)} vs ${(Number(bRolls[4]) * 0.94 + 0.3).toFixed(1)}%`,
-        Alpha: `${alphaVal >= 0 ? '+' : ''}${alphaVal.toFixed(2)}%`, 
-        Sharpe: extMetrics.sharpe, 
-        Sortino: extMetrics.sortino, 
-        Beta: '1.00', 
-        StdDev: extMetrics.stdDev,
-        Consistency: `${consistencyScore}/10`,
-        Verdict:     ret1y >= 5 ? 'Strong' : ret1y >= 0 ? 'Average' : 'Weak',
-        Value: 'External', Weight: '—', Plan: '—',
-      },
-      chartDates:  dates,
-      chartValues: vals,
-    }
-  }, [extTicker, extHistory, pShort, pDays, selectedFunds.length, extMetrics, perfData])
-
-  const allMatrix = [...matrixFunds, ...(extMatrixEntry ? [extMatrixEntry] : [])]
-
-  // Radar chart data
-  const radarData = useMemo(() => {
-    if (allMatrix.length < 2) return []
-    const allSectors = new Set<string>()
-    const profiles: Record<string, Record<string, number>> = {}
-    allMatrix.forEach((m) => {
-      const profile = getSectorProfile(m.category ?? 'Large Cap', m.fund)
-      profiles[m.fund] = profile
-      Object.keys(profile).forEach((s) => allSectors.add(s))
     })
-    return Array.from(allSectors).map((sector) => {
-      const entry: any = { sector }
-      allMatrix.forEach((m) => {
-        if (m && m.fund) {
-          entry[String(m.fund).slice(0, 14)] = profiles[m.fund]?.[sector] ?? 0
+  }, [selectedAssets, allHoldings, perfData, historyResults])
+
+  const simCurveData = useMemo(() => {
+    const yearsArr = Array.from({ length: simYears + 1 }, (_, i) => i)
+    return yearsArr.map((y: number) => {
+      const row: any = { year: `Year ${y}`, rawYear: y }
+      allMatrix.forEach((m: any) => {
+        const retStr = m.data['3Y Ret'] !== '—' ? m.data['3Y Ret'] : (m.data['1Y Ret'] !== '—' ? m.data['1Y Ret'] : '12%')
+        const rateNum = parseFloat(retStr.replace(/[^0-9.-]/g, '')) || 12.0
+        const r = rateNum / 100.0
+        
+        let fv = lumpsumAmount * Math.pow(1 + r, y)
+        if (r > 0 && y > 0) {
+          const annualSip = sipAmount * 12
+          fv += annualSip * ((Math.pow(1 + r, y) - 1) / r) * (1 + r)
+        }
+        row[m.id] = Math.round(fv)
+      })
+      return row
+    })
+  }, [allMatrix, sipAmount, lumpsumAmount, simYears])
+
+
+
+  const trailingChartData = useMemo(() => {
+    const horizons = ['1M', '3M', '6M', '1Y', '3Y', '5Y']
+    return horizons.map((h: string) => {
+      const row: any = { horizon: h }
+      allMatrix.forEach((m: any) => {
+        row[m.id] = m.trailing[h] ?? null
+      })
+      return row
+    })
+  }, [allMatrix])
+
+  const rollingChartData = useMemo(() => {
+    const dateSet = new Set<string>()
+    const maps: Record<string, Map<string, number>> = {}
+
+    selectedAssets.forEach((asset: any, idx: number) => {
+      const res = rollingResults[idx]?.data
+      if (res && res.fund_series?.length) {
+        const m = new Map<string, number>()
+        res.fund_series.forEach((pt: any) => {
+          dateSet.add(pt.date)
+          m.set(pt.date, pt.value)
+        })
+        maps[asset.id] = m
+      } else if (res && res.bench_series?.length && asset.type === 'bench') {
+        const m = new Map<string, number>()
+        res.bench_series.forEach((pt: any) => {
+          dateSet.add(pt.date)
+          m.set(pt.date, pt.value)
+        })
+        maps[asset.id] = m
+      }
+    })
+
+    const sortedDates = Array.from(dateSet).sort()
+    return sortedDates.map((date: string) => {
+      const row: any = { date }
+      selectedAssets.forEach((asset: any) => {
+        if (maps[asset.id] && maps[asset.id].has(date)) {
+          row[asset.id] = maps[asset.id].get(date)
         }
       })
-      return entry
+      return row
     })
-  }, [allMatrix])
+  }, [selectedAssets, rollingResults])
 
-  // Overlap scores
-  const overlapScores = useMemo(() => {
-    if (allMatrix.length < 2) return []
-    return allMatrix.map((m) => {
-      const maxOverlap = Math.max(
-        0,
-        ...allMatrix
-          .filter((m2) => m2.fund !== m.fund)
-          .map((m2) => {
-            return computeOverlap(
-              { Fund: m.fund, Category: m.category ?? 'Equity', AMC: m.amc ?? '', 'Cap Type': m.capType ?? 'Mixed' },
-              { Fund: m2.fund, Category: m2.category ?? 'Equity', AMC: m2.amc ?? '', 'Cap Type': m2.capType ?? 'Mixed' }
-            )
-          })
-      )
-      return { fund: m.fund, uniqueness: 100 - maxOverlap }
-    })
-  }, [allMatrix])
-  // Assemble metrics for Grouped Bar Chart (Trailing & Rolling returns)
-  const chartGroupData = useMemo(() => {
-    const timeframes = ['1M', '6M', '1Y', '3Y', '5Y']
-    return timeframes.map((tf, idx) => {
-      const dataPoint: any = { period: tf }
-      
-      const bRolls = perfData?.funds?.[0]?.bench_rolls ?? [1.5, 8.2, 12.4, 14.1, 13.8]
-      dataPoint['Benchmark'] = parseFloat(Number(bRolls[idx]).toFixed(1))
+  const trendData = useMemo(() => {
+    if (activeTrend === 'Trailing' || activeTrend === 'Rolling') return []
 
-      allMatrix.forEach((m) => {
-        if (!m || !m.fund) return
-        let rollStr = m.data?.[`T_${tf}`] || '0%'
-        const match = rollStr.match(/^([+-]?\d+\.?\d*)/)
-        const assetRate = match ? parseFloat(match[1]) : 0.0
-        dataPoint[String(m.fund).slice(0, 16)] = assetRate
+    const dateSet = new Set<string>()
+    allMatrix.forEach((m: any) => m.chartDates?.forEach((d: string) => dateSet.add(d)))
+    const sortedDates = Array.from(dateSet).sort()
+    if (!sortedDates.length) return []
+
+    const assetMaps = allMatrix.map((m: any) => {
+      const valMap = new Map<string, number>()
+      const ddMap = new Map<string, number>()
+      m.chartDates?.forEach((d: string, idx: number) => {
+        if (m.chartValues[idx] != null) valMap.set(d, m.chartValues[idx])
+        if (m.drawdownValues[idx] != null) ddMap.set(d, m.drawdownValues[idx])
       })
-      return dataPoint
+      const firstVal = m.chartValues?.find((v: number) => v != null && v > 0) || 1
+      return { id: m.id, map: valMap, ddMap, firstVal }
     })
-  }, [allMatrix, perfData])
 
-  if (holdL) {
-    return <TabLoader message="Fetching historical market vectors for alignment..." />
+    return sortedDates.map((date: string) => {
+      const row: any = { date }
+      assetMaps.forEach((adm: any) => {
+        if (activeTrend === 'Wealth') {
+          const val = adm.map.get(date)
+          if (val != null) row[adm.id] = (val / adm.firstVal) * 10000
+        } else if (activeTrend === 'Drawdown') {
+          const dd = adm.ddMap.get(date)
+          if (dd != null) row[adm.id] = dd
+        }
+      })
+      return row
+    })
+  }, [allMatrix, activeTrend])
+
+  // Top Metrics for Hero Cards
+  const heroMetrics = useMemo(() => {
+    if (allMatrix.length < 1) return null
+    return {
+      topAlpha: allMatrix.reduce((prev, curr) => (prev.data.AlphaVal > curr.data.AlphaVal) ? prev : curr),
+      topSharpe: allMatrix.reduce((prev, curr) => (prev.data.SharpeVal > curr.data.SharpeVal) ? prev : curr),
+      bestConsist: allMatrix.reduce((prev, curr) => (prev.data.ConsistVal > curr.data.ConsistVal) ? prev : curr),
+      lowestVol: allMatrix.reduce((prev, curr) => (prev.data.VolVal < curr.data.VolVal) ? prev : curr),
+    }
+  }, [allMatrix])
+
+  if (perfE && (perfErr as any)?.response?.status === 404) {
+    return (
+      <Box sx={{ py: 12, textAlign: 'center' }}>
+        <WarningAmberIcon sx={{ fontSize: 60, color: 'error.main', mb: 2 }} />
+        <Typography variant="h5" sx={{ fontWeight: 800, mb: 1 }}>Session Expired</Typography>
+        <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4 }}>Please re-upload your CAS file to continue analysis.</Typography>
+        <Button variant="contained" onClick={() => window.location.href = '/'}>Go to Upload</Button>
+      </Box>
+    )
+  }
+
+  if (perfE) {
+    return (
+      <Box sx={{ py: 12, textAlign: 'center' }}>
+        <WarningAmberIcon sx={{ fontSize: 60, color: 'warning.main', mb: 2 }} />
+        <Typography variant="h5" sx={{ fontWeight: 800, mb: 1 }}>Data Pipeline Interrupted</Typography>
+        <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4 }}>The institutional performance engine encountered a processing delay. Please try refreshing.</Typography>
+        <Button variant="contained" onClick={() => queryClient.invalidateQueries({ queryKey: ['performance'] })}>Retry Analytics</Button>
+      </Box>
+    )
   }
 
   return (
     <Box>
-      <SectionHeader
-        title="Fund Comparison Matrix"
-        subtitle="Compare portfolio funds against each other or any external market ticker"
+      <SectionHeader 
+        title="Comparison Cockpit" 
+        subtitle="Institutional-grade asset comparison with dynamic multi-vector risk attribution."
       />
 
-      {/* ── Selection bar ─────────────────────────────────────────── */}
-      <Paper elevation={1} sx={{ p: 2.5, mb: 3, borderRadius: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={refreshing ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
-            disabled={refreshing}
-            onClick={handleRefresh}
-            sx={{
-              borderColor: '#E2E8F0', color: '#475569', textTransform: 'none', fontWeight: 600,
-              fontSize: '0.75rem', px: 1.5, py: 0.6, borderRadius: 2,
-              '&:hover': { borderColor: '#1D4ED8', background: '#EFF6FF', color: '#1D4ED8' },
-            }}
-          >
-            {refreshing ? 'Refreshing Analytics...' : 'Sync Live Analytics'}
-          </Button>
-        </Box>
-        <Grid container spacing={2} alignItems="flex-start">
-          {/* Portfolio fund selector */}
-          <Grid item xs={12} md={5}>
-            <Autocomplete
-              multiple
-              size="small"
-              options={fundNames}
-              value={selectedFunds}
-              onChange={(_, v) => setSelectedFunds(v.slice(0, 4))}
-              renderTags={(val, getProps) =>
-                val.map((option, i) => (
-                  <Chip {...getProps({ index: i })} key={option} size="small"
-                    label={option.length > 24 ? option.slice(0, 24) + '…' : option}
-                    sx={{ fontSize: 10, fontWeight: 600, background: COLORS[i] + '22', color: COLORS[i] }}
-                  />
-                ))
-              }
-              renderOption={(props, option) => (
-                <Box component="li" {...props} sx={{ fontSize: 12, py: 0.75 }}>
-                  <Box sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {option}
-                  </Box>
-                </Box>
-              )}
-              renderInput={(params) => (
-                <TextField {...params} label="Select portfolio funds (max 4)" placeholder="Type to search…" />
-              )}
-            />
+      <motion.div initial="hidden" animate="visible" variants={itemVar}>
+        <Paper className="glass" sx={{ p: 4, mb: 4 }}>
+          <Grid container spacing={4}>
+            <Grid item xs={12} md={6}>
+              <Typography variant="overline" sx={{ fontWeight: 800, color: 'primary.main', mb: 2, display: 'block', letterSpacing: '0.1em' }}>
+                PORTFOLIO ASSETS
+              </Typography>
+              <Autocomplete
+                multiple
+                options={fundNames}
+                value={selectedFunds}
+                onChange={(_, newVal) => setSelectedFunds(newVal)}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...tagProps } = getTagProps({ index })
+                    return (
+                      <Chip key={key} variant="outlined" label={option} {...tagProps} 
+                        sx={{ borderRadius: '10px', borderColor: 'rgba(255,255,255,0.2)', color: '#fff', fontWeight: 600, fontSize: 11 }} />
+                    )
+                  })
+                }
+                renderInput={(params) => <TextField {...params} label="Select Portfolio Assets" placeholder="Add funds to comparison" />}
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: '16px', bgcolor: 'rgba(255,255,255,0.03)' } }}
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Typography variant="overline" sx={{ fontWeight: 800, color: 'primary.main', mb: 2, display: 'block', letterSpacing: '0.1em' }}>
+                MARKET COMPARATOR & PEERS
+              </Typography>
+              <Autocomplete
+                options={searchRes?.results || []}
+                getOptionLabel={(o: any) => `${o.symbol} - ${o.name}`}
+                value={extTicker}
+                onChange={(_, newVal) => setExtTicker(newVal)}
+                onInputChange={(_, val) => setExtSearch(val)}
+                noOptionsText={extSearch.length < 3 ? 'Type at least 3 chars (e.g., RELIANCE, NIFTY)' : 'No matching peers'}
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: '16px', bgcolor: 'rgba(255,255,255,0.03)' } }}
+                renderInput={(params) => <TextField {...params} label="Search Market Index or Peer Fund" placeholder="e.g., Nifty 50, S&P 500, Parag Parikh Flexi" />}
+              />
+            </Grid>
           </Grid>
+        </Paper>
+      </motion.div>
 
-          {/* External ticker */}
-          <Grid item xs={12} md={4}>
-            <Autocomplete
-              size="small"
-              options={searchRes?.results ?? []}
-              getOptionLabel={(o: any) => `${o.symbol} — ${o.name}`}
-              loading={searching}
-              value={extTicker}
-              onChange={(_, v) => setExtTicker(v)}
-              inputValue={extSearch}
-              onInputChange={(_, v) => setExtSearch(v)}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Add external ticker (Yahoo Finance)"
-                  placeholder="e.g. NIFTY, RELIANCE, GOLDBEES…"
-                  InputProps={{
-                    ...params.InputProps,
-                    startAdornment: (
-                      <>
-                        <SearchIcon sx={{ fontSize: 17, color: '#94A3B8', mr: 0.5 }} />
-                        {params.InputProps.startAdornment}
-                      </>
-                    ),
-                    endAdornment: (
-                      <>
-                        {searching && <CircularProgress size={14} />}
-                        {params.InputProps.endAdornment}
-                      </>
-                    ),
-                  }}
-                />
-              )}
-            />
+      {holdL || ((perfL || historiesFetching) && selectedAssets.length > 0) ? (
+        <Stack spacing={3}>
+          <Grid container spacing={2}>
+            {[1, 2, 3, 4].map(n => (
+              <Grid item xs={12} sm={6} md={3} key={n}>
+                <Skeleton variant="rounded" height={130} sx={{ bgcolor: 'rgba(255,255,255,0.03)', borderRadius: '24px' }} />
+              </Grid>
+            ))}
           </Grid>
-
-          {/* Period */}
-          <Grid item xs={12} md={3}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Compare Horizon</InputLabel>
-              <Select value={period} label="Compare Horizon" onChange={(e) => setPeriod(e.target.value)}>
-                {PERIODS.map((p) => (
-                  <MenuItem key={p} value={p} sx={{ fontSize: 13 }}>{p}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-        </Grid>
-      </Paper>
-
-      {allMatrix.length === 0 && (
-        <Alert severity="info">
-          Select at least one portfolio fund or add an external ticker to start comparing.
-        </Alert>
-      )}
-
-      {allMatrix.length > 0 && (
-        <>
-          {/* ── Comparison Matrix ─────────────────────────────────── */}
-          <Paper elevation={1} sx={{ borderRadius: 3, overflow: 'hidden', mb: 3 }}>
-            {/* Header row — fund names */}
-            <Box sx={{ display: 'flex', background: '#F8FAFC', borderBottom: '2px solid #E2E8F0' }}>
-              <Box sx={{ minWidth: 180, flexShrink: 0, p: '12px 14px' }}>
-                <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  Parameter
-                </Typography>
-              </Box>
-              {allMatrix.map((fd, i) => (
-                <Box key={i} sx={{ flex: 1, p: '10px 14px', textAlign: 'center', borderLeft: `3px solid ${fd.color}`, minWidth: 0 }}>
-                  <Box sx={{
-                    width: 24, height: 24, borderRadius: '50%', background: fd.color,
-                    color: '#fff', fontSize: 10, fontWeight: 800,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 0.75,
-                  }}>
-                    {fd.icon}
-                  </Box>
-                  <Typography sx={{
-                    fontSize: 11, fontWeight: 700, color: '#0F172A',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {fd.fund.length > 22 ? fd.fund.slice(0, 22) + '…' : fd.fund}
-                  </Typography>
-                  {fd.category && (
-                    <Typography sx={{ fontSize: 9, color: '#94A3B8', mt: 0.25 }}>
-                      [{fd.category}]
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Box>
-
-            {/* Matrix rows */}
-            <MatrixSection label={`📈 TRAILING RETURNS VS BENCHMARK`} />
-            <MatrixRow label="Trailing 1M"          metricKey="T_1M"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Trailing 6M"          metricKey="T_6M"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Trailing 1Y"          metricKey="T_1Y"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Trailing 3Y"          metricKey="T_3Y"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Trailing 5Y"          metricKey="T_5Y"              data={allMatrix.map(f => f.data)} />
-
-            <MatrixSection label={`🔄 ROLLING RETURNS VS BENCHMARK`} />
-            <MatrixRow label="Rolling 1M"           metricKey="R_1M"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Rolling 6M"           metricKey="R_6M"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Rolling 1Y"           metricKey="R_1Y"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Rolling 3Y"           metricKey="R_3Y"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Rolling 5Y"           metricKey="R_5Y"              data={allMatrix.map(f => f.data)} />
-
-            <MatrixSection label="🛡️ RISK & RATIOS" />
-            <MatrixRow label="Alpha"                   metricKey="Alpha"             data={allMatrix.map(f => f.data)} isBold />
-            <MatrixRow label="Sharpe Ratio"            metricKey="Sharpe"            data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Sortino Ratio"           metricKey="Sortino"           data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Beta (Sensitivity)"      metricKey="Beta"              data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Standard Deviation"      metricKey="StdDev"            data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Consistency Score"       metricKey="Consistency"       data={allMatrix.map(f => f.data)} />
-
-            <MatrixSection label="📋 PORTFOLIO INFO" />
-            <MatrixRow label="Current Value"           metricKey="Value"             data={allMatrix.map(f => f.data)} isBold />
-            <MatrixRow label="Weight in Portfolio"     metricKey="Weight"            data={allMatrix.map(f => f.data)} />
-            <MatrixRow label="Plan Type"               metricKey="Plan"              data={allMatrix.map(f => f.data)} />
-
-            <MatrixSection label="🏆 THE VERDICT" />
-            <MatrixRow label="Expert Analysis"         metricKey="Verdict"           data={allMatrix.map(f => f.data)} isVerdict />
-          </Paper>
-
-          {/* ── Fund info cards ────────────────────────────────────── */}
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            {matrixFunds.map((fd, i) => (
-              <Grid item xs={12} sm={6} md={3} key={fd.fund}>
-                <Paper elevation={1} sx={{ p: 2, borderRadius: 3, borderTop: `3px solid ${fd.color}`, height: '100%' }}>
-                  <Typography variant="body2" fontWeight={700} sx={{
-                    mb: 1.5, pb: 1, borderBottom: '1px solid #F1F5F9',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {fd.holding.Fund}
-                  </Typography>
-                  {[
-                    { l: 'Market Value', v: fmtInr(fd.holding['Market Value'], true) },
-                    { l: 'Invested',     v: fmtInr(fd.holding.Invested, true) },
-                    { l: 'Return',       v: fmtPct(fd.holding['Gain%']), color: gainColor(fd.holding['Gain%']) },
-                    { l: 'AMC',          v: fd.holding.AMC },
-                    { l: 'Weight',       v: `${fd.holding['Weight%']?.toFixed(1)}%` },
-                  ].map((row) => (
-                    <Box key={row.l} sx={{
-                      display: 'flex', justifyContent: 'space-between', py: 0.6,
-                      borderBottom: '1px solid #F8FAFC', '&:last-child': { borderBottom: 'none' },
-                    }}>
-                      <Typography sx={{ fontSize: 11, color: '#64748B', fontWeight: 500 }}>{row.l}</Typography>
-                      <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 11, fontWeight: 700, color: (row as any).color ?? '#0F172A' }}>
-                        {row.v}
-                      </Typography>
-                    </Box>
-                  ))}
-                  <Box sx={{ mt: 1.5, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    <CategoryBadge category={fd.holding.Category} />
-                    <PlanBadge plan={fd.holding.Plan} />
-                  </Box>
-                </Paper>
+          <Skeleton variant="rounded" height={400} sx={{ bgcolor: 'rgba(255,255,255,0.03)', borderRadius: '32px' }} />
+        </Stack>
+      ) : allMatrix.length > 0 ? (
+        <motion.div initial="hidden" animate="visible" variants={containerVar}>
+          <Grid container spacing={2} sx={{ mb: 4 }}>
+            {heroMetrics && [
+              { label: 'Alpha Leader', value: heroMetrics.topAlpha.data.Alpha, sub: heroMetrics.topAlpha.shortName, accent: 'success', info: "Jensen's Alpha measures excess return generated by the manager above expected risk-adjusted market return." },
+              { label: 'Risk-Adj Best', value: heroMetrics.topSharpe.data.Sharpe, sub: heroMetrics.topSharpe.shortName, accent: 'info', info: "Sharpe Ratio measures the excess return earned per unit of total portfolio volatility." },
+              { label: 'Max Consistency', value: heroMetrics.bestConsist.data.Consistency, sub: heroMetrics.bestConsist.shortName, accent: 'warn', info: "Consistency Score measures the percentage of 3-year rolling windows where the fund outperformed its benchmark." },
+              { label: 'Lowest Volatility', value: heroMetrics.lowestVol.data.Volatility, sub: heroMetrics.lowestVol.shortName, accent: 'none', info: "Annualized standard deviation of daily returns. Lower volatility indicates smoother price stability." },
+            ].map((m, i) => (
+              <Grid item xs={12} sm={6} md={3} key={i}>
+                <MetricCard {...m as any} loading={holdL || holdF || perfL || perfF} />
               </Grid>
             ))}
           </Grid>
 
-          {/* ── Comparison Intelligence (takes care of internal & external) ── */}
-          {allMatrix.length >= 2 && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <SectionHeader
-                title="Comparison Intelligence"
-                subtitle="Deep-dive sector overlap and redundancy analysis"
-              />
+          <Box sx={{ mb: 4, display: 'flex', justifyContent: 'center' }}>
+            <Tabs value={mode} onChange={(_, v) => setMode(v)}
+              sx={{ bgcolor: 'rgba(19, 27, 46, 0.6)', backdropFilter: 'blur(20px)', borderRadius: '16px', p: '4px' }}>
+              <Tab value="Overview" label="Matrix Overview" icon={<AssessmentIcon />} iconPosition="start" />
+              <Tab value="Technical" label="Deep Technicals" icon={<CompareArrowsIcon />} iconPosition="start" />
+              <Tab value="Trends" label="Trend Analysis" icon={<ShowChartIcon />} iconPosition="start" />
+            </Tabs>
+          </Box>
 
-              <Grid container spacing={3}>
-                {/* Radar */}
-                <Grid item xs={12} md={7}>
-                  <Paper elevation={1} sx={{ p: 3, borderRadius: 3 }}>
-                    <Typography variant="h6" sx={{ mb: 2 }}>Sector Exposure Radar</Typography>
-                    <ResponsiveContainer width="100%" height={320}>
-                      <RadarChart data={radarData} margin={{ top: 10, right: 30, left: 30, bottom: 10 }}>
-                        <PolarGrid stroke="#E2E8F0" />
-                        <PolarAngleAxis dataKey="sector" tick={{ fontSize: 11, fill: '#64748B' }} />
-                        <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9 }} tickCount={3} />
-                        {allMatrix.map((m, i) => (
-                          <Radar
-                            key={m.fund}
-                            name={m.fund.slice(0, 16) + (m.fund.length > 16 ? '…' : '')}
-                            dataKey={m.fund.slice(0, 14)}
-                            stroke={m.color ?? COLORS[i % COLORS.length]}
-                            fill={m.color ?? COLORS[i % COLORS.length]}
-                            fillOpacity={0.15}
-                            strokeWidth={2}
-                          />
-                        ))}
-                        <Legend wrapperStyle={{ fontSize: 11, fontWeight: 600 }} />
-                        <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #E2E8F0', fontSize: 12 }} />
-                      </RadarChart>
-                    </ResponsiveContainer>
-                  </Paper>
+          <AnimatePresence mode="wait">
+            <motion.div key={mode} variants={containerVar} initial="hidden" animate="visible" exit="hidden">
+              {mode === 'Overview' && (
+                <Grid container spacing={3}>
+                  <Grid item xs={12} lg={8}>
+                    <motion.div variants={itemVar}>
+                      <GlassTableContainer>
+                        <GlassHeader label="Comparison Matrix" icon={VerifiedUserIcon} />
+                        <Table size="medium">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ASSET NAME</TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>1Y RET <InfoTooltip text="Trailing 1-year Compound Annual Growth Rate (CAGR)." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ALPHA <InfoTooltip text="Jensen's Alpha: Excess return earned above the benchmark index for the risk taken." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>BETA <InfoTooltip text="Market sensitivity. Beta > 1 indicates higher volatility than the market." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SHARPE <InfoTooltip text="Sharpe Ratio: Total excess return earned per unit of overall volatility." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>VERDICT <InfoTooltip text="Algorithmic multi-vector risk attribution verdict." /></TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {allMatrix.map((m: any) => (
+                              <TableRow key={m.id} sx={{ 
+                                '&:hover': { background: alpha(m.color, 0.05), borderLeftColor: m.color },
+                                transition: 'background 0.2s ease', borderLeft: `4px solid transparent`,
+                              }}>
+                                <TableCell sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: m.color, boxShadow: `0 0 8px ${m.color}` }} />
+                                    <Typography variant="body2" fontWeight={700}>{m.name.slice(0, 32)}...</Typography>
+                                  </Box>
+                                </TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data['1Y Ret']}</TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700, color: gainColor(m.data.AlphaVal) }}>{m.data.Alpha}</TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data.Beta}</TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data.Sharpe}</TableCell>
+                                <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}><VerdictChip verdict={m.data.Verdict} /></TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </GlassTableContainer>
+                    </motion.div>
+                  </Grid>
+                  <Grid item xs={12} lg={4}>
+                    <motion.div variants={itemVar}>
+                      <Paper className="glass" sx={{ p: 3, height: '100%', minHeight: 400 }}>
+                        <GlassHeader label="Institutional Radar" icon={AutoAwesomeIcon} />
+                        <ResponsiveContainer width="100%" height={320}>
+                          <RadarChart data={allMatrix.map((m: any) => ({ subject: m.shortName, A: m.data.SharpeVal * 20, B: m.data.ConsistVal * 10 }))}>
+                            <PolarGrid stroke="rgba(255,255,255,0.1)" />
+                            <PolarAngleAxis dataKey="subject" tick={{ fill: '#94A3B8', fontSize: 10 }} />
+                            <Radar name="Risk-Adj" dataKey="A" stroke="#6366F1" fill="#6366F1" fillOpacity={0.3} />
+                            <Radar name="Consistency" dataKey="B" stroke="#4EDE93" fill="#4EDE93" fillOpacity={0.3} />
+                            <Legend />
+                          </RadarChart>
+                        </ResponsiveContainer>
+                      </Paper>
+                    </motion.div>
+                  </Grid>
                 </Grid>
+              )}
 
-                {/* Uniqueness + overlap */}
-                <Grid item xs={12} md={5}>
-                  <Paper elevation={1} sx={{ p: 3, borderRadius: 3, height: '100%' }}>
-                    <Typography variant="h6" sx={{ mb: 2 }}>Portfolio Diversification Index</Typography>
-                    {overlapScores.map((os) => {
-                      const color = os.uniqueness > 70 ? '#059669' : os.uniqueness > 40 ? '#D97706' : '#DC2626'
-                      const bg    = os.uniqueness > 70 ? '#ECFDF5' : os.uniqueness > 40 ? '#FFFBEB' : '#FEF2F2'
-                      return (
-                        <Box key={os.fund} sx={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          py: 1.5, borderBottom: '1px solid #F1F5F9', '&:last-child': { borderBottom: 'none' },
-                        }}>
-                          <Typography variant="body2" fontWeight={600} sx={{
-                            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', mr: 1,
-                          }}>
-                            {os.fund.length > 28 ? os.fund.slice(0, 28) + '…' : os.fund}
-                          </Typography>
-                          <Box sx={{
-                            px: 1.5, py: 0.4, borderRadius: 999, flexShrink: 0,
-                            background: bg, color,
-                            fontFamily: '"DM Mono",monospace', fontSize: 12, fontWeight: 700,
-                          }}>
-                            {os.uniqueness.toFixed(0)}% Unique
-                          </Box>
-                        </Box>
-                      )
-                    })}
+              {mode === 'Technical' && (
+                <Grid container spacing={2}>
+                  {allMatrix.map((m: any, idx: number) => (
+                    <Grid item xs={12} md={6} lg={3} key={idx}>
+                      <motion.div variants={itemVar}>
+                        <Paper className="glass" sx={{ p: 3, borderTop: `4px solid ${m.color}` }}>
+                          <Typography variant="h6" sx={{ mb: 2, color: m.color }}>{m.shortName}</Typography>
+                          <Stack spacing={2}>
+                            {[
+                              { label: 'Jensen\'s Alpha', val: m.data.Alpha, color: gainColor(m.data.AlphaVal), info: "Risk-adjusted excess return earned above the benchmark index." },
+                              { label: 'Sharpe Ratio', val: m.data.Sharpe, info: "Total excess return earned per unit of overall volatility." },
+                              { label: 'Sortino Ratio', val: m.data.Sortino, info: "Downside risk-adjusted return. Evaluates return earned per unit of bad (downside) volatility." },
+                              { label: 'Beta (Market)', val: m.data.Beta, info: "Sensitivity to market movements. Beta = 1 indicates exact market volatility." },
+                              { label: 'Volatility', val: m.data.Volatility, info: "Annualized standard deviation of daily returns over the selected timeframe." },
+                              { label: 'P/E Ratio', val: m.data['P/E Ratio'], info: "Price-to-Earnings valuation ratio of underlying portfolio holdings." },
+                              { label: 'P/B Ratio', val: m.data['P/B Ratio'], info: "Price-to-Book valuation ratio of underlying portfolio holdings." },
+                              { label: 'Consistency', val: m.data.Consistency, info: "Percentage of 3-year rolling windows outperforming the index." },
+                            ].map((stat, i) => (
+                              <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>{stat.label}</Typography>
+                                  <InfoTooltip text={stat.info} />
+                                </Box>
+                                <Typography className="num" sx={{ fontSize: 13, fontWeight: 700, color: (stat as any).color ?? '#fff' }}>{stat.val}</Typography>
+                              </Box>
+                            ))}
+                          </Stack>
+                        </Paper>
+                      </motion.div>
+                    </Grid>
+                  ))}
+                </Grid>
+              )}
 
-                    <Divider sx={{ my: 2 }} />
+              {mode === 'Trends' && (
+                <Paper className="glass" sx={{ p: 4, position: 'relative', minHeight: 450 }}>
+                  {(historyResults.some((r: any) => r.isLoading) || rollingResults.some((r: any) => r.isLoading)) && (
+                    <OverlayLoader message="Analyzing trend multi-vectors..." />
+                  )}
+                  <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                    <ToggleButtonGroup size="small" value={activeTrend} exclusive onChange={(_, v) => v && setActiveTrend(v)}>
+                      <ToggleButton value="Trailing" sx={{ px: 3, py: 1, fontWeight: 700 }}>Trailing Returns (1M - 5Y)</ToggleButton>
+                      <ToggleButton value="Rolling" sx={{ px: 3, py: 1, fontWeight: 700 }}>3Y Rolling Return (Consistency)</ToggleButton>
+                      <ToggleButton value="Wealth" sx={{ px: 3, py: 1, fontWeight: 700 }}>Wealth Growth (₹10k)</ToggleButton>
+                      <ToggleButton value="Drawdown" sx={{ px: 3, py: 1, fontWeight: 700 }}>Risk Stress Test (Drawdown)</ToggleButton>
+                    </ToggleButtonGroup>
+                    <Typography variant="caption" sx={{ opacity: 0.5 }}>
+                      {activeTrend === 'Trailing' ? 'Point-to-point trailing snapshot across horizons' : 
+                       activeTrend === 'Rolling' ? '3-Year rolling return consistency curve over time' : 
+                       activeTrend === 'Wealth' ? 'Historical compounding of ₹10,000 baseline' : 
+                       'Historical peak-to-trough drawdown risk profile'}
+                    </Typography>
+                  </Box>
 
-                    {/* Clash report */}
-                    <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Redundancy Risk</Typography>
-                    {(() => {
-                      const allSectors = new Set<string>()
-                      const profiles: Record<string, Record<string, number>> = {}
-                      allMatrix.forEach((m) => {
-                        const p = getSectorProfile(m.category ?? 'Large Cap', m.fund)
-                        profiles[m.fund] = p
-                        Object.keys(p).forEach((s) => allSectors.add(s))
-                      })
-                      const clashes = Array.from(allSectors)
-                        .map((s) => ({ sector: s, funds: allMatrix.filter((m) => (profiles[m.fund]?.[s] ?? 0) > 15).map(m => m.fund) }))
-                        .filter((c) => c.funds.length >= 2)
+                  <ResponsiveContainer width="100%" height={400}>
+                    {activeTrend === 'Trailing' ? (
+                      <BarChart data={trailingChartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="horizon" tick={{ fill: '#94A3B8', fontSize: 12, fontWeight: 700 }} />
+                        <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                        <Tooltip content={<ChartTooltip isPct />} />
+                        <Legend verticalAlign="top" height={36} />
+                        {allMatrix.map((m: any) => (
+                          <Bar key={m.id} dataKey={m.id} name={m.shortName} fill={m.color} radius={[6, 6, 0, 0]} />
+                        ))}
+                      </BarChart>
+                    ) : activeTrend === 'Rolling' ? (
+                      <LineChart data={rollingChartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="date" hide />
+                        <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+                        <Tooltip content={<ChartTooltip isPct />} />
+                        <Legend verticalAlign="top" height={36} />
+                        {allMatrix.map((m: any) => (
+                          <Line key={m.id} name={m.shortName} type="monotone" dataKey={m.id} stroke={m.color} strokeWidth={3} dot={false} connectNulls />
+                        ))}
+                      </LineChart>
+                    ) : (
+                      <LineChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="date" hide />
+                        <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} tickFormatter={(v) => activeTrend === 'Wealth' ? `₹${(v/1000).toFixed(0)}k` : `${v}%`} />
+                        <Tooltip content={<ChartTooltip isPct={activeTrend === 'Drawdown'} />} />
+                        <Legend verticalAlign="top" height={36} />
+                        {allMatrix.map((m: any) => (
+                          <Line key={m.id} name={m.shortName} type="monotone" dataKey={m.id} stroke={m.color} strokeWidth={3} dot={false} connectNulls />
+                        ))}
+                      </LineChart>
+                    )}
+                  </ResponsiveContainer>
+                </Paper>
+              )}
+            </motion.div>
+          </AnimatePresence>
 
-                      return clashes.length > 0 ? clashes.slice(0, 3).map((c) => (
-                        <Box key={c.sector} sx={{ mb: 1.5, p: 1.5, background: '#FEF2F2', borderRadius: 2, border: '1px solid #FECACA' }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#DC2626' }}>
-                              {c.sector} Overlap
-                            </Typography>
-                            <Chip size="small" label={`${c.funds.length} funds`}
-                              sx={{ fontSize: 10, background: '#FEE2E2', color: '#DC2626' }} />
-                          </Box>
-                          <Typography sx={{ fontSize: 11, color: '#7F1D1D', mt: 0.5 }}>
-                            {c.funds.map((f) => f.split(' ')[0]).join(' & ')} share significant {c.sector} exposure.
-                          </Typography>
-                        </Box>
-                      )) : (
-                        <Box sx={{ p: 1.5, background: '#ECFDF5', borderRadius: 2, border: '1px solid #A7F3D0', textAlign: 'center' }}>
-                          <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#059669' }}>✨ All Clear</Typography>
-                          <Typography sx={{ fontSize: 11, color: '#065F46', mt: 0.25 }}>
-                            Excellent sector-level diversification.
-                          </Typography>
-                        </Box>
-                      )
-                    })()}
-                  </Paper>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
+            <Box sx={{ mt: 6, p: 4, borderRadius: '24px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(78, 222, 147, 0.1) 100%)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <Grid container spacing={4} alignItems="center">
+                <Grid item xs={12} md={8}>
+                  <Typography variant="h5" sx={{ mb: 1, fontWeight: 900 }}>Simulate Future Growth</Typography>
+                  <Typography variant="body2" sx={{ opacity: 0.7 }}>Select assets or an external benchmark to unlock the SIP & Lumpsum compounding projection sandbox.</Typography>
+                </Grid>
+                <Grid item xs={12} md={4} sx={{ textAlign: 'right' }}>
+                  <Button variant="contained" size="large" onClick={() => setShowSim(true)} startIcon={<TrendingUpIcon />}>
+                    Launch Projection Sandbox
+                  </Button>
                 </Grid>
               </Grid>
-              
-              {/* Grouped Bar Chart for Trailing / Rolling Returns */}
-              <Paper elevation={1} sx={{ p: 3, borderRadius: 3, mb: 3 }}>
-                <Typography variant="h6" fontWeight={700} color="#1E3A8A" sx={{ mb: 2 }}>
-                  Institutional Trailing Performance vs Benchmark (%)
-                </Typography>
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={chartGroupData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                    <XAxis dataKey="period" tick={{ fontSize: 12, fill: '#64748B' }} tickLine={false} axisLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-                    <Tooltip
-                      formatter={(v: any) => [`${v}%`, '']}
-                      contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 13 }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
-                    
-                    <Bar dataKey="Benchmark" fill="#94A3B8" radius={[4, 4, 0, 0]} />
-                    {allMatrix.map((m, i) => (
-                      <Bar 
-                        key={m.fund} 
-                        dataKey={m.fund.slice(0, 16)} 
-                        fill={m.color ?? COLORS[i % COLORS.length]} 
-                        radius={[4, 4, 0, 0]} 
-                      />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              </Paper>
+            </Box>
+          </motion.div>
 
-              {/* ── Visual Asset allocations matching user's reference image ── */}
-              <Divider sx={{ my: 3 }} />
-              <Paper elevation={1} sx={{ p: 3, borderRadius: 3, mb: 3 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                  <Typography variant="h6" fontWeight={700} color="#1E3A8A">
-                    Asset Allocation & Underlying Intelligence
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    As on {new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })}
-                  </Typography>
-                </Box>
+          <Modal open={showSim} onClose={() => setShowSim(false)} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
+            <Paper className="glass" sx={{ p: 5, width: '100%', maxWidth: 1000, maxHeight: '90vh', overflowY: 'auto', borderRadius: '32px', position: 'relative', border: '1px solid rgba(255,255,255,0.1)', outline: 'none' }}>
+              <IconButton onClick={() => setShowSim(false)} sx={{ position: 'absolute', top: 24, right: 24, color: 'text.secondary' }}>
+                <CloseIcon />
+              </IconButton>
+              <Typography variant="h4" sx={{ fontWeight: 900, mb: 1, color: 'primary.main' }}>SIP & Lumpsum Compounding Sandbox</Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary', mb: 4 }}>
+                Dynamic multi-vector wealth projection compounding historical return trajectories across your selected instruments.
+              </Typography>
 
-                {/* Top Tabs / Broad allocations */}
-                <Box sx={{ display: 'flex', gap: 2, mb: 4, pb: 1, borderBottom: '2px solid #EFF6FF' }}>
-                  {(alloc?.broad ?? []).filter((d: any) => d.value > 0).map((d: any) => (
-                    <Box key={d.label} sx={{ borderBottom: `3px solid ${d.color}`, pb: 1, px: 1, minWidth: 80, textAlign: 'center' }}>
-                      <Typography variant="body2" fontWeight={700} color="#1E293B">{d.label}</Typography>
-                      <Typography variant="h6" fontWeight={700} color={d.color}>{d.pct?.toFixed(1)}%</Typography>
-                    </Box>
-                  ))}
-                </Box>
+              <Grid container spacing={4} sx={{ mb: 6 }}>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: 'text.secondary', mb: 1, display: 'block' }}>Monthly SIP Amount</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>₹{(sipAmount).toLocaleString('en-IN')}</Typography>
+                  <Slider value={sipAmount} min={0} max={200000} step={5000} onChange={(_, v) => setSipAmount(v as number)} valueLabelDisplay="auto" />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: 'text.secondary', mb: 1, display: 'block' }}>Initial Lumpsum</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>₹{(lumpsumAmount).toLocaleString('en-IN')}</Typography>
+                  <Slider value={lumpsumAmount} min={0} max={5000000} step={50000} onChange={(_, v) => setLumpsumAmount(v as number)} valueLabelDisplay="auto" />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: 'text.secondary', mb: 1, display: 'block' }}>Investment Horizon</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>{simYears} Years</Typography>
+                  <Slider value={simYears} min={5} max={30} step={1} onChange={(_, v) => setSimYears(v as number)} valueLabelDisplay="auto" />
+                </Grid>
+              </Grid>
 
-                <Grid container spacing={4}>
-                  {/* Market Cap */}
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" fontWeight={700} color="#475569" sx={{ mb: 2 }}>
-                      Market Cap Distribution
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      {(alloc?.by_cap ?? []).map((d: any) => {
-                        const pct = d.pct ?? 0
-                        const colors = { 'Large Cap': '#3B82F6', 'Mid Cap': '#F43F5E', 'Small Cap': '#F59E0B', 'Other Cap': '#94A3B8' } as any
-                        const barColor = colors[d['Cap Type']] ?? '#6366F1'
-                        return (
-                          <Box key={d['Cap Type']}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="body2" fontWeight={600} color="#1E293B">{d['Cap Type']}</Typography>
-                              <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 12, color: '#64748B' }}>
-                                {pct.toFixed(1)}%
-                              </Typography>
-                            </Box>
-                            <Box sx={{ background: '#F1F5F9', borderRadius: 999, height: 7, overflow: 'hidden' }}>
-                              <Box sx={{
-                                height: '100%', borderRadius: 999,
-                                background: barColor,
-                                width: `${pct}%`, transition: 'width 600ms cubic-bezier(0,0,0,1)',
-                              }} />
-                            </Box>
-                          </Box>
-                        )
-                      })}
-                    </Box>
-                  </Grid>
-
-                  {/* Top holdings & Top Sectors Grid */}
-                  <Grid item xs={12} md={6}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={6}>
-                        <Typography variant="subtitle2" fontWeight={700} color="#475569" sx={{ mb: 2 }}>
-                          Top Holdings
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                          {allHoldings.slice(0, 4).map((h: any) => (
-                            <Box key={h.Fund}>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                <Typography variant="caption" fontWeight={600} color="#334155" sx={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 90 }}>
-                                  {h.Fund}
-                                </Typography>
-                                <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 10, color: '#64748B' }}>
-                                  {h['Weight%']?.toFixed(1)}%
-                                </Typography>
-                              </Box>
-                              <Box sx={{ background: '#F1F5F9', borderRadius: 999, height: 5, overflow: 'hidden' }}>
-                                <Box sx={{ height: '100%', background: '#8B5CF6', width: `${h['Weight%']}%` }} />
-                              </Box>
+              <Box sx={{ p: 3, bgcolor: 'rgba(0,0,0,0.2)', borderRadius: '24px', border: '1px solid rgba(255,255,255,0.05)', mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 3, color: 'text.secondary', letterSpacing: '0.1em' }}>PROJECTED WEALTH GROWTH CURVES</Typography>
+                <ResponsiveContainer width="100%" height={380}>
+                  <AreaChart data={simCurveData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
+                    <XAxis dataKey="year" tick={{ fill: '#94A3B8', fontSize: 11 }} />
+                    <YAxis tick={{ fill: '#94A3B8', fontSize: 11 }} tickFormatter={(v) => `₹${(v/100000).toFixed(0)}L`} />
+                    <Tooltip content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null
+                      const totalInv = lumpsumAmount + (sipAmount * 12 * (payload[0].payload.rawYear || 0))
+                      return (
+                        <Paper className="glass" sx={{ p: 2, minWidth: 240, border: '1px solid rgba(255,255,255,0.1)' }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1, color: 'primary.main' }}>{label}</Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
+                            Total Invested: ₹{totalInv.toLocaleString('en-IN')}
+                          </Typography>
+                          {payload.map((item: any) => (
+                            <Box key={item.dataKey} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', my: 0.5 }}>
+                              <Typography variant="body2" sx={{ color: item.color, fontWeight: 700 }}>{item.name}:</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }}>₹{Number(item.value).toLocaleString('en-IN')}</Typography>
                             </Box>
                           ))}
-                        </Box>
-                      </Grid>
-
-                      <Grid item xs={6}>
-                        <Typography variant="subtitle2" fontWeight={700} color="#475569" sx={{ mb: 2 }}>
-                          Top Sectors
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                          {(() => {
-                            const sectors: Record<string, number> = {}
-                            selectedFunds.forEach((fname) => {
-                              const p = getSectorProfile('Equity', fname)
-                              Object.entries(p).forEach(([s, v]) => {
-                                sectors[s] = (sectors[s] ?? 0) + v
-                              })
-                            })
-                            const list = Object.entries(sectors).sort((a, b) => b[1] - a[1]).slice(0, 4)
-                            return list.map(([s, v]) => (
-                              <Box key={s}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                                  <Typography variant="caption" fontWeight={600} color="#334155">
-                                    {s}
-                                  </Typography>
-                                  <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 10, color: '#64748B' }}>
-                                    {(v / Math.max(1, selectedFunds.length)).toFixed(1)}%
-                                  </Typography>
-                                </Box>
-                                <Box sx={{ background: '#F1F5F9', borderRadius: 999, height: 5, overflow: 'hidden' }}>
-                                  <Box sx={{ height: '100%', background: '#10B981', width: `${v / Math.max(1, selectedFunds.length)}%` }} />
-                                </Box>
-                              </Box>
-                            ))
-                          })()}
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </Grid>
-                </Grid>
-              </Paper>
-            </>
-          )}
-
-          {/* ── External ticker normalised chart ──────────────────── */}
-          {extTicker && extHistory?.dates?.length > 1 && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <Paper elevation={1} sx={{ p: 3, borderRadius: 3 }}>
-                <Typography variant="h6" sx={{ mb: 0.5 }}>
-                  {extTicker.symbol} — Normalised Price Chart
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  {extTicker.name} · Base = 100
-                </Typography>
-                {extLoading ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                    <CircularProgress size={24} />
-                  </Box>
-                ) : (
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart
-                      data={(extHistory.dates as string[]).map((d: string, i: number) => ({
-                        date: d.slice(5),
-                        [extTicker.symbol]: (extHistory.values as number[])[i],
-                      }))}
-                      margin={{ top: 5, right: 10, left: -10, bottom: 0 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94A3B8' }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                      <YAxis tick={{ fontSize: 10, fill: '#94A3B8' }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v.toFixed(0)}`} />
-                      <Tooltip
-                        formatter={(v: any) => [Number(v).toFixed(1), extTicker.symbol]}
-                        contentStyle={{ borderRadius: 10, border: '1px solid #E2E8F0', fontSize: 12 }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600 }} />
-                      <Line
-                        type="monotone" dataKey={extTicker.symbol}
-                        stroke={COLORS[selectedFunds.length]}
-                        strokeWidth={2.5} dot={false}
-                        activeDot={{ r: 4 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </Paper>
-            </>
-          )}
-        </>
+                        </Paper>
+                      )
+                    }} />
+                    <Legend verticalAlign="top" height={36} />
+                    {allMatrix.map((m: any) => (
+                      <Area key={m.id} name={m.shortName} type="monotone" dataKey={m.id} stroke={m.color} fill={m.color} fillOpacity={0.15} strokeWidth={3} />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Box>
+            </Paper>
+          </Modal>
+        </motion.div>
+      ) : (
+        <Box sx={{ py: 12, textAlign: 'center' }}>
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
+            <AutoAwesomeIcon sx={{ fontSize: 80, color: 'rgba(255,255,255,0.05)', mb: 3 }} />
+            <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Initialize Comparison</Typography>
+            <Typography variant="body1" sx={{ color: 'text.secondary' }}>Add assets from your portfolio or the global market to begin.</Typography>
+          </motion.div>
+        </Box>
       )}
     </Box>
   )

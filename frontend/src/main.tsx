@@ -9,8 +9,8 @@ import App from './App'
 const qc = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime:  5 * 60 * 1000,
-      retry:      1,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
       refetchOnWindowFocus: false,
     },
   },
@@ -19,7 +19,7 @@ const qc = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={qc}>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ThemeProvider theme={theme}>
           <CssBaseline />
           <App />

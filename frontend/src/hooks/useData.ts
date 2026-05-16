@@ -3,101 +3,151 @@ import { apiClient } from '../api/client'
 import { useSessionId, useFilters } from '../store/appStore'
 
 // ── Build filter params from store ────────────────────────────────────────────
-function useFilterParams() {
+export function useFilterParams() {
   const f = useFilters()
   return {
     benchmark: f.benchmark,
-    category:  f.categories.join(','),
-    amc:       f.amcs.join(','),
-    plan:      f.plan,
+    category: f.categories.join(','),
+    amc: f.amcs.join(','),
+    plan: f.plan,
     min_alloc: f.minAlloc,
   }
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
-export function useSummary() {
+export function useSummary(benchmark: string = 'Nifty 50') {
   const sid = useSessionId()
-  const p   = useFilterParams()
   return useQuery({
-    queryKey:  ['summary', sid, p],
-    queryFn:   () => apiClient.getSummary(sid!, p),
-    enabled:   !!sid,
+    queryKey: ['summary', sid, benchmark],
+    queryFn: () => apiClient.getSummary(sid!, { benchmark }),
+    enabled: !!sid,
     staleTime: 2 * 60 * 1000,
   })
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
-export function useOverview(period: string) {
+export function useOverview(period: string, benchmark: string = 'Nifty 50') {
   const sid = useSessionId()
-  const p   = useFilterParams()
   return useQuery({
-    queryKey:  ['overview', sid, period, p],
-    queryFn:   () => apiClient.getOverview(sid!, { ...p, period }),
-    enabled:   !!sid,
+    queryKey: ['overview', sid, period, benchmark],
+    queryFn: () => apiClient.getOverview(sid!, { period, benchmark }),
+    enabled: !!sid,
+  })
+}
+
+// ── Benchmark Overlay ───────────────────────────────────────────────────────────
+export function useBenchmarkOverlay(period: string, benchmarks: string[]) {
+  const sid = useSessionId()
+  const bString = benchmarks.join(',')
+  return useQuery({
+    queryKey: ['benchmark-overlay', sid, period, bString],
+    queryFn: () => apiClient.getBenchmarkOverlay(sid!, { period, benchmarks: bString }),
+    enabled: !!sid && benchmarks.length > 0,
   })
 }
 
 // ── Holdings ──────────────────────────────────────────────────────────────────
 export function useHoldings(extra: Record<string, any> = {}) {
   const sid = useSessionId()
-  const p   = useFilterParams()
+  const p = useFilterParams()
   return useQuery({
-    queryKey:  ['holdings', sid, p, extra],
-    queryFn:   () => apiClient.getHoldings(sid!, { ...p, ...extra }),
-    enabled:   !!sid,
+    queryKey: ['holdings', sid, p, extra],
+    queryFn: () => apiClient.getHoldings(sid!, { ...p, ...extra }),
+    enabled: !!sid,
   })
 }
 
 // ── Allocation ────────────────────────────────────────────────────────────────
 export function useAllocation() {
   const sid = useSessionId()
-  const p   = useFilterParams()
+  const p = useFilterParams()
   return useQuery({
-    queryKey:  ['allocation', sid, p],
-    queryFn:   () => apiClient.getAllocation(sid!, p),
-    enabled:   !!sid,
+    queryKey: ['allocation', sid, p],
+    queryFn: () => apiClient.getAllocation(sid!, p),
+    enabled: !!sid,
   })
 }
 
 // ── Performance ───────────────────────────────────────────────────────────────
 export function usePerformance(period: string, extra: Record<string, any> = {}) {
   const sid = useSessionId()
-  const p   = useFilterParams()
+  const p = useFilterParams()
   return useQuery({
-    queryKey:  ['performance', sid, period, p, extra],
-    queryFn:   () => apiClient.getPerformance(sid!, { ...p, period, ...extra }),
+    queryKey: ['performance', sid, period, p, extra],
+    queryFn: () => apiClient.getPerformance(sid!, { ...p, period, ...extra }),
+    enabled: !!sid,
+  })
+}
+
+export function useRebalancePlan(profile: string) {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey:  ['rebalance', sid, profile],
+    queryFn:   () => apiClient.getRebalancePlan(sid!, { profile }),
     enabled:   !!sid,
   })
 }
 
 // ── Tax ───────────────────────────────────────────────────────────────────────
-export function useTax() {
+export function useTax(fy: string = 'Current Portfolio') {
   const sid = useSessionId()
-  const p   = useFilterParams()
+  const p = useFilterParams()
   return useQuery({
-    queryKey: ['tax', sid, p],
-    queryFn:  () => apiClient.getTax(sid!, p),
-    enabled:  !!sid,
+    queryKey: ['tax', sid, p, fy],
+    queryFn: () => apiClient.getTax(sid!, { ...p, fy }),
+    enabled: !!sid,
+  })
+}
+
+export function useTaxYears() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['tax-years', sid],
+    queryFn: () => apiClient.getTaxYears(sid!),
+    enabled: !!sid,
   })
 }
 
 // ── Insights ──────────────────────────────────────────────────────────────────
 export function useInsights() {
   const sid = useSessionId()
-  const p   = useFilterParams()
+  const p = useFilterParams()
   return useQuery({
     queryKey: ['insights', sid, p],
-    queryFn:  () => apiClient.getInsights(sid!, p),
-    enabled:  !!sid,
+    queryFn: () => apiClient.getInsights(sid!, p),
+    enabled: !!sid,
   })
 }
 
-// ── Transactions ──────────────────────────────────────────────────────────────
+export function useFundInsights(isin: string, name: string = '') {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['fund-insights', sid, isin, name],
+    queryFn: () => apiClient.getFundInsights(sid!, isin, { name }),
+    enabled: !!sid && !!isin && isin !== 'N/A',
+    staleTime: 1000, // Reduced for verification
+  })
+}
 export function useTransactions(fund = '') {
   const sid = useSessionId()
   return useQuery({
     queryKey: ['transactions', sid, fund],
-    queryFn:  () => apiClient.getTransactions(sid!, { fund }),
-    enabled:  !!sid,
+    queryFn: () => apiClient.getTransactions(sid!, { fund }),
+    enabled: !!sid,
+  })
+}
+
+export function useMarketSummary() {
+  return useQuery({
+    queryKey: ['market-summary'],
+    queryFn: () => apiClient.getMarketSummary(),
+    refetchInterval: 60 * 1000, // Poll every minute
+  })
+}
+
+export function useMarketConfig() {
+  return useQuery({
+    queryKey: ['market-config'],
+    queryFn: () => apiClient.getMarketConfig(),
   })
 }
