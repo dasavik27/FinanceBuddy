@@ -1,14 +1,14 @@
-# 🚀 FolioIQ Installation: Deploying AlphaTrack Pro (v8.0)
+# 🚀 Finance Buddy Installation: Deploying AlphaTrack Pro (v8.1)
 
-FolioIQ is an institutional-grade Mutual Fund Intelligence platform. This guide walks you through the deployment of the analytical backend and the high-fidelity frontend cockpit.
+Finance Buddy is an institutional-grade Mutual Fund Intelligence platform. This guide walks you through the deployment of the analytical backend and the high-fidelity frontend cockpit.
 
 ---
 
 ## 🏗️ Technical Architecture
-FolioIQ is structured into two primary high-performance modules:
+Finance Buddy is structured into two primary high-performance modules:
 
 ```
-FolioIQ/
+Finance Buddy/
 ├── backend/            ← FastAPI Analytical Engine (RAM-Backed & Live Data Gateway)
 └── frontend/           ← React 18 "Pro Cockpit" (Vite / MUI v5 / Recharts)
 ```
@@ -79,10 +79,10 @@ The platform implements strict 1:1 modular routing between frontend UI tabs and 
 ---
 
 ## 🛡️ Zero-Persistence Mandate
-FolioIQ is designed for the highest level of financial privacy:
+Finance Buddy is designed for the highest level of financial privacy:
 *   **RAM Isolation**: All data exists in volatile memory only. No database is utilized.
 *   **Encrypted Streams**: PDF processing occurs via `io.BytesIO` buffers; raw files never touch the disk.
 *   **Session Purge**: Data is permanently cleared upon process termination or session timeout.
 
 ---
-*FolioIQ v8.0.0 · Institutional-Grade Analytics · Built for Absolute Privacy*
+*Finance Buddy v8.1.0 · Institutional-Grade Analytics · Built for Absolute Privacy*

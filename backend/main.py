@@ -14,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 # Core System & Market Gateways
-from routers import portfolio, market
+from routers import portfolio, market, auth
 # Specialized Analytical Tab Routers (1:1 Modular Mapping with Frontend Navigation)
-from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy
+from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy, overlap, history, journey
 
 app = FastAPI(
     title="FolioPulse Institutional Intelligence API",
@@ -39,6 +39,7 @@ app.add_middleware(
 # ── Core Infrastructure Gateways ──────────────────────────────────────────
 app.include_router(portfolio.router, prefix="/portfolio", tags=["Infrastructure - Session Management"])
 app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
+app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
 
 # ── Specialized Analytical Cockpit Routers (1:1 with UI Navigation) ──────
 app.include_router(overview.router,     prefix="/portfolio", tags=["Analytics - Overview & Allocation"])
@@ -48,6 +49,10 @@ app.include_router(compare.router,      prefix="/compare",   tags=["Analytics - 
 app.include_router(insights.router,     prefix="/portfolio", tags=["Analytics - Smart Nudges & CIO Advisories"])
 app.include_router(rebalance.router,    prefix="/rebalance", tags=["Analytics - Rebalancing & Drift Audit"])
 app.include_router(tax_strategy.router, prefix="/portfolio", tags=["Analytics - Tax Strategy Lab"])
+app.include_router(tax_strategy.router, prefix="/tax-expert", tags=["Tax Expert - AIS Filing"])
+app.include_router(overlap.router,      prefix="/portfolio", tags=["Analytics - Overlap Analysis"])
+app.include_router(history.router,      prefix="/history",   tags=["Analytics - History Timeline"])
+app.include_router(journey.router,      prefix="/journey",   tags=["Analytics - Wealth Journey Timeline"])
 
 @app.get("/health", tags=["Infrastructure - Health"])
 def health():
@@ -56,3 +61,5 @@ def health():
     Validates institutional engine operational readiness, memory availability, and API versioning.
     """
     return {"status": "ok", "version": "8.0.0"}
+
+

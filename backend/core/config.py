@@ -12,9 +12,9 @@ import os
 # ── Caching & Performance Architecture ────────────────────────────────────
 
 # Time-To-Live (TTL) for in-memory and disk persistence layers (NAV & CAS Records)
-# Set via environment variable 'FOLIOIQ_CACHE_TTL' (Default: 60 minutes).
+# Set via environment variable 'FINANCEBUDDY_CACHE_TTL' (Default: 60 minutes).
 # A value <= 0 triggers real-time direct fetching across all network providers.
-CACHE_TTL_MINUTES = int(os.getenv("FOLIOIQ_CACHE_TTL", 60))
+CACHE_TTL_MINUTES = int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
 
 # Absolute directory path for disk-backed JSON cache storage
 CACHE_DIR = os.path.join(os.getcwd(), ".cache")
@@ -23,40 +23,40 @@ if not os.path.exists(CACHE_DIR):
 
 # ── Macroeconomic & Market Index Definitions ──────────────────────────────
 BENCHMARKS = {
-    "Nifty 50": "^NSEI",
-    "Nifty Next 50": "^NSMIDCP", # Proxy for junior large-cap equity
-    "Nifty Midcap 150": "NIFTYMIDCAP150.NS",
-    "Nifty Smallcap 250": "^CNXSC",
-    "Nifty 500": "^CRSLDX",
-    "Nifty Bank": "^NSEBANK",
-    "S&P 500": "^GSPC",
+    "Nifty 50": "120716",
+    "Nifty Next 50": "120711",
+    "Nifty Midcap 150": "147726",
+    "Nifty Smallcap 250": "147724",
+    "Nifty 500": "147702",
+    "Nifty Bank": "153432",
+    "S&P 500": "^GSPC", # S&P 500 remains Yahoo as Indian proxies stop in 2022
     "Hybrid 50/50": "HYBRID_50_50",
-    "Gold": "GC=F"
+    "Gold": "118272"
 }
 
 # ── Asset Class & Market Capitalization Mapping ───────────────────────────
 # Maps fund categorization to precise Total Return Indices (TRI) for alpha computation
 FUND_BENCH_BY_CAT = {
-    "Equity":     ("^NSEI", "Nifty 50 TRI"),
-    "Debt":       ("LICNETFGSC.NS", "CRISIL Composite Bond"),
-    "Liquid":     ("LICNETFGSC.NS", "CRISIL Liquid Index"),
+    "Equity":     ("120716", "Nifty 50 TRI"),
+    "Debt":       ("119598", "CRISIL Composite Bond"),
+    "Liquid":     ("119596", "CRISIL Liquid Index"),
     "Hybrid":     ("HYBRID_50_50", "Hybrid 50/50 TRI"),
-    "Index":      ("^NSEI", "Nifty 50 TRI"),
-    "Commodities": ("GC=F", "Gold Spot TRI"),
+    "Index":      ("120716", "Nifty 50 TRI"),
+    "Commodities": ("118272", "Gold Spot TRI"),
     "International": ("^GSPC", "S&P 500 TRI")
 }
 
 FUND_BENCH_BY_CAP = {
-    "Large Cap":       ("^NSEI", "Nifty 50 TRI"),
-    "Mid Cap":         ("NIFTYMIDCAP150.NS", "Nifty Midcap 150 TRI"),
-    "Small Cap":       ("^CNXSC", "Nifty Smallcap 250 TRI"),
-    "Flexi Cap":       ("^CRSLDX", "Nifty 500 TRI"),
-    "Multi Cap":       ("^CRSLDX", "Nifty 500 TRI"),
-    "Large & Mid Cap": ("^CRSLDX", "Nifty 500 TRI"),
-    "Focused":         ("^NSEI", "Nifty 50 TRI"),
-    "Value":           ("^NSEI", "Nifty 50 TRI"),
-    "Contra":          ("^NSEI", "Nifty 50 TRI"),
-    "Thematic":        ("^NSEI", "Nifty 50 TRI")
+    "Large Cap":       ("120716", "Nifty 50 TRI"),
+    "Mid Cap":         ("147726", "Nifty Midcap 150 TRI"),
+    "Small Cap":       ("147724", "Nifty Smallcap 250 TRI"),
+    "Flexi Cap":       ("147702", "Nifty 500 TRI"),
+    "Multi Cap":       ("147702", "Nifty 500 TRI"),
+    "Large & Mid Cap": ("147702", "Nifty 500 TRI"),
+    "Focused":         ("147702", "Nifty 500 TRI"),
+    "Value":           ("147702", "Nifty 500 TRI"),
+    "Contra":          ("147702", "Nifty 500 TRI"),
+    "Thematic":        ("147702", "Nifty 500 TRI")
 }
 
 # ── Institutional Taxation Parameters (Budget 2024 Slabs) ─────────────────
@@ -64,7 +64,7 @@ TAX_RATES = {
     "LTCG_EQUITY": 0.125,      # 12.5% Long Term Capital Gains on Equity (>12M)
     "STCG_EQUITY": 0.20,       # 20.0% Short Term Capital Gains on Equity (<12M)
     "LTCG_EXEMPTION": 125000,  # ₹1.25 Lakh annual tax-exempt threshold
-    "STCG_DEBT": 0.20          # Marginal tax slab proxy for Debt instruments
+    "STCG_DEBT": 0.30          # Marginal tax slab proxy for Debt instruments (30%)
 }
 
 # ── Design Tokens & Visual Hierarchy ──────────────────────────────────────
@@ -169,4 +169,4 @@ def classify_er(er: float, category: str) -> str:
     if er <= hi: return "Moderate"
     return "High"
 
-TEST_PASSWORD = os.getenv("FOLIOIQ_TEST_PASSWORD", "BBPPD9383N")
+TEST_PASSWORD = os.getenv("FINANCEBUDDY_TEST_PASSWORD", "BBPPD9383N")

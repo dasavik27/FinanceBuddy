@@ -78,9 +78,34 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                         bal = to_f(_get(txs[-1], 'balance', 0))
                 
                 nav_obj = _get(scheme, 'valuation', {})
-                nav = to_f(_get(nav_obj, 'nav', 0))
+                cas_nav = to_f(_get(nav_obj, 'nav', 0))
+                nav = cas_nav
+                is_stale = False
+                
                 if isin in live_nav_map:
                     nav = live_nav_map[isin]
+                    if abs(nav - cas_nav) < 0.001:
+                        print(f"[NAV STALENESS DIAGNOSTIC] ⚠️ AMFI Live NAV == CAS NAV ({cas_nav}) for ISIN {isin} ({name}). AMFI feed is stale or ISIN is for Dividend instead of Growth.")
+                        is_stale = True
+                else:
+                    print(f"[NAV FETCH DIAGNOSTIC] ❌ ISIN {isin} not found in AMFI live feed! Falling back to CAS NAV ({cas_nav}).")
+                    is_stale = True
+                    
+                # --- YAHOO FINANCE FALLBACK ADAPTER ---
+                if is_stale:
+                    print(f"[YAHOO ADAPTER] AMFI feed failed or is stale for {isin}. Attempting to fetch live NAV from Yahoo Finance...")
+                    try:
+                        from services.providers.yahoo import YahooMetadataProvider
+                        yahoo_provider = YahooMetadataProvider()
+                        yahoo_nav = yahoo_provider.fetch_live_nav(isin, name)
+                        if yahoo_nav and yahoo_nav > 0:
+                            print(f"[YAHOO ADAPTER] ✅ Successfully fetched live NAV {yahoo_nav} for {isin} from Yahoo!")
+                            nav = yahoo_nav
+                            is_stale = False
+                        else:
+                            print(f"[YAHOO ADAPTER] ❌ Yahoo Finance failed to return NAV for {isin}. Falling back to CAS NAV.")
+                    except Exception as e:
+                        print(f"[YAHOO ADAPTER] ❌ Error: {e}")
                 
                 # --- EXACT-FIRST METADATA DETECTION ---
                 raw_cat = _get(scheme, 'category', "")
@@ -96,12 +121,19 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                 cur_val = bal * nav
                 
                 if bal > 0 or cur_val > 0:
+                    invested = _estimate_invested(scheme)
+                    
+                    # Fallback: If FIFO returns 0 but we hold units, the CAS is missing
+                    # the purchase transaction. Estimate cost using CAS valuation NAV.
+                    if invested <= 0 and bal > 0 and cas_nav > 0:
+                        invested = round(bal * cas_nav, 2)
+                    
                     holdings.append({
                         "Fund": name, "ISIN": isin, "Category": category,
                         "Units": bal, "NAV": nav, "Market Value": cur_val,
                         "AMC": amc, "Plan": plan,
                         "Cap Type": cap_type,
-                        "Invested": _estimate_invested(scheme),
+                        "Invested": invested,
                     })
                 
                 for tx in _get(scheme, 'transactions', []):
@@ -120,6 +152,28 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                         })
                         if "SIP" in tx_type.upper():
                             sips.append({"Fund": name, "Date": dt, "Amount": abs(tx_amt)})
+
+        # --- Zerodha Coin Shadow-SIP Detection Heuristic ---
+        # Brokers like Zerodha Coin place AMC SIPs as regular monthly lumpsum purchases, 
+        # bypassing traditional SIP tagging. We detect these by finding identical lumpsums.
+        from collections import defaultdict
+        purchase_groups = defaultdict(list)
+        
+        for i, tx in enumerate(txns):
+            # Find cashflows (purchases) that aren't already SIPs
+            if "SIP" not in tx["Type"].upper():
+                # We also want to ensure it's a purchase (not a dividend payout, etc)
+                # Usually standard purchases contain 'PURCHASE' or 'SYSTEMATIC' or are just negative cashflows.
+                if "PURCHASE" in tx["Type"].upper() or tx["Type"] == "TransactionType.PURCHASE":
+                    purchase_groups[(tx["Fund"], tx["Amount"])].append(i)
+                    
+        for (fund, amount), indices in purchase_groups.items():
+            # If the user made the exact same lump sum purchase 2 or more times, we classify it as a SIP habit.
+            if len(indices) >= 2:
+                for i in indices:
+                    txns[i]["Type"] = "TransactionType.PURCHASE_SIP (Auto-Detected)"
+                    sips.append({"Fund": fund, "Date": txns[i]["Date"], "Amount": abs(amount)})
+        # ---------------------------------------------------
 
         df_h = pd.DataFrame(holdings)
         if not df_h.empty:

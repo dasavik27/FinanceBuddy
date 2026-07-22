@@ -3,7 +3,7 @@ routers/portfolio.py
 Session lifecycle and CAS parsing gateway.
 """
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Header
 from core.parser import parse_cas_file
 from core.sessions import create_session
 from core.config import BENCHMARKS, TEST_PASSWORD
@@ -14,6 +14,8 @@ router = APIRouter()
 async def parse_cas(
     file: UploadFile = File(...),
     password: str = Form(None), # Made optional for testing
+    x_user_pan: str = Header(None),
+    x_upload_type: str = Header("mutual_funds")
 ):
     raw = await file.read()
     # Use hardcoded test password if none provided (as requested by user)
@@ -25,7 +27,7 @@ async def parse_cas(
     if df_h.empty:
         raise HTTPException(status_code=422, detail="No active holdings found in CAS.")
 
-    session_id = create_session(df_h, df_t, df_s, is_partial)
+    session_id = create_session(df_h, df_t, df_s, is_partial, pan_id=x_user_pan, upload_type=x_upload_type)
     
     return {
         "session_id": session_id,
@@ -47,7 +49,7 @@ class ConnectAARequest(BaseModel):
 @router.post("/connect-aa")
 def connect_aa(req: ConnectAARequest):
     """
-    Simulates an instant Account Aggregator (Setu / Onemoney) real-time data stream.
+    Simulates an instant MF Central Investor Data Sharing API real-time consent-based data stream.
     Delivers institutional-grade mock holding data without requiring manual CAS uploads.
     """
     df_h = pd.DataFrame([
@@ -79,7 +81,7 @@ def connect_aa(req: ConnectAARequest):
             "Gain": 146961.30,
             "Gain%": 73.48,
             "Weight%": 33.5,
-            "ISIN": "INF204K01W35",
+            "ISIN": "INF204KA1B64",
         },
         {
             "Fund": "ICICI Prudential Bluechip Fund - Direct Plan",

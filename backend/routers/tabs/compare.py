@@ -59,6 +59,7 @@ def get_category_peers(category: str = "Large Cap"):
         
     peers = []
     existing_codes = set()
+    fallback_triggered = False
     
     for item in dynamic_matches:
         code = str(item["symbol"])
@@ -75,6 +76,7 @@ def get_category_peers(category: str = "Large Cap"):
                 break
                 
     if not peers:
+        fallback_triggered = True
         fallback = search_mutual_funds("Large Cap Fund")
         for item in fallback:
             code = str(item["symbol"])
@@ -92,11 +94,9 @@ def get_category_peers(category: str = "Large Cap"):
     base_pe = None if is_debt else PE_ESTIMATES.get(category, PE_ESTIMATES["Default"])
 
     def _extract_amc(fund_name: str) -> str:
-        name = fund_name.upper().strip()
-        for compound in ["NIPPON INDIA", "ICICI PRUDENTIAL", "ADITYA BIRLA", "MIRAE ASSET", "FRANKLIN TEMPLETON", "MOTILAL OSWAL", "CANARA ROBECO", "TATA", "DSP", "SBI", "HDFC", "QUANT", "AXIS", "KOTAK", "BANDHAN", "UTI", "PPFAS", "PARAG PARIKH", "SUNDARAM", "EDELWEISS", "INVESCO", "HSBC", "PGIM", "BARODA BNP", "MAHINDRA", "LIC", "BANK OF INDIA"]:
-            if name.startswith(compound):
-                return compound
-        return name.split()[0] if name.split() else "UNKNOWN"
+        # FIX M-12: Use centralized implementation
+        from core.logic import CategorizationEngine
+        return CategorizationEngine.extract_amc_brand(fund_name)
 
     results = []
     for p in peers:
@@ -190,7 +190,10 @@ def get_category_peers(category: str = "Large Cap"):
                         seen_amcs.add(amc)
                         if len(diverse_peers) >= 5: break
 
-    return {"peers": diverse_peers[:5]}
+    return {
+        "peers": diverse_peers[:5],
+        "fallback_triggered": fallback_triggered
+    }
 
 @router.get("/metrics")
 def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
@@ -219,14 +222,15 @@ def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
     t1 = compute_trailing_returns(s1)
     t2 = compute_trailing_returns(s2)
 
-    # 2. Risk Metrics (using s2 as benchmark for s1)
-    r1 = compute_risk_metrics(s1, s2, risk_free_rate=6.5)
-    # Also need r2 (standardized to Nifty 50 for comparison)
+    # FIX H-6: Both funds should use the same benchmark for symmetric comparison.
+    # Using Nifty 50 as the common benchmark for fair alpha/beta/Sharpe.
     nifty = fetch_benchmark_series("^NSEI", 1825 + 60)
+    r1 = compute_risk_metrics(s1, nifty, risk_free_rate=6.5)
     r2 = compute_risk_metrics(s2, nifty, risk_free_rate=6.5)
 
-    # 3. Consistency
-    c1 = compute_consistency_score(s1, s2)
+    # 3. Consistency (both funds vs Nifty 50 for fairness)
+    c1 = compute_consistency_score(s1, nifty)
+    c2 = compute_consistency_score(s2, nifty)
     
     metrics = []
     wins_a = 0
@@ -261,7 +265,7 @@ def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
     add_metric("Jensen's Alpha (%)", r1.get("alpha"), r2.get("alpha"))
     add_metric("Volatility (%)", r1.get("vol"), r2.get("vol"), higher_better=False)
     add_metric("Max Drawdown (%)", abs(r1.get("max_dd", 0)), abs(r2.get("max_dd", 0)), higher_better=False)
-    add_metric("Consistency Score", c1, 5.0) # vs baseline of 5.0
+    add_metric("Consistency Score", c1, c2)  # FIX H-7: Compute both instead of static 5.0
 
     return {
         "wins": {"A": wins_a, "B": wins_b},

@@ -20,8 +20,10 @@ import pandas as pd
 import time
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple, Optional, Any, List
 from core import config
+from core.cache import MarketCache
+from services.providers.factory import get_provider
 from core.config import BENCHMARKS, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
 
 # ── Thread-safe Cache Locks ──────────────────────────────────────────────
@@ -76,7 +78,7 @@ def clear_market_data_cache():
 _LIVE_NAV_CACHE: Dict[str, float] = {}
 _LIVE_NAV_CACHE_TS: float = 0.0
 
-def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str]]:
+def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
     """
     Unified AMFI fetch — downloads NAVAll.txt once and populates both
     live NAV cache and ISIN-to-Code mapping.
@@ -86,6 +88,7 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str]]:
     url = "https://www.amfiindia.com/spages/NAVAll.txt"
     live_map: Dict[str, float] = {}
     isin_map: Dict[str, str]   = {}
+    date_map: Dict[str, str]   = {}
     
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -95,17 +98,22 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str]]:
         for line in data.splitlines():
             if ";" not in line: continue
             parts = [p.strip() for p in line.split(";")]
-            if len(parts) < 5: continue
+            if len(parts) < 6: continue
             
             code  = parts[0]
             isin1 = parts[1].upper()
             isin2 = parts[2].upper() if len(parts) > 2 else ""
             nav_s = parts[4]
+            date_s = parts[5]
             
             try:
                 nav_v = float(nav_s)
-                if isin1: live_map[isin1] = nav_v
-                if isin2: live_map[isin2] = nav_v
+                if isin1: 
+                    live_map[isin1] = nav_v
+                    date_map[isin1] = date_s
+                if isin2: 
+                    live_map[isin2] = nav_v
+                    date_map[isin2] = date_s
             except ValueError: pass
             
             if isin1: isin_map[isin1] = code
@@ -119,23 +127,39 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str]]:
     except Exception as e:
         print(f"[AMFI UNIFIED ERROR] {e}")
         
-    return live_map, isin_map
+    return live_map, isin_map, date_map
 
 from core.cache import MarketCache
 
 def fetch_live_navs(refresh: bool = False) -> Dict[str, float]:
     """
     Fetch live NAVs from AMFI with persistent caching.
+    
+    This pulls the unified AMFI NAVAll.txt file which contains the latest end-of-day
+    pricing for all mutual funds in India. It is highly efficient for valuing an entire
+    portfolio (e.g., 20+ funds) simultaneously without incurring multiple API calls.
+    
+    Args:
+        refresh (bool): If True, bypasses the cache and forces a fresh network pull.
+        
+    Returns:
+        Dict[str, float]: A mapping of ISIN codes to their latest NAV as floats.
     """
     cache_key = "amfi_live_navs"
     if not refresh and config.CACHE_TTL_MINUTES > 0:
         cached = MarketCache.get(cache_key)
         if cached: return cached
 
-    live_map, _ = _fetch_amfi_data()
+    live_map, _, _ = _fetch_amfi_data()
     if live_map and config.CACHE_TTL_MINUTES > 0:
         MarketCache.set(cache_key, live_map)
     return live_map
+
+def fetch_live_navs_with_date(refresh: bool = False) -> Tuple[Dict[str, float], Dict[str, str]]:
+    """Returns both the NAV mapping and the Date mapping."""
+    # Bypass cache since date mapping is not cached yet
+    live_map, _, date_map = _fetch_amfi_data()
+    return live_map, date_map
 
 def _fetch_amfi_ter_all() -> Dict[str, float]:
     """
@@ -234,7 +258,7 @@ def resolve_scheme_code_from_isin(isin: str) -> str:
         if isin in _ISIN_TO_CODE_CACHE:
             return _ISIN_TO_CODE_CACHE[isin]
 
-    _, _ = _fetch_amfi_data()
+    _, _, _ = _fetch_amfi_data()
     
     with _CACHE_LOCK:
         return _ISIN_TO_CODE_CACHE.get(isin, "")
@@ -249,7 +273,12 @@ def fetch_nav_series_by_code(scheme_code: str, days: int = 3650, refresh: bool =
     """
     Fetch NAV history from mfapi.in for a given scheme code.
     Returns pd.Series indexed by date (DatetimeIndex), sorted ascending.
-    Supports persistent caching and manual refresh.
+    
+    Fail-Safe Architecture:
+    If mfapi.in is down, rate-limited, or returns an error, this explicitly catches 
+    the exception and returns an empty pd.Series. This prevents the upstream engine 
+    from crashing, allowing downstream systems to either trigger Yahoo Finance/NSELib 
+    fallbacks (for benchmarks) or fail gracefully (for portfolio funds).
     """
     code_str = str(scheme_code).strip()
     cache_key = f"nav_series_{code_str}"
@@ -257,32 +286,25 @@ def fetch_nav_series_by_code(scheme_code: str, days: int = 3650, refresh: bool =
     if not refresh:
         cached_data = MarketCache.get(cache_key)
         if cached_data:
-            series = pd.Series(cached_data).sort_index()
-            # FIX: Add dayfirst=True for DD-MM-YYYY dates
+            series = pd.Series(cached_data)
+            # FIX: Add dayfirst=True for DD-MM-YYYY dates, then sort chronologically!
             series.index = pd.to_datetime(series.index, dayfirst=True)
+            series = series.sort_index()
             if days < 9999:
                 cutoff = series.index[-1] - timedelta(days=days + 30)
                 return series[series.index >= cutoff].copy()
             return series.copy()
 
     try:
-        url  = f"https://api.mfapi.in/mf/{code_str}"
-        resp = _HTTP_SESSION.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json().get("data", [])
+        provider = get_provider()
+        series = provider.fetch_nav_series(code_str, 9999) # Fetch full to cache
 
-        if not data:
+        if series.empty:
             return pd.Series(dtype=float)
 
-        # Build series: date string -> float nav
-        raw_map = {rec["date"]: float(rec["nav"]) for rec in data}
-        
-        # Persist the raw map for next time
+        # Persist the raw map for next time (format expected by cache)
+        raw_map = {d.strftime("%d-%m-%Y"): v for d, v in series.items()}
         MarketCache.set(cache_key, raw_map)
-        
-        series = pd.Series(
-            {pd.to_datetime(d, dayfirst=True): v for d, v in raw_map.items()}
-        ).sort_index()
 
         if days < 9999:
             cutoff = series.index[-1] - timedelta(days=days)
@@ -290,29 +312,31 @@ def fetch_nav_series_by_code(scheme_code: str, days: int = 3650, refresh: bool =
         return series
 
     except Exception as e:
-        print(f"[NAV FETCH ERROR] scheme={code_str}: {e}")
+        # Silently catch and fail gracefully. Let downstream systems handle the empty series.
         return pd.Series(dtype=float)
 
 
 def fetch_nav_series_by_isin(isin: str, days: int = 1825, refresh: bool = False) -> pd.Series:
     """
     Fetch NAV history for a fund identified by its ISIN.
-    Resolves ISIN → scheme code → NAV series.
-
-    Parameters
-    ----------
-    isin : Fund ISIN (e.g. "INF879O01019" for PPFAS Flexi Cap Direct Growth)
-    days : Days of history to return
-
-    Returns
-    -------
-    pd.Series (DatetimeIndex → float NAV), empty on failure.
+    
+    This acts as a bridge function. It first resolves the ISIN (e.g., "INF879O01019")
+    into an AMFI scheme code (e.g., "122639") using the AMFI NAV dictionary, and then
+    delegates the actual historical fetching to `fetch_nav_series_by_code()`.
+    
+    Args:
+        isin (str): The unique International Securities Identification Number.
+        days (int): The number of trailing days of history to request.
+        refresh (bool): Bypasses the cache if True.
+        
+    Returns:
+        pd.Series: The historical NAV curve, or an empty Series if resolution fails.
     """
     code = resolve_scheme_code_from_isin(isin)
     if not code:
-        print(f"[NAV FETCH] Could not resolve scheme code for ISIN={isin}")
         return pd.Series(dtype=float)
-    return fetch_nav_series_by_code(code, days, refresh=refresh)
+        
+    return fetch_nav_series_by_code(code, days=days, refresh=refresh)
 
 
 def fetch_nav_series_by_name(fund_name: str, days: int = 1825, refresh: bool = False) -> pd.Series:
@@ -339,16 +363,8 @@ def fetch_fund_metadata(scheme_code: str) -> Dict:
     Returns dict with scheme_name, fund_house, scheme_type, scheme_category.
     """
     try:
-        url  = f"https://api.mfapi.in/mf/{scheme_code}"
-        resp = _HTTP_SESSION.get(url, timeout=10)
-        resp.raise_for_status()
-        meta = resp.json().get("meta", {})
-        return {
-            "scheme_name":      meta.get("scheme_name", ""),
-            "fund_house":       meta.get("fund_house", ""),
-            "scheme_type":      meta.get("scheme_type", ""),
-            "scheme_category":  meta.get("scheme_category", ""),
-        }
+        provider = get_provider()
+        return provider.fetch_fund_meta(scheme_code)
     except Exception as e:
         print(f"[METADATA ERROR] scheme={scheme_code}: {e}")
         return {}
@@ -407,17 +423,16 @@ def fetch_peer_returns(scheme_code: str) -> Tuple[float, float]:
 def search_mutual_funds(query: str) -> List[Dict]:
     """Search for funds using MFapi.in search endpoint."""
     try:
-        url  = f"https://api.mfapi.in/mf/search?q={query}"
-        resp = _HTTP_SESSION.get(url, timeout=8)
-        resp.raise_for_status()
+        provider = get_provider()
+        raw_results = provider.search_funds(query)
         return [
             {
-                "symbol":   str(item["schemeCode"]),
+                "symbol":   str(item.get("schemeCode")),
                 "name":     item.get("schemeName", "Unknown"),
                 "type":     "Mutual Fund",
-                "exchange": "AMFI",
+                "exchange": "PROVIDER",
             }
-            for item in resp.json()[:15]
+            for item in raw_results[:15]
         ]
     except Exception as e:
         print(f"[SEARCH ERROR] query={query}: {e}")
@@ -465,7 +480,22 @@ def get_fund_benchmark(category: str, cap_type: str, fund_name: str) -> Tuple[st
     """
     fn = fund_name.upper().replace(" ", "").replace("-", "")
 
-    # ── 1. Sectoral / Thematic (name-based, highest priority) ────────────
+    # ── 1. Debt / Liquid by name (HIGHEST priority to prevent misclassification) ──
+    # FIX M-4: Moved debt checks FIRST. Without this, "HDFC Banking and PSU Debt Fund"
+    # matches the "BANKING" keyword below and returns Nifty Bank instead of CRISIL Bond.
+    if any(x in fn for x in ("LIQUID", "OVERNIGHT", "MONEYMARKET")):
+        return ("LICNETFGSC.NS", "CRISIL Liquid Index")
+    if any(x in fn for x in ("GILT", "GSEC", "GOVERNMENTSEC")):
+        return ("LICNETFGSC.NS", "CRISIL Dynamic Gilt Index")
+    if any(x in fn for x in ("BOND", "DEBT", "INCOME", "CREDITRISK", "CORPORATEBOND",
+                               "SHORTDURATION", "MEDIUMDURATION", "DYNAMICBOND",
+                               "FLOATINGRATE", "LOWDURATION", "ULTRASHORT")):
+        return ("LICNETFGSC.NS", "CRISIL Composite Bond Index")
+    # "Banking & PSU" as a debt category (not to be confused with Banking sectoral equity)
+    if "BANKING" in fn and "PSU" in fn:
+        return ("LICNETFGSC.NS", "CRISIL Banking & PSU Debt Index")
+
+    # ── 2. Sectoral / Thematic (name-based) ──────────────────────────────
     if any(x in fn for x in ("BANK", "BANKING", "FINANCIAL", "FINSERV")):
         return ("^NSEBANK", "Nifty Bank TRI")
     if any(x in fn for x in ("INFOTECH", "TECH", "DIGIT", "SOFTWARE")) and "IT" in fn:
@@ -478,14 +508,6 @@ def get_fund_benchmark(category: str, cap_type: str, fund_name: str) -> Tuple[st
         return ("^GSPC", "S&P 500 TRI")
     if "GOLD" in fn:
         return ("GC=F", "Gold Spot TRI")
-
-    # ── 2. Debt / Liquid by name ──────────────────────────────────────────
-    if any(x in fn for x in ("LIQUID", "OVERNIGHT", "MONEYMARKET")):
-        return ("LICNETFGSC.NS", "CRISIL Liquid Index")
-    if any(x in fn for x in ("GILT", "GSEC", "GOVERNMENTSEC")):
-        return ("LICNETFGSC.NS", "Nifty 10yr G-Sec Index")
-    if any(x in fn for x in ("BOND", "DEBT", "INCOME", "CREDITRISK", "CORPORATEBOND")):
-        return ("LICNETFGSC.NS", "CRISIL Composite Bond")
 
     # ── 3. Cap-type lookup (normalised to strip whitespace/case) ──────────
     cap_norm = str(cap_type or "").strip()

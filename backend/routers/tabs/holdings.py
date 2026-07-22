@@ -77,28 +77,83 @@ def get_holdings(session_id: str, sort_by: str = "Market Value", ascending: str 
         invested = float(r.get("Invested", 0) or 0)
         r["Avg. NAV"] = round(invested / units, 4) if units > 0 else 0
         
-        nav_series = fetch_nav_series_by_isin(isin, days=7, refresh=refresh)
-        if not nav_series.empty and len(nav_series) >= 2:
-            latest = float(nav_series.iloc[-1])
-            prev   = float(nav_series.iloc[-2])
-            day_chg_pct = (latest / prev - 1) * 100
-            day_chg_amt = units * (latest - prev)
-            r["Day Chg."] = round(day_chg_amt, 2)
-            r["Day Chg.%"] = round(day_chg_pct, 2)
-            r["Curr. NAV"] = round(latest, 4)
-            r["NAV Date"] = str(nav_series.index[-1].date())
-        else:
-            r["Day Chg."] = 0
-            r["Day Chg.%"] = 0
-            r["Curr. NAV"] = float(r.get("NAV", 0))
-            r["NAV Date"] = "—"
+        nav_series = fetch_nav_series_by_isin(isin, days=10, refresh=refresh)
+        
+        live_nav = float(r.get("NAV", 0))
+        r["Curr. NAV"] = live_nav
+        r["NAV Date"] = str(r.get("NAV Date", "—"))
+        
+        day_chg_amt = 0.0
+        day_chg_pct = 0.0
+
+        if not nav_series.empty and live_nav > 0:
+            nav_date_str = str(r.get("NAV Date", ""))
+            if nav_date_str and nav_date_str != "—":
+                try:
+                    import pandas as pd
+                    nav_date_dt = pd.to_datetime(nav_date_str)
+                    
+                    # Lock previous close to the business day STRICTLY BEFORE the cached Live NAV Date.
+                    # This guarantees Day Change is 100% deterministic and immune to mfapi's asynchronous sync delays.
+                    prev_series = nav_series[nav_series.index < nav_date_dt]
+                    
+                    if not prev_series.empty:
+                        # Only compute if the previous date is within 4 days (covers long weekends).
+                        # If mfapi is stale by >4 days, Day Chg evaluates to 0 rather than a fake 20-day move.
+                        from datetime import timedelta
+                        if (nav_date_dt - prev_series.index[-1]) <= timedelta(days=4):
+                            prev_nav = float(prev_series.iloc[-1])
+                            if prev_nav > 0:
+                                day_chg_pct = (live_nav / prev_nav - 1) * 100
+                                day_chg_amt = units * (live_nav - prev_nav)
+                                r["Prev NAV"] = prev_nav
+                                r["Prev NAV Date"] = prev_series.index[-1].strftime("%d %b %Y")
+                                
+                                # Sanity check for impossible single day moves (>10%)
+                                if abs(day_chg_pct) > 10.0:
+                                    day_chg_pct = 0.0
+                                    day_chg_amt = 0.0
+                                    r.pop("Prev NAV", None)
+                                    r.pop("Prev NAV Date", None)
+                except Exception:
+                    pass
+
+        r["Day Chg."] = round(day_chg_amt, 2)
+        r["Day Chg.%"] = round(day_chg_pct, 2)
             
         r["color"] = CATEGORY_COLORS.get(r.get("Category", ""), "#94A3B8")
+        code = resolve_scheme_code_from_isin(isin)
+        ter = fetch_fund_ter(code, r.get("Plan", "Direct")) if code else None
+        
+        if ter is not None and ter > 0:
+            r["TER"] = round(ter, 2)
+            r["TER_fallback"] = False
+        else:
+            from services.fallbacks.deterministic import DeterministicFallback
+            fb = DeterministicFallback().generate_fallbacks(
+                isin=isin or "", 
+                category=r.get("Category", ""), 
+                fund_name=r.get("Fund", ""), 
+                current_result={}
+            )
+            r["TER"] = fb.get("expense_ratio", 0.0)
+            r["TER_fallback"] = True
         return r
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         enriched_records = list(executor.map(lambda r: enrich_holding(r), records))
     
+    # Sanitize NaN/Inf values to prevent JSON serialization crashes
+    import math
+    def _sanitize(val):
+        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            return 0.0
+        return val
+
+    for rec in enriched_records:
+        for key in rec:
+            rec[key] = _sanitize(rec[key])
+
     return {
         "holdings": enriched_records,
         "total": len(records),
@@ -127,17 +182,25 @@ def get_fund_insights(session_id: str, isin: str, name: str = "", refresh: bool 
     search_name = name or meta.get("scheme_name", "")
     portfolio_data = fetch_live_portfolio(isin, category, search_name, refresh=refresh)
     
-    er = fetch_fund_ter(code) if code else 0.0
+    # Determine AUM from metadata (avoid hardcoded placeholders)
+    amfi_er = fetch_fund_ter(code) if code else 0.0
+    er = amfi_er if amfi_er else portfolio_data.get("expense_ratio", 0.0)
+    
+    aum_str = meta.get("aum") or portfolio_data.get("aum") or "N/A"
     
     return {
         "isin": isin,
         "scheme_code": code,
         "scheme_name": meta.get("scheme_name"),
         "fund_house": meta.get("fund_house"),
-        "expense_ratio": f"{er}%" if er and er > 0 else "0.55%",
-        "aum": "₹18,450 Cr" if "Small" in category else "₹42,100 Cr",
+        "expense_ratio": f"{er}%" if er and er != "N/A" else "N/A",
+        "expense_ratio_fallback": not amfi_er and portfolio_data.get("expense_ratio_fallback", False),
+        "aum": aum_str,
+        "aum_fallback": not meta.get("aum") and portfolio_data.get("aum_fallback", False),
         "exit_load": portfolio_data.get("exit_load", "See Factsheet"),
+        "exit_load_fallback": portfolio_data.get("exit_load_fallback", False),
         "risk": portfolio_data.get("risk", "HIGH"),
+        "risk_fallback": portfolio_data.get("risk_fallback", False),
         "category": category,
         "type": meta.get("scheme_type"),
         "sectors": portfolio_data.get("sectors", []),

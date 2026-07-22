@@ -1,4 +1,5 @@
-import { AppBar, Toolbar, IconButton, Box, Stack, Chip, Typography, Tooltip, Divider, alpha } from '@mui/material'
+import { fmtInr } from '../../api/fmt'
+import { AppBar, Toolbar, IconButton, Box, Stack, Chip, Typography, Tooltip, Divider, alpha, Avatar, Button } from '@mui/material'
 import MenuIcon from '@mui/icons-material/Menu'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
@@ -10,12 +11,16 @@ import StorageIcon from '@mui/icons-material/Storage'
 import BoltIcon from '@mui/icons-material/Bolt'
 import SpeedIcon from '@mui/icons-material/Speed'
 import CachedIcon from '@mui/icons-material/Cached'
+import PersonIcon from '@mui/icons-material/Person'
+import LogoutIcon from '@mui/icons-material/Logout'
+import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
+import { useNavigate } from 'react-router-dom'
 import { useIsFetching, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useMarketSummary, useMarketConfig } from '../../hooks/useData'
 import { useEffect, useState } from 'react'
-import { useSessionId, useLastSynced, useRefreshTrigger } from '../../store/appStore'
+import { useSessionId, useLastSynced, useRefreshTrigger, usePan, useLogout, useAppStore } from '../../store/appStore'
 import { apiClient } from '../../api/client'
 
 interface TopbarProps {
@@ -27,24 +32,24 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const isFetching = useIsFetching()
   const queryClient = useQueryClient()
   const sid = useSessionId()
+  const pan = usePan()
+  const logout = useLogout()
+  const { clearSession } = useAppStore()
+  const navigate = useNavigate()
   const lastSynced = useLastSynced()
   const triggerRefresh = useRefreshTrigger()
+  const activeModule = useAppStore((s) => s.activeModule)
 
   const { data: market } = useMarketSummary()
   const { data: config } = useMarketConfig()
-  const [time, setTime] = useState(new Date().toLocaleTimeString())
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+  const [profileAnchor, setProfileAnchor] = useState<null | HTMLElement>(null)
 
   const updateConfig = useMutation({
     mutationFn: (ttl: number) => apiClient.updateMarketConfig(ttl),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['market-config'] })
   })
-
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000)
-    return () => clearInterval(timer)
-  }, [])
 
   const handleRefresh = async () => {
     if (!sid) return
@@ -102,34 +107,44 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
           <MenuIcon />
         </IconButton>
 
-        {/* Market Widget */}
-        <Stack direction="row" spacing={3} alignItems="center" sx={{ display: { xs: 'none', lg: 'flex' } }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Typography variant="caption" sx={{ fontWeight: 800, color: 'primary.main', letterSpacing: '0.1em' }}>
-              MARKET INDEX / NIFTY 50
-            </Typography>
-            <Typography variant="body2" className="num" sx={{ fontWeight: 700, color: '#fff', fontSize: '0.9375rem' }}>
-              {nifty?.price?.toLocaleString('en-IN') ?? '---'}
-            </Typography>
-            {nifty && (
-              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ px: 1, py: 0.25, borderRadius: '6px', bgcolor: isUp ? alpha('#4EDE93', 0.1) : alpha('#FF516A', 0.1) }}>
-                {isUp ? <TrendingUpIcon sx={{ fontSize: 14, color: '#4EDE93' }} /> : <TrendingDownIcon sx={{ fontSize: 14, color: '#FF516A' }} />}
-                <Typography sx={{ fontSize: 11, fontWeight: 800, color: isUp ? '#4EDE93' : '#FF516A' }}>
-                  {isUp ? '+' : ''}{nifty.change_pct}%
-                </Typography>
-              </Stack>
-            )}
-          </Box>
-
-          <Divider orientation="vertical" flexItem sx={{ height: 16, my: 'auto', borderColor: 'rgba(255,255,255,0.1)' }} />
-
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <AccessTimeIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-            <Typography variant="body2" className="num" sx={{ fontSize: '0.8125rem', fontWeight: 600, color: 'text.secondary' }}>
-              {time}
-            </Typography>
-          </Box>
-        </Stack>
+        {/* Market Widget - Only for Indian Stocks */}
+        {activeModule === 'indian_stocks' && (
+          <Stack direction="row" spacing={3} alignItems="center" sx={{ display: { xs: 'none', lg: 'flex' } }}>
+            <Box sx={{ 
+              display: 'flex', alignItems: 'center', gap: 1.5, 
+              background: 'linear-gradient(90deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%)',
+              border: '1px solid rgba(255,255,255,0.1)', 
+              borderRadius: '100px', 
+              p: '4px 6px 4px 16px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+              transition: 'all 0.3s ease',
+              '&:hover': {
+                borderColor: 'rgba(99, 102, 241, 0.4)',
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255,255,255,0.05)'
+              }
+            }}>
+              <Typography variant="caption" sx={{ fontWeight: 800, color: '#94A3B8', letterSpacing: '0.1em' }}>
+                NIFTY 50
+              </Typography>
+              <Divider orientation="vertical" flexItem sx={{ height: 16, my: 'auto', borderColor: 'rgba(255,255,255,0.1)' }} />
+              <Typography variant="body2" className="num" sx={{ fontWeight: 900, color: '#F8FAFC', fontSize: '0.95rem' }}>
+                {nifty?.price?.toLocaleString('en-IN') ?? '---'}
+              </Typography>
+              {nifty && (
+                <Stack direction="row" spacing={0.5} alignItems="center" sx={{ 
+                  ml: 1, px: 1.2, py: 0.5, borderRadius: '100px', 
+                  background: isUp ? 'linear-gradient(135deg, rgba(78, 222, 147, 0.2) 0%, rgba(78, 222, 147, 0.05) 100%)' : 'linear-gradient(135deg, rgba(255, 81, 106, 0.2) 0%, rgba(255, 81, 106, 0.05) 100%)',
+                  border: `1px solid ${isUp ? 'rgba(78, 222, 147, 0.3)' : 'rgba(255, 81, 106, 0.3)'}`
+                }}>
+                  {isUp ? <TrendingUpIcon sx={{ fontSize: 14, color: '#4EDE93' }} /> : <TrendingDownIcon sx={{ fontSize: 14, color: '#FF516A' }} />}
+                  <Typography sx={{ fontSize: '0.7rem', fontWeight: 900, color: isUp ? '#4EDE93' : '#FF516A', letterSpacing: '0.05em' }}>
+                    {isUp ? '+' : ''}{nifty.change_pct}%
+                  </Typography>
+                </Stack>
+              )}
+            </Box>
+          </Stack>
+        )}
 
         <Box sx={{ flex: 1 }} />
 
@@ -155,7 +170,10 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
 
           <Divider orientation="vertical" flexItem sx={{ height: 24, my: 'auto', borderColor: 'rgba(255,255,255,0.1)' }} />
 
+          {/* AMFI NAV Sync Widget - Only for Mutual Funds when Session Exists */}
+          {activeModule === 'mutual_funds' && sid && (
           <Box
+            onClick={(e) => setAnchorEl(e.currentTarget)}
             sx={{
               display: 'flex',
               alignItems: 'center',
@@ -166,6 +184,9 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               border: '1px solid',
               borderColor: alpha('#334155', 0.8),
               boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              '&:hover': { background: alpha('#334155', 0.6) }
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
@@ -219,50 +240,104 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                 </IconButton>
               </span>
             </Tooltip>
-
-            <Divider orientation="vertical" flexItem sx={{ height: 18, my: 'auto', borderColor: alpha('#334155', 0.8) }} />
-
-            <Tooltip title="Configure Feed Latency & Cache TTL">
-              <Box
-                onClick={handleConfigClick}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.75,
-                  px: 1.25,
-                  py: 0.5,
-                  borderRadius: '100px',
-                  cursor: 'pointer',
-                  background: currentTTL === 0 
-                    ? alpha('#38BDF8', 0.15) 
-                    : alpha('#6366F1', 0.15),
-                  border: '1px solid',
-                  borderColor: currentTTL === 0 
-                    ? alpha('#38BDF8', 0.3) 
-                    : alpha('#6366F1', 0.3),
-                  transition: 'all 0.2s',
-                  '&:hover': {
-                    background: currentTTL === 0 
-                      ? alpha('#38BDF8', 0.25) 
-                      : alpha('#6366F1', 0.25),
-                    boxShadow: currentTTL === 0 
-                      ? '0 0 12px rgba(56, 189, 248, 0.2)' 
-                      : '0 0 12px rgba(99, 102, 241, 0.2)'
-                  }
-                }}
-              >
-                {currentTTL === 0 ? <BoltIcon sx={{ fontSize: 16, color: '#38BDF8' }} /> : <StorageIcon sx={{ fontSize: 14, color: '#818CF8' }} />}
-                <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.75rem', color: currentTTL === 0 ? '#38BDF8' : '#818CF8' }}>
-                  {currentTTL === 0 ? 'LIVE' : `${currentTTL / 60}H CACHE`}
-                </Typography>
-              </Box>
-            </Tooltip>
           </Box>
+          )}
+
+            {pan && (
+              <>
+                <Box 
+                  onClick={(e) => setProfileAnchor(e.currentTarget)}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1.5, background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%)', borderRadius: '100px', p: 0.5, pr: 1.5, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.3s ease', '&:hover': { borderColor: 'rgba(99,102,241,0.4)', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(30, 41, 59, 0.8) 100%)' } }}
+                >
+                  <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: alpha('#6366F1', 0.2), color: '#818CF8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, border: '1px solid rgba(99,102,241,0.3)' }}>
+                    {pan.substring(0, 2)}
+                  </Box>
+                  <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.75rem', letterSpacing: 0.5 }}>{pan}</Typography>
+                </Box>
+
+                <Menu
+                  anchorEl={profileAnchor}
+                  open={Boolean(profileAnchor)}
+                  onClose={() => setProfileAnchor(null)}
+                  PaperProps={{
+                    sx: {
+                      background: alpha('#0F172A', 0.95),
+                      backdropFilter: 'blur(20px)',
+                      border: '1px solid',
+                      borderColor: alpha('#334155', 0.8),
+                      boxShadow: '0 20px 50px rgba(0,0,0,0.7)',
+                      borderRadius: '16px',
+                      mt: 1,
+                      minWidth: 220,
+                      p: 1,
+                      '& .MuiMenuItem-root': {
+                        borderRadius: '10px',
+                        px: 2,
+                        py: 1.25,
+                        mb: 0.5,
+                        transition: 'all 0.2s',
+                        '&:hover': { bgcolor: alpha('#1E293B', 0.8) }
+                      },
+                      '& .Mui-selected': { 
+                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(56, 189, 248, 0.15)) !important',
+                        borderColor: alpha('#6366F1', 0.5),
+                        border: '1px solid',
+                      }
+                    }
+                  }}
+                  transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+                  anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+                >
+                  <Box sx={{ px: 1, py: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Box sx={{ width: 36, height: 36, borderRadius: '10px', background: 'linear-gradient(135deg, #6366F1 0%, #38BDF8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: '0.8rem', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)' }}>
+                      {pan.substring(0, 2)}
+                    </Box>
+                    <Box>
+                      <Typography sx={{ fontWeight: 800, fontSize: '0.875rem', color: '#F8FAFC', lineHeight: 1.2 }}>{pan}</Typography>
+                      <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>PRO VAULT</Typography>
+                    </Box>
+                  </Box>
+
+                  <Divider sx={{ my: 1, borderColor: 'rgba(255,255,255,0.05)' }} />
+
+                  <MenuItem 
+                    onClick={() => { setProfileAnchor(null); navigate('/dashboard/account'); }}
+                    sx={{ color: '#F8FAFC' }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
+                      <PersonIcon sx={{ fontSize: 18, color: '#818CF8' }} />
+                      <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Your Account</Typography>
+                    </Box>
+                  </MenuItem>
+
+                  <MenuItem 
+                    onClick={() => { 
+                      setProfileAnchor(null); 
+                      queryClient.clear(); 
+                      localStorage.clear(); 
+                      sessionStorage.clear(); 
+                      logout(); 
+                      navigate('/');
+                    }}
+                    sx={{ 
+                      color: '#FF516A !important',
+                      '&:hover': { bgcolor: alpha('#FF516A', 0.1) + ' !important' } 
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
+                      <LogoutIcon sx={{ fontSize: 18, color: '#FF516A' }} />
+                      <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Sign Out</Typography>
+                    </Box>
+                  </MenuItem>
+                </Menu>
+              </>
+            )}
+          </Stack>
 
           <Menu
             anchorEl={anchorEl}
             open={Boolean(anchorEl)}
-            onClose={() => handleConfigClose()}
+            onClose={() => setAnchorEl(null)}
             PaperProps={{
               sx: {
                 background: alpha('#0F172A', 0.95),
@@ -299,7 +374,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               </Typography>
             </Box>
 
-            <MenuItem onClick={() => handleConfigClose(0)} selected={currentTTL === 0}>
+            <MenuItem onClick={() => { updateConfig.mutate(0); setAnchorEl(null); }} selected={currentTTL === 0}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
                 <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha('#38BDF8', 0.1), color: '#38BDF8', display: 'flex' }}>
                   <BoltIcon sx={{ fontSize: 20 }} />
@@ -311,7 +386,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               </Box>
             </MenuItem>
 
-            <MenuItem onClick={() => handleConfigClose(60)} selected={currentTTL === 60}>
+            <MenuItem onClick={() => { updateConfig.mutate(60); setAnchorEl(null); }} selected={currentTTL === 60}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
                 <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha('#6366F1', 0.1), color: '#818CF8', display: 'flex' }}>
                   <SpeedIcon sx={{ fontSize: 20 }} />
@@ -323,7 +398,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               </Box>
             </MenuItem>
 
-            <MenuItem onClick={() => handleConfigClose(240)} selected={currentTTL === 240}>
+            <MenuItem onClick={() => { updateConfig.mutate(240); setAnchorEl(null); }} selected={currentTTL === 240}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
                 <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha('#10B981', 0.1), color: '#34D399', display: 'flex' }}>
                   <StorageIcon sx={{ fontSize: 20 }} />
@@ -335,7 +410,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               </Box>
             </MenuItem>
 
-            <MenuItem onClick={() => handleConfigClose(1440)} selected={currentTTL === 1440}>
+            <MenuItem onClick={() => { updateConfig.mutate(1440); setAnchorEl(null); }} selected={currentTTL === 1440}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
                 <Box sx={{ p: 1, borderRadius: '8px', bgcolor: alpha('#64748B', 0.2), color: '#94A3B8', display: 'flex' }}>
                   <CachedIcon sx={{ fontSize: 20 }} />
@@ -347,7 +422,6 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
               </Box>
             </MenuItem>
           </Menu>
-        </Stack>
       </Toolbar>
     </AppBar>
   )

@@ -16,7 +16,7 @@ class CategorizationEngine:
         if "DIVIDEND" in rc: return "Dividend Yield"
         if "THEMATIC" in rc or "SECTORAL" in rc: return "Thematic"
         if "HYBRID" in rc or "BALANCED" in rc or "HYBRID" in rt or "BALANCED" in rt: return "Hybrid"
-        if "DEBT" in rt or "DEBT" in rc: return "Debt"
+        if "DEBT" in rt or "DEBT" in rc or "BOND" in rc or "INCOME" in rc or "CREDIT RISK" in rc or "GILT" in rc or "LIQUID" in rc: return "Debt"
         if "INDEX" in rc or "ETF" in rc: return "Index"
         if "RETIREMENT" in rc or "CHILDREN" in rc: return "Solution Oriented"
         
@@ -30,11 +30,17 @@ class CategorizationEngine:
         if any(x in n for x in ["HYBRID", "BALANCED", "EQUITY SAVINGS"]): return "Hybrid"
         if any(x in n for x in ["INDEX", "ETF"]): return "Index"
 
-        # Priority 3: The "Banking & PSU" Debt Fix
+        # Priority 3: Comprehensive Debt Detection (Critical for tax classification)
         if "BANKING" in n and "PSU" in n: return "Debt"
+        debt_keywords = [
+            "DEBT", "BOND", "GILT", "MONEY MARKET", "FIXED", "DURATION",
+            "INCOME FUND", "SAVINGS FUND", "ALL SEASONS", "CORPORATE BOND",
+            "CREDIT RISK", "SHORT DURATION", "MEDIUM DURATION", "DYNAMIC BOND",
+            "FLOATING RATE", "LOW DURATION", "ULTRA SHORT",
+        ]
+        if any(x in n for x in debt_keywords): return "Debt"
         if "BANKING" in n:
-            debt_keywords = ["DEBT", "BOND", "GILT", "MONEY MARKET", "FIXED", "DURATION"]
-            return "Debt" if any(x in n for x in debt_keywords) else "Thematic"
+            return "Thematic"
             
         # Final Priority: Use Raw Category if available
         if raw_cat and len(raw_cat) > 3:
@@ -81,11 +87,10 @@ class CategorizationEngine:
         if category == "ELSS": return "Flexi Cap"
         if category == "Index":
             if "NIFTY 50" in n or "SENSEX" in n: return "Large Cap"
-            
-        return "Large Cap"
-        
-        if category == "Index":
-            if "NIFTY 50" in n or "SENSEX" in n: return "Large Cap"
+            if "MIDCAP" in n or "MID CAP" in n: return "Mid Cap"
+            if "SMALLCAP" in n or "SMALL CAP" in n: return "Small Cap"
+            if "NEXT 50" in n: return "Large Cap"
+            return "Large Cap"
             
         return "Large Cap"
 
@@ -111,3 +116,23 @@ class CategorizationEngine:
         if "DIRECT" in n: return "Direct"
         if "REGULAR" in n: return "Regular"
         return "Unknown"
+
+    @staticmethod
+    def extract_amc_brand(fund_name: str) -> str:
+        """
+        Extract the AMC brand name from a fund name for peer diversity filtering.
+        Centralized to eliminate code duplication across tab routers (Fix M-12).
+        """
+        name = fund_name.upper().strip()
+        for compound in [
+            "NIPPON INDIA", "ICICI PRUDENTIAL", "ADITYA BIRLA", "MIRAE ASSET",
+            "FRANKLIN TEMPLETON", "MOTILAL OSWAL", "CANARA ROBECO", "TATA", "DSP",
+            "SBI", "HDFC", "QUANT", "AXIS", "KOTAK", "BANDHAN", "UTI", "PPFAS",
+            "PARAG PARIKH", "SUNDARAM", "EDELWEISS", "INVESCO", "HSBC", "PGIM",
+            "BARODA BNP", "MAHINDRA", "LIC", "BANK OF INDIA", "UNION", "JM",
+            "ITI", "GROWW", "SAMCO", "ZERODHA", "360 ONE", "BAJAJ FINSERV",
+            "WHITEOAK", "OLD BRIDGE", "HELIOS", "NJ",
+        ]:
+            if name.startswith(compound):
+                return compound
+        return name.split()[0] if name.split() else "UNKNOWN"

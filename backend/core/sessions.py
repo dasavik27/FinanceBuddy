@@ -18,28 +18,46 @@ from fastapi import HTTPException
 from typing import Dict, Any
 
 from core.models import Portfolio
+from core import storage
 
 # Ephemeral session store (Zero disk logging) with auto-expiration tracking
 _SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Session Time-To-Live (4 hours) prevents premature timeout during deep diagnostic reviews
 SESSION_TTL_HOURS = 4
 
-def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool) -> str:
+def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
     """
     Initializes a new ephemeral portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with global AMFI & Morningstar categorization standards.
     """
+    # Deduplication check: if this ledger exists on disk, skip processing
+    duplicate_id = storage.check_duplicate_upload(df_t)
+    if duplicate_id:
+        return duplicate_id
+
     session_id = str(uuid.uuid4())
     
-    # Execute one-time categorization normalization during session initialization
+    # NOTE (Fix C-2): The CAS parser already classifies categories using
+    # raw_cat, raw_type, AND fund name via CategorizationEngine.detect_category().
+    # Re-running detect_category() here with ONLY the fund name would discard
+    # the richer CAS metadata (e.g., "Banking & PSU" debt → misclassified as Thematic).
+    # We only re-classify funds with empty/missing categories.
     if not df_h.empty and "Category" in df_h.columns:
         from core.logic import CategorizationEngine as CE
-        def fix_cat(row):
-            return CE.detect_category(str(row["Fund"]))
-        df_h["Category"] = df_h.apply(fix_cat, axis=1)
+        mask = df_h["Category"].isna() | (df_h["Category"].str.strip() == "")
+        if mask.any():
+            df_h.loc[mask, "Category"] = df_h.loc[mask, "Fund"].apply(
+                lambda fn: CE.detect_category(str(fn))
+            )
 
+    portfolio = Portfolio(df_h, df_t, df_s, is_partial)
+    portfolio.update_live_navs()
+    
+    # 3. Persist to Parquet / SQLite (including PAN and upload type)
+    final_session_id = storage.save_session(session_id, df_h, df_t, df_s, is_partial, pan_id, upload_type)
+    
     _SESSIONS[session_id] = {
-        "portfolio": Portfolio(df_h, df_t, df_s, is_partial),
+        "portfolio": portfolio,
         "created_at": datetime.now(),
         "last_accessed": datetime.now(),  # TTL extension heartbeat tracking
     }
@@ -72,7 +90,21 @@ def get_session(session_id: str) -> Portfolio:
     Raises an HTTP 404 Exception if the session has expired or does not exist.
     """
     if session_id not in _SESSIONS:
-        raise HTTPException(status_code=404, detail="Session expired or not found. Please re-upload your CAS.")
+        # Fallback: Attempt to reconstruct from Data Lake Disk Storage
+        disk_data = storage.load_session(session_id)
+        if disk_data is None:
+            raise HTTPException(status_code=404, detail="Session expired or not found. Please re-upload your CAS.")
+            
+        df_h, df_t, df_s, is_partial = disk_data
+        portfolio = Portfolio(df_h, df_t, df_s, is_partial)
+        # Note: We do NOT re-fetch live NAVs automatically on every history load to save API calls
+        # portfolio.update_live_navs() 
+        
+        _SESSIONS[session_id] = {
+            "portfolio": portfolio,
+            "created_at": datetime.now(),
+            "last_accessed": datetime.now(),
+        }
     
     # Extend session TTL on every active API access
     _SESSIONS[session_id]["last_accessed"] = datetime.now()

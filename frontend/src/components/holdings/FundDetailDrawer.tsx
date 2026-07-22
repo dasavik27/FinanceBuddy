@@ -5,9 +5,11 @@
 import { useState, useEffect } from 'react'
 import {
   Drawer, Box, Typography, Divider, Chip, Grid, CircularProgress,
-  IconButton, Stack, alpha, Alert, Paper
+  IconButton, Stack, alpha, Alert, Paper, Tooltip as MuiTooltip
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
+import WarningAmberIcon from '@mui/icons-material/WarningAmber'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -121,6 +123,13 @@ function StatChip({ label, value, tip, valueColor, isLive }: { label: string; va
             boxShadow: '0 0 6px #4EDE93',
             animation: 'pulse 1.5s infinite ease-in-out'
           }} />
+        )}
+        {tip && (
+          <MuiTooltip title={tip} placement="top">
+            <IconButton size="small" sx={{ p: 0, ml: 'auto' }}>
+              <InfoOutlinedIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+            </IconButton>
+          </MuiTooltip>
         )}
       </Box>
       <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: valueColor ?? '#fff' }}>
@@ -240,13 +249,26 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                 <StatChip label="TOTAL P&L" value={fmtInr(totalGain)} valueColor={gainColor(totalGain)} isLive={!!liveNav} />
               </Grid>
               <Grid item xs={6} md={4}>
-                <StatChip label="LIVE NAV" value={`₹${effectiveNav.toFixed(2)}`} isLive={!!liveNav} />
+                <StatChip 
+                  label="LIVE NAV" 
+                  value={`₹${effectiveNav.toFixed(2)}`} 
+                  isLive={!!liveNav} 
+                  tip={fund['NAV Date'] && fund['NAV Date'] !== '—' ? `NAV Date: ${fund['NAV Date']}` : undefined}
+                />
               </Grid>
               <Grid item xs={6} md={4}>
                 <StatChip label="PORTFOLIO WEIGHT" value={`${weight.toFixed(1)}%`} valueColor={weight > 25 ? '#FF516A' : '#fff'} />
               </Grid>
               <Grid item xs={6} md={4}>
                 <StatChip label="UNITS HELD" value={Number(fund.Units ?? 0).toFixed(3)} />
+              </Grid>
+              <Grid item xs={6} md={4}>
+                <StatChip 
+                  label="DAY CHANGE" 
+                  value={fund['Day Chg.'] != null ? `${fund['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(fund['Day Chg.'])}` : '—'} 
+                  valueColor={fund['Day Chg.'] >= 0 ? '#4EDE93' : (fund['Day Chg.'] < 0 ? '#FF516A' : '#fff')} 
+                  tip={fund['Day Chg.'] != null && fund['Prev NAV Date'] ? `Calculated against previous chronological NAV: ₹${fund['Prev NAV']} on ${fund['Prev NAV Date']}` : 'Calculation unavailable'}
+                />
               </Grid>
             </Grid>
 
@@ -265,6 +287,10 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                   const aumVal = insights?.aum || "N/A"
                   const exitVal = insights?.exit_load || "N/A"
                   const riskVal = insights?.risk || "UNRATED"
+                  const fbAum = insights?.aum_fallback
+                  const fbRisk = insights?.risk_fallback
+                  const fbExit = insights?.exit_load_fallback
+                  const fbEr = insights?.expense_ratio_fallback
                   
                   const getRiskMeta = (rStr: string) => {
                     const r = (rStr || '').toUpperCase()
@@ -285,25 +311,37 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                     <Grid container spacing={2}>
                       <Grid item xs={6} md={3}>
                         <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, display: 'block', mb: 0.5, fontSize: 10 }}>EXPENSE RATIO</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXPENSE RATIO</Typography>
+                            {fbEr && <MuiTooltip title="Category band heuristic estimate. Exact TER missing from provider." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                          </Box>
                           <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{erVal}</Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6} md={3}>
                         <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, display: 'block', mb: 0.5, fontSize: 10 }}>TOTAL AUM</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>TOTAL AUM</Typography>
+                            {fbAum && <MuiTooltip title="Deterministic approximation based on asset class." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                          </Box>
                           <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{aumVal}</Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6} md={3}>
                         <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, display: 'block', mb: 0.5, fontSize: 10 }}>EXIT LOAD</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXIT LOAD</Typography>
+                            {fbExit && <MuiTooltip title="SEBI standard heuristic applied." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                          </Box>
                           <Typography sx={{ fontSize: 12, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exitVal}</Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6} md={3}>
                         <Box sx={{ p: 2, bgcolor: riskMeta.bg, borderRadius: '16px', border: `1px solid ${riskMeta.border}` }}>
-                          <Typography variant="caption" sx={{ color: riskMeta.color, fontWeight: 800, display: 'block', mb: 0.5, fontSize: 10 }}>RISK PROFILE</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                            <Typography variant="caption" sx={{ color: riskMeta.color, fontWeight: 800, fontSize: 10 }}>RISK PROFILE</Typography>
+                            {fbRisk && <MuiTooltip title="Inferred directly from category taxonomy." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: riskMeta.color, cursor: 'help', opacity: 0.8 }} /></MuiTooltip>}
+                          </Box>
                           <Typography sx={{ fontSize: 12, fontWeight: 900, color: riskMeta.color }}>{riskVal.toUpperCase()}</Typography>
                         </Box>
                       </Grid>
@@ -430,11 +468,25 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                           <Typography className="num" sx={{ fontWeight: 900, fontSize: 18, color: '#FF516A' }}>{fmtInr(fifo.total_tax)}</Typography>
                        </Box>
                     </Box>
-                    {fifo.lock_in_warning && (
-                      <Alert severity="error" sx={{ bgcolor: alpha('#FF516A', 0.1), color: '#FF516A', border: '1px solid rgba(255, 81, 106, 0.2)', borderRadius: '12px', '& .MuiAlert-icon': { color: '#FF516A' } }}>
-                        {fifo.lock_in_warning}
-                      </Alert>
-                    )}
+                     {fifo.lock_in_warning && (
+                       <Stack spacing={1}>
+                         <Alert severity="error" sx={{ bgcolor: alpha('#FF516A', 0.1), color: '#FF516A', border: '1px solid rgba(255, 81, 106, 0.2)', borderRadius: '12px', '& .MuiAlert-icon': { color: '#FF516A' } }}>
+                           {fifo.lock_in_warning}
+                         </Alert>
+                         {fifo.details?.filter((d: any) => d.Type === "LOCK-IN").map((d: any, i: number) => (
+                           <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255, 81, 106, 0.05)', border: '1px solid rgba(255, 81, 106, 0.1)' }}>
+                             <Box>
+                               <Typography variant="caption" sx={{ color: '#FF516A', fontWeight: 700, display: 'block' }}>SIP: {d["Acquisition Date"]}</Typography>
+                               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 800, fontSize: 13 }}>{d["Units Sold"].toFixed(2)} Units</Typography>
+                             </Box>
+                             <Box sx={{ textAlign: 'right' }}>
+                               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block' }}>REDEEMABLE ON</Typography>
+                               <Typography variant="body2" sx={{ color: '#4EDE93', fontWeight: 800, fontSize: 13 }}>{d.lock_in_end}</Typography>
+                             </Box>
+                           </Box>
+                         ))}
+                       </Stack>
+                     )}
                  </Stack>
                )}
             </Box>

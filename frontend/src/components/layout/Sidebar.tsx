@@ -11,17 +11,17 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import LogoutIcon from '@mui/icons-material/Logout'
+import PersonIcon from '@mui/icons-material/Person'
 import { useAppStore } from '../../store/appStore'
 
 const DRAWER_W = 280
 
+import TimelineIcon from '@mui/icons-material/Timeline'
+
 const NAV = [
-  { label: 'Overview',              icon: <DashboardIcon />,     path: '/dashboard' },
-  { label: 'Holdings',              icon: <TableChartIcon />,    path: '/dashboard/holdings' },
-  { label: 'Performance',           icon: <ShowChartIcon />,     path: '/dashboard/performance' },
-  { label: 'Compare',               icon: <CompareArrowsIcon />, path: '/dashboard/compare' },
-  { label: 'Insights & Rebalance',  icon: <LightbulbIcon />,     path: '/dashboard/insights' },
-  { label: 'Tax Strategy',          icon: <ReceiptIcon />,       path: '/dashboard/tax' },
+  { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/dashboard/mutual-funds' },
+  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/dashboard/indian-stocks' },
+  { label: 'Tax Expert',            icon: <ReceiptIcon />,       path: '/dashboard/tax-expert' },
 ]
 
 interface SidebarProps {
@@ -116,10 +116,10 @@ function SidebarContent({ location, navigate, isPartial, clearSession, onClose, 
           {!collapsed && (
             <Box sx={{ whiteSpace: 'nowrap' }}>
               <Typography sx={{ fontSize: 18, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px', lineHeight: 1 }}>
-                Folio<span style={{ color: '#38BDF8' }}>Pulse</span>
+                Finance <span style={{ color: '#38BDF8' }}>Buddy</span>
               </Typography>
               <Typography sx={{ fontSize: 10, color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.15em', mt: 0.5 }}>
-                Institutional Cockpit
+                Smart Wealth Dashboard
               </Typography>
             </Box>
           )}

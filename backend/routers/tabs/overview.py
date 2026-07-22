@@ -17,11 +17,19 @@ router = APIRouter()
 
 @router.get("/{session_id}/summary")
 def get_summary(session_id: str, benchmark: str = "Nifty 50"):
+    """
+    Retrieves the high-level executive summary of the portfolio.
+    Computes total invested capital, current market value, and overarching XIRR.
+    """
     portfolio = get_session(session_id)
     return portfolio.get_summary(benchmark)
 
 @router.get("/{session_id}/overview")
 def get_overview(session_id: str, period: str = "1Y", benchmark: str = "Nifty 50", refresh: bool = False):
+    """
+    Generates the primary time-series chart data for the Overview dashboard.
+    Dynamically splices historical portfolio cashflows against the selected benchmark.
+    """
     portfolio = get_session(session_id)
     df_t = portfolio.df_t
     df_h = portfolio.df_h

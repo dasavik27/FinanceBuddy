@@ -1,3 +1,4 @@
+import { fmtInr } from '../../api/fmt'
 import { useState, useMemo, useEffect } from 'react'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -213,6 +214,8 @@ export default function CompareTab() {
           'Sortino': isBench ? (bStats?.sortino?.toFixed(2) ?? '—') : (pFund?.sortino?.toFixed(2) ?? '—'),
           'Beta': isBench ? '1.00' : (pFund?.beta?.toFixed(2) ?? '—'),
           'Volatility': isBench ? (bStats?.volatility != null ? `${bStats.volatility}%` : '—') : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : '—'),
+          'Max Drawdown': isBench ? (bStats?.max_drawdown != null ? `${bStats.max_drawdown.toFixed(1)}%` : '—') : (pFund?.max_dd != null ? `${Number(pFund.max_dd).toFixed(1)}%` : '—'),
+          'Expense Ratio': pFund?.er != null ? `${Number(pFund.er).toFixed(2)}%` : '—',
           'Consistency': isBench ? '10/10' : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : '—'),
           'Verdict': isBench ? 'Target' : (pFund?.verdict ?? 'Average'),
           'P/E Ratio': pFund?.pe_ratio != null ? pFund.pe_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : '—'),
@@ -220,6 +223,7 @@ export default function CompareTab() {
           'Day Chg.%': isBench ? ((perfData as any)?.benchmark_day_chg != null ? `${(perfData as any).benchmark_day_chg >= 0 ? '+' : ''}${(perfData as any).benchmark_day_chg.toFixed(2)}%` : '—') : (h?.['Day Chg.%'] != null ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%` : '—'),
           AlphaVal: isBench ? 0 : (pFund?.alpha ?? 0),
           SharpeVal: isBench ? (bStats?.sharpe ?? 0) : (pFund?.sharpe ?? 0),
+          SortinoVal: isBench ? (bStats?.sortino ?? 0) : (pFund?.sortino ?? 0),
           VolVal: isBench ? (bStats?.volatility ?? 0) : (pFund?.vol ?? 100),
           ConsistVal: isBench ? 10 : (pFund?.consistency ?? 0),
         },
@@ -365,8 +369,8 @@ export default function CompareTab() {
   return (
     <Box>
       <SectionHeader 
-        title="Comparison Cockpit" 
-        subtitle="Institutional-grade asset comparison with dynamic multi-vector risk attribution."
+        title="Compare Funds" 
+        subtitle="Compare funds side-by-side on performance, risk, and asset allocation."
       />
 
       <motion.div initial="hidden" animate="visible" variants={itemVar}>
@@ -460,11 +464,12 @@ export default function CompareTab() {
                           <TableHead>
                             <TableRow>
                               <TableCell sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ASSET NAME</TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>1Y RET <InfoTooltip text="Trailing 1-year Compound Annual Growth Rate (CAGR)." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ALPHA <InfoTooltip text="Jensen's Alpha: Excess return earned above the benchmark index for the risk taken." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>BETA <InfoTooltip text="Market sensitivity. Beta > 1 indicates higher volatility than the market." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SHARPE <InfoTooltip text="Sharpe Ratio: Total excess return earned per unit of overall volatility." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>VERDICT <InfoTooltip text="Algorithmic multi-vector risk attribution verdict." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>1Y RET <InfoTooltip text="Trailing 1-year CAGR from NAV data." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>3Y RET <InfoTooltip text="Trailing 3-year CAGR (annualized)." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ALPHA <InfoTooltip text="Jensen's Alpha: Excess return over the benchmark for the risk taken." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SHARPE <InfoTooltip text="Excess return per unit of total volatility. Higher is better." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SORTINO <InfoTooltip text="Excess return per unit of downside volatility. Better risk measure than Sharpe." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>VERDICT <InfoTooltip text="Multi-factor institutional quality score." /></TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -476,13 +481,14 @@ export default function CompareTab() {
                                 <TableCell sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
                                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                                     <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: m.color, boxShadow: `0 0 8px ${m.color}` }} />
-                                    <Typography variant="body2" fontWeight={700}>{m.name.slice(0, 32)}...</Typography>
+                                    <Typography variant="body2" fontWeight={700} sx={{ maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.fullName}</Typography>
                                   </Box>
                                 </TableCell>
                                 <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data['1Y Ret']}</TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data['3Y Ret']}</TableCell>
                                 <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700, color: gainColor(m.data.AlphaVal) }}>{m.data.Alpha}</TableCell>
-                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data.Beta}</TableCell>
                                 <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data.Sharpe}</TableCell>
+                                <TableCell align="center" className="num" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)', fontWeight: 700 }}>{m.data.Sortino}</TableCell>
                                 <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}><VerdictChip verdict={m.data.Verdict} /></TableCell>
                               </TableRow>
                             ))}
@@ -494,13 +500,20 @@ export default function CompareTab() {
                   <Grid item xs={12} lg={4}>
                     <motion.div variants={itemVar}>
                       <Paper className="glass" sx={{ p: 3, height: '100%', minHeight: 400 }}>
-                        <GlassHeader label="Institutional Radar" icon={AutoAwesomeIcon} />
+                        <GlassHeader label="Risk-Return Radar" icon={AutoAwesomeIcon} />
                         <ResponsiveContainer width="100%" height={320}>
-                          <RadarChart data={allMatrix.map((m: any) => ({ subject: m.shortName, A: m.data.SharpeVal * 20, B: m.data.ConsistVal * 10 }))}>
+                          <RadarChart data={[
+                            { metric: 'Alpha', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.AlphaVal + 10) * 5))])) },
+                            { metric: 'Sharpe', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, m.data.SharpeVal * 40))])) },
+                            { metric: 'Sortino', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.SortinoVal ?? 0) * 30))])) },
+                            { metric: 'Consistency', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, m.data.ConsistVal * 10])) },
+                            { metric: 'Stability', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, 100 - m.data.VolVal * 3)])) },
+                          ]}>
                             <PolarGrid stroke="rgba(255,255,255,0.1)" />
-                            <PolarAngleAxis dataKey="subject" tick={{ fill: '#94A3B8', fontSize: 10 }} />
-                            <Radar name="Risk-Adj" dataKey="A" stroke="#6366F1" fill="#6366F1" fillOpacity={0.3} />
-                            <Radar name="Consistency" dataKey="B" stroke="#4EDE93" fill="#4EDE93" fillOpacity={0.3} />
+                            <PolarAngleAxis dataKey="metric" tick={{ fill: '#94A3B8', fontSize: 11, fontWeight: 700 }} />
+                            {allMatrix.map((m: any) => (
+                              <Radar key={m.id} name={m.shortName} dataKey={m.id} stroke={m.color} fill={m.color} fillOpacity={0.15} strokeWidth={2} />
+                            ))}
                             <Legend />
                           </RadarChart>
                         </ResponsiveContainer>
@@ -521,12 +534,14 @@ export default function CompareTab() {
                             {[
                               { label: 'Jensen\'s Alpha', val: m.data.Alpha, color: gainColor(m.data.AlphaVal), info: "Risk-adjusted excess return earned above the benchmark index." },
                               { label: 'Sharpe Ratio', val: m.data.Sharpe, info: "Total excess return earned per unit of overall volatility." },
-                              { label: 'Sortino Ratio', val: m.data.Sortino, info: "Downside risk-adjusted return. Evaluates return earned per unit of bad (downside) volatility." },
-                              { label: 'Beta (Market)', val: m.data.Beta, info: "Sensitivity to market movements. Beta = 1 indicates exact market volatility." },
-                              { label: 'Volatility', val: m.data.Volatility, info: "Annualized standard deviation of daily returns over the selected timeframe." },
-                              { label: 'P/E Ratio', val: m.data['P/E Ratio'], info: "Price-to-Earnings valuation ratio of underlying portfolio holdings." },
-                              { label: 'P/B Ratio', val: m.data['P/B Ratio'], info: "Price-to-Book valuation ratio of underlying portfolio holdings." },
-                              { label: 'Consistency', val: m.data.Consistency, info: "Percentage of 3-year rolling windows outperforming the index." },
+                              { label: 'Sortino Ratio', val: m.data.Sortino, info: "Downside risk-adjusted return. Penalizes only negative volatility unlike Sharpe." },
+                              { label: 'Beta (Market)', val: m.data.Beta, info: "Sensitivity to market movements. Beta = 1 means moves exactly with the market." },
+                              { label: 'Volatility', val: m.data.Volatility, info: "Annualized standard deviation of daily returns. Higher = more price swings." },
+                              { label: 'Max Drawdown', val: m.data['Max Drawdown'], info: "Largest peak-to-trough decline. Measures worst-case loss scenario." },
+                              { label: 'Expense Ratio', val: m.data['Expense Ratio'], info: "Total annual fund management fee charged as % of AUM." },
+                              { label: 'P/E Ratio', val: m.data['P/E Ratio'], info: "Price-to-Earnings valuation multiple of underlying portfolio holdings." },
+                              { label: 'P/B Ratio', val: m.data['P/B Ratio'], info: "Price-to-Book valuation multiple of underlying portfolio holdings." },
+                              { label: 'Consistency', val: m.data.Consistency, info: "% of 3-year rolling windows where fund beat its benchmark. 10/10 = always outperformed." },
                             ].map((stat, i) => (
                               <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -552,7 +567,7 @@ export default function CompareTab() {
                   <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                     <ToggleButtonGroup size="small" value={activeTrend} exclusive onChange={(_, v) => v && setActiveTrend(v)}>
                       <ToggleButton value="Trailing" sx={{ px: 3, py: 1, fontWeight: 700 }}>Trailing Returns (1M - 5Y)</ToggleButton>
-                      <ToggleButton value="Rolling" sx={{ px: 3, py: 1, fontWeight: 700 }}>3Y Rolling Return (Consistency)</ToggleButton>
+                      {/* <ToggleButton value="Rolling" sx={{ px: 3, py: 1, fontWeight: 700 }}>3Y Rolling Return (Consistency)</ToggleButton> */}
                       <ToggleButton value="Wealth" sx={{ px: 3, py: 1, fontWeight: 700 }}>Wealth Growth (₹10k)</ToggleButton>
                       <ToggleButton value="Drawdown" sx={{ px: 3, py: 1, fontWeight: 700 }}>Risk Stress Test (Drawdown)</ToggleButton>
                     </ToggleButtonGroup>
@@ -634,12 +649,12 @@ export default function CompareTab() {
               <Grid container spacing={4} sx={{ mb: 6 }}>
                 <Grid item xs={12} md={4}>
                   <Typography variant="overline" sx={{ fontWeight: 800, color: 'text.secondary', mb: 1, display: 'block' }}>Monthly SIP Amount</Typography>
-                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>₹{(sipAmount).toLocaleString('en-IN')}</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>{fmtInr(sipAmount)}</Typography>
                   <Slider value={sipAmount} min={0} max={200000} step={5000} onChange={(_, v) => setSipAmount(v as number)} valueLabelDisplay="auto" />
                 </Grid>
                 <Grid item xs={12} md={4}>
                   <Typography variant="overline" sx={{ fontWeight: 800, color: 'text.secondary', mb: 1, display: 'block' }}>Initial Lumpsum</Typography>
-                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>₹{(lumpsumAmount).toLocaleString('en-IN')}</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 800, mb: 2 }}>{fmtInr(lumpsumAmount)}</Typography>
                   <Slider value={lumpsumAmount} min={0} max={5000000} step={50000} onChange={(_, v) => setLumpsumAmount(v as number)} valueLabelDisplay="auto" />
                 </Grid>
                 <Grid item xs={12} md={4}>
@@ -663,12 +678,12 @@ export default function CompareTab() {
                         <Paper className="glass" sx={{ p: 2, minWidth: 240, border: '1px solid rgba(255,255,255,0.1)' }}>
                           <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1, color: 'primary.main' }}>{label}</Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
-                            Total Invested: ₹{totalInv.toLocaleString('en-IN')}
+                            Total Invested: {fmtInr(totalInv)}
                           </Typography>
                           {payload.map((item: any) => (
                             <Box key={item.dataKey} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', my: 0.5 }}>
                               <Typography variant="body2" sx={{ color: item.color, fontWeight: 700 }}>{item.name}:</Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 800 }}>₹{Number(item.value).toLocaleString('en-IN')}</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 800 }}>{fmtInr(Number(item.value))}</Typography>
                             </Box>
                           ))}
                         </Paper>

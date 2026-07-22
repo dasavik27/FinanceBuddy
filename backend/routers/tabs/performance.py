@@ -30,6 +30,7 @@ from core.finance import (
     compute_rolling_return_avg,
     compute_rolling_return_series,
     compute_consistency_score,
+    is_absolute_return,
 )
 from services.market_indices import fetch_benchmark_series
 from services.market_data import (
@@ -91,7 +92,16 @@ def _apply_filters(
 
 # ── Threaded Per-Fund Computation Helper ──────────────────────────────
 def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
-    """Isolated thread-safe computation for a single fund."""
+    """
+    Isolated thread-safe computation for a single fund.
+    Calculates XIRR, Alpha, Beta, Sharpe, max drawdowns, and rolling metrics.
+
+    Note on the returned Dictionary Payload:
+    The response includes an `is_absolute` boolean. If true, the frontend uses 
+    it to render an 'ABS' UI badge and change tooltips, indicating that the 
+    holding period is < 1 Year and SEBI-standard Absolute Return is applied 
+    instead of Annualized XIRR.
+    """
     fn          = str(row.get("Fund", ""))
     cur_val     = _safe_float(row.get("Market Value", 0))
     cat         = str(row.get("Category", "Equity"))
@@ -136,11 +146,10 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
 
     er_is_estimate = er is None
     if er is None:
-        # Fallback: Use category band estimate
-        lo, hi = EXP_RATIO_BANDS.get(cat, (0.50, 1.00))
-        # FIX P2-1: Regular plan ER = direct ER + typical markup (~0.80%)
-        er = lo if "direct" in plan_r.lower() else lo + 0.80
-        print(f"[TER] Fallback band estimate={er:.2f}% used for '{fn[:30]}' ({cat}).")
+        from services.fallbacks.deterministic import DeterministicFallback
+        fb = DeterministicFallback().generate_fallbacks(isin, cat, fn, {})
+        er = fb.get("expense_ratio", 0.50)
+        print(f"[TER] Deterministic fallback={er:.2f}% used for '{fn[:30]}' ({cat}).")
     
     is_debt = any(kw in cat.lower() for kw in ["debt", "bond", "liquid", "gilt", "psu", "money", "banking", "credit"])
     pe_ratio = None if is_debt else PE_ESTIMATES.get(cap_type, PE_ESTIMATES.get(cat, PE_ESTIMATES["Default"]))
@@ -166,21 +175,54 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
     simple_alpha = fund_xi - bench_xi
     alpha_to_use = simple_alpha
 
+    # ── Weighted Fund Health Score (0-10) ─────────────────────────────
+    # Mirrors how Morningstar/Zerodha Coin compute composite quality:
+    #   Alpha contribution (30%), Sharpe (25%), Consistency (25%), Stability (20%)
+    alpha_score = min(10, max(0, (alpha_to_use + 5) * 1.0))     # -5% → 0, +5% → 10
+    sharpe_score = min(10, max(0, risk["sharpe"] * 5.0))          # 0 → 0, 2.0 → 10
+    consist_score = consistency                                    # Already 0-10
+    stability_score = min(10, max(0, 10 - risk["vol"] * 0.3))    # 33% vol → 0, 0% vol → 10
+    fund_score = round(
+        alpha_score * 0.30 + sharpe_score * 0.25 + consist_score * 0.25 + stability_score * 0.20,
+    1)
+
+    # ── Verdict with clear human-readable reasoning ───────────────────
+    verdict_reasons = []
     if is_debt:
-        if simple_alpha >= 1.0 and consistency >= 6.0: verdict, action = "Strong", "Hold"
-        elif simple_alpha < -1.5 or consistency < 3.5: verdict, action = "Weak", "Review"
-        else: verdict, action = "Average", "Monitor"
+        if simple_alpha >= 1.0 and consistency >= 6.0:
+            verdict, action = "Strong", "Hold"
+            verdict_reasons.append(f"Outperforming bond benchmark by {simple_alpha:.1f}%")
+            verdict_reasons.append(f"Consistency {consistency:.0f}/10 — reliable compounder")
+        elif simple_alpha < -1.5 or consistency < 3.5:
+            verdict, action = "Weak", "Review"
+            if simple_alpha < -1.5: verdict_reasons.append(f"Underperforming benchmark by {abs(simple_alpha):.1f}%")
+            if consistency < 3.5: verdict_reasons.append(f"Low consistency ({consistency:.0f}/10) — erratic returns")
+        else:
+            verdict, action = "Average", "Monitor"
+            verdict_reasons.append("Performing in line with bond benchmark")
     else:
         if (alpha_to_use >= 1.5 and risk["sharpe"] >= 0.5 and consistency >= 6.0) or alpha_to_use >= 3.0:
             verdict, action = "Strong", "Hold"
+            if alpha_to_use >= 3.0: verdict_reasons.append(f"Exceptional alpha of +{alpha_to_use:.1f}% over benchmark")
+            if risk["sharpe"] >= 0.5: verdict_reasons.append(f"Sharpe {risk['sharpe']:.2f} — good risk-adjusted return")
+            if consistency >= 6.0: verdict_reasons.append(f"Beat benchmark in {consistency:.0f}/10 rolling windows")
         elif alpha_to_use < -2.0 or (alpha_to_use < 0 and consistency < 4.0 and not nav_series.empty):
             verdict, action = "Weak", "Review"
+            if alpha_to_use < -2.0: verdict_reasons.append(f"Lagging benchmark by {abs(alpha_to_use):.1f}% — consider switching")
+            if consistency < 4.0: verdict_reasons.append(f"Only beat benchmark in {consistency:.0f}/10 periods")
+            verdict_reasons.append("An index fund may deliver better results")
         else:
             verdict, action = "Average", "Monitor"
+            if alpha_to_use >= 0: verdict_reasons.append(f"Slightly ahead of benchmark by {alpha_to_use:.1f}%")
+            else: verdict_reasons.append(f"Trailing benchmark by {abs(alpha_to_use):.1f}%")
+            verdict_reasons.append("Watch for 1-2 more quarters before deciding")
+
+    verdict_reason = " · ".join(verdict_reasons[:2])
 
     return {
         "fund": fn, "category": cat, "cap_type": cap_type, "plan": plan_r, "isin": isin,
         "color": CATEGORY_COLORS.get(cat, "#94A3B8"), "verdict": verdict, "action": action,
+        "verdict_reason": verdict_reason, "fund_score": fund_score,
         "bench_display": bench_display_f, "bench_ticker": bench_ticker_f,
         "fund_xi": round(fund_xi, 2), "bench_xi": round(bench_xi, 2), "alpha": round(alpha_to_use, 2),
         "cur_value": round(cur_val, 0), "vol": round(risk["vol"], 2), "beta": round(risk["beta"], 2),
@@ -195,6 +237,9 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
         "consistency": round(consistency, 1), "pe_ratio": pe_ratio, "pb_ratio": pb_ratio, "is_debt": is_debt,
         "ytm_proxy": ytm_proxy, "modified_duration": dur_proxy, "credit_quality": credit_proxy,
         "nav_days": risk.get("data_days", 0), "has_nav_data": not nav_series.empty,
+        "return_period": round(fund_xi, 2),
+        "ret_3y": trailing.get("3Y"),
+        "is_absolute": is_absolute_return(fund_txns),
     }
 
 
@@ -246,10 +291,25 @@ def get_performance(
     bench_risk = compute_risk_metrics(bench_data, bench_data)
     bench_trailing = compute_trailing_returns(bench_data)
 
+    # Compute portfolio-level health score (value-weighted avg of fund scores)
+    total_val = sum(r.get("cur_value", 0) for r in results) or 1
+    portfolio_score = round(
+        sum(r.get("fund_score", 5.0) * r.get("cur_value", 0) for r in results) / total_val,
+    1)
+
+    # Calculate exact portfolio and benchmark XIRR to perfectly match Overview tab
+    # FIX: XIRR requires full transaction history, not period-limited benchmark data.
+    # The bench_data above is sliced for chart rendering, but XIRR needs all-time data.
+    from core.finance import compute_xirr, compute_benchmark_xirr
+    port_xirr_val = compute_xirr(df_t, portfolio.total_value)
+    bench_full = fetch_benchmark_series(ticker, 9999)  # Full history for XIRR
+    bench_xirr_val, _ = compute_benchmark_xirr(df_t, bench_full)
+
     return {
-        "portfolio_return": round(comp.get("port_pct", 0), 2),
-        "benchmark_return": round(comp.get("bench_pct", 0), 2),
-        "alpha":            round(comp.get("alpha", 0), 2),
+        "portfolio_return": round(port_xirr_val, 2),
+        "is_absolute":      is_absolute_return(df_t),
+        "benchmark_return": round(bench_xirr_val, 2),
+        "alpha":            round(port_xirr_val - bench_xirr_val, 2),
         "dates":            comp.get("dates", []),
         "portfolio":        comp.get("portfolio", []),
         "benchmark":        comp.get("benchmark", []),
@@ -257,8 +317,10 @@ def get_performance(
         "benchmark_vals":   comp.get("benchmark", []),
         "benchmark_label":  benchmark,
         "period":           period,
+        "portfolio_score":  portfolio_score,
         "n_strong":  sum(1 for r in results if r["verdict"] == "Strong"),
         "n_average": sum(1 for r in results if r["verdict"] == "Average"),
+        "n_weak":    sum(1 for r in results if r["verdict"] == "Weak"),
         "funds":     results,
         "benchmark_day_chg": (lambda t: (
             round(((getattr(yf.Ticker(t).fast_info, "last_price", 0) / getattr(yf.Ticker(t).fast_info, "previous_close", 1)) - 1) * 100, 2)
@@ -323,11 +385,9 @@ async def peer_comparison(session_id: str, fund_name: str):
                 break
 
     def _extract_amc(fund_name: str) -> str:
-        name = fund_name.upper().strip()
-        for compound in ["NIPPON INDIA", "ICICI PRUDENTIAL", "ADITYA BIRLA", "MIRAE ASSET", "FRANKLIN TEMPLETON", "MOTILAL OSWAL", "CANARA ROBECO", "TATA", "DSP", "SBI", "HDFC", "QUANT", "AXIS", "KOTAK", "BANDHAN", "UTI", "PPFAS", "PARAG PARIKH", "SUNDARAM", "EDELWEISS", "INVESCO", "HSBC", "PGIM", "BARODA BNP", "MAHINDRA", "LIC", "BANK OF INDIA"]:
-            if name.startswith(compound):
-                return compound
-        return name.split()[0] if name.split() else "UNKNOWN"
+        # FIX M-12: Use centralized implementation
+        from core.logic import CategorizationEngine
+        return CategorizationEngine.extract_amc_brand(fund_name)
 
     peer_results = []
     peer_1y_returns = []
@@ -479,4 +539,151 @@ async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 
         "bench_series":   series_to_list(bench_roll_series),
         "fund_avg":       compute_rolling_return_avg(nav_series, window),
         "bench_avg":      compute_rolling_return_avg(bench_series, window),
+    }
+
+# ---------------------------------------------------------------------------
+# Feature 1: Portfolio Drawdown Chart
+# ---------------------------------------------------------------------------
+@router.get("/{session_id}/drawdown")
+def get_portfolio_drawdown(session_id: str, period: str = "All Time"):
+    """
+    Computes the portfolio's underwater curve (drawdown from historical peaks)
+    to help visualize historical pain periods.
+    """
+    portfolio = get_session(session_id)
+    df_h = portfolio.df_h
+    df_t = portfolio.df_t
+    total_value = float(df_h["Market Value"].sum())
+    
+    if df_h.empty or total_value <= 0:
+        return {"dates": [], "drawdowns": [], "max_drawdown": 0}
+
+    perf_days = {"1Y": 365, "3Y": 1095, "5Y": 1825, "All Time": 9999}.get(period, 1825)
+    
+    # We use Nifty 50 just to get a common market trading calendar, 
+    # since compute_period_comparison evaluates on the benchmark's index
+    nifty = fetch_benchmark_series("^NSEI", perf_days + 30)
+    
+    comp = compute_period_comparison(df_t, df_h, total_value, nifty, perf_days)
+    dates = comp.get("dates", [])
+    port_vals = comp.get("portfolio", [])  # FIX: The key is "portfolio", not "port_vals"
+    
+    if not dates or not port_vals:
+        return {"dates": [], "drawdowns": [], "max_drawdown": 0}
+        
+    # Compute running peak and drawdown
+    running_peak = port_vals[0]
+    drawdowns = []
+    
+    for val in port_vals:
+        if val > running_peak:
+            running_peak = val
+            
+        if running_peak > 0:
+            dd = (val - running_peak) / running_peak * 100
+        else:
+            dd = 0
+            
+        drawdowns.append(round(dd, 2))
+        
+    return {
+        "dates": dates,
+        "drawdowns": drawdowns,
+        "max_drawdown": round(min(drawdowns) if drawdowns else 0, 2)
+    }
+
+# ---------------------------------------------------------------------------
+# Feature 2: SIP Performance Attribution
+# ---------------------------------------------------------------------------
+@router.get("/{session_id}/sip_performance")
+def get_sip_performance(session_id: str):
+    """
+    Isolates the performance of SIP transactions (excluding lumpsums)
+    to answer "What is the return of just my SIPs?"
+    """
+    portfolio = get_session(session_id)
+    df_h = portfolio.df_h
+    df_t = portfolio.df_t
+    
+    if df_h.empty or df_t.empty:
+        return {"sip_funds": [], "total_sip_invested": 0, "total_sip_value": 0, "sip_xirr": 0}
+
+    # Filter only SIPs
+    # The Type enum from casparser is like 'TransactionType.PURCHASE_SIP'
+    sip_txns = df_t[df_t["Type"].astype(str).str.upper().str.contains("SIP", na=False)]
+    if sip_txns.empty:
+        return {"sip_funds": [], "total_sip_invested": 0, "total_sip_value": 0, "sip_xirr": 0}
+    
+    # V8-1 FIX: Only consider SIPs for funds STILL in the current portfolio.
+    # Redeemed fund SIPs have no terminal value, causing XIRR to collapse to -64%.
+    current_fund_names = set(df_h["Fund"].tolist())
+    sip_txns = sip_txns[sip_txns["Fund"].isin(current_fund_names)]
+    if sip_txns.empty:
+        return {"sip_funds": [], "total_sip_invested": 0, "total_sip_value": 0, "sip_xirr": 0}
+        
+    results = []
+    total_sip_invested = 0
+    total_sip_value = 0
+    
+    from core.finance import compute_xirr
+    
+    for fn in sip_txns["Fund"].unique():
+        f_sips = sip_txns[sip_txns["Fund"] == fn]
+        
+        # Get current NAV for the fund
+        fund_row = df_h[df_h["Fund"] == fn]
+        if fund_row.empty:
+            continue
+            
+        nav = float(fund_row.iloc[0].get("NAV", 0))
+        if nav <= 0:
+            continue
+            
+        # Total units accumulated purely via SIP. 
+        # Fallback to Amount / NAV if casparser missed the units column.
+        def get_tx_units(r):
+            u = float(r.get("Units", 0))
+            if u > 0: return u
+            a = abs(float(r.get("Amount", 0)))
+            n = float(r.get("NAV", 0))
+            return (a / n) if n > 0 else 0.0
+            
+        sip_units = float(f_sips.apply(get_tx_units, axis=1).sum())
+        
+        if sip_units <= 0:
+            continue
+            
+        sip_invested = float(abs(f_sips["Amount"]).sum())
+        sip_current_value = sip_units * nav
+        
+        # SIP specific XIRR
+        sip_xi = compute_xirr(f_sips, sip_current_value)
+        
+        total_sip_invested += sip_invested
+        total_sip_value += sip_current_value
+        
+        results.append({
+            "fund": fn,
+            "category": str(fund_row.iloc[0].get("Category", "Equity")),
+            "color": CATEGORY_COLORS.get(str(fund_row.iloc[0].get("Category", "Equity")), "#94A3B8"),
+            "sip_units": round(sip_units, 2),
+            "sip_invested": round(sip_invested, 2),
+            "sip_current_value": round(sip_current_value, 2),
+            "sip_gain": round(sip_current_value - sip_invested, 2),
+            "sip_xirr": round(sip_xi, 2),
+            "sip_count": len(f_sips)
+        })
+        
+    # Aggregate SIP XIRR
+    overall_sip_xirr = compute_xirr(sip_txns, total_sip_value)
+    
+    # Sort by value
+    results = sorted(results, key=lambda x: x["sip_current_value"], reverse=True)
+    
+    return {
+        "sip_funds": results,
+        "total_sip_invested": round(total_sip_invested, 2),
+        "total_sip_value": round(total_sip_value, 2),
+        "total_sip_gain": round(total_sip_value - total_sip_invested, 2),
+        "sip_xirr": round(overall_sip_xirr, 2)
     }

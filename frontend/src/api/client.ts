@@ -1,6 +1,15 @@
 import axios from 'axios'
+import { useAppStore } from '../store/appStore'
 
 const api = axios.create({ baseURL: '/api' })
+
+api.interceptors.request.use((config) => {
+  const pan = useAppStore.getState().pan
+  if (pan) {
+    config.headers['X-User-PAN'] = pan
+  }
+  return config
+})
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface ParseResponse {
@@ -25,9 +34,12 @@ export interface Summary {
   port_score: number
   expense_drag: number
   sip_score: number
+  returns: number
+  annualized: number
   num_funds: number
   num_amcs: number
   is_partial: boolean
+  is_absolute?: boolean
 }
 
 export interface OverviewData {
@@ -118,6 +130,8 @@ export interface PerformanceData {
   n_average: number
   n_weak: number
   funds: FundResult[]
+  is_absolute?: boolean
+  portfolio_score?: number
 }
 
 export interface AllocationData {
@@ -178,11 +192,16 @@ export interface SipProjection {
 
 // ── API calls ────────────────────────────────────────────────────────────────
 export const apiClient = {
-  parseFile: async (file: File, password: string): Promise<ParseResponse> => {
+  /** Parses CAS PDF statement and initializes a portfolio session. */
+  parseFile: async (file: File, password: string, uploadType: string = 'mutual_funds'): Promise<ParseResponse> => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('password', password)
-    const { data } = await api.post<ParseResponse>('/portfolio/parse', fd)
+    const { data } = await api.post<ParseResponse>('/portfolio/parse', fd, {
+      headers: {
+        'X-Upload-Type': uploadType
+      }
+    })
     return data
   },
 
@@ -191,6 +210,16 @@ export const apiClient = {
     return data
   },
 
+  getHistory: async (uploadType: string = 'mutual_funds'): Promise<any> => {
+    const { data } = await api.get('/history', {
+      headers: {
+        'X-Upload-Type': uploadType
+      }
+    })
+    return data
+  },
+
+  /** Fetches high-level executive summary metrics (XIRR, Total Value). */
   getSummary: async (sid: string, params: Record<string, any> = {}): Promise<Summary> => {
     const { data } = await api.get<Summary>(`/portfolio/${sid}/summary`, { params })
     return data
@@ -201,6 +230,7 @@ export const apiClient = {
     return data
   },
 
+  /** Retrieves core time-series charting data for the overview dashboard. */
   getOverview: async (sid: string, params: Record<string, any> = {}): Promise<OverviewData> => {
     const { data } = await api.get<OverviewData>(`/portfolio/${sid}/overview`, { params })
     return data
@@ -221,6 +251,7 @@ export const apiClient = {
     return data
   },
 
+  /** Executes multi-metric peer comparison and calculates Portfolio Health Score. */
   getPerformance: async (sid: string, params: Record<string, any> = {}): Promise<PerformanceData> => {
     const { data } = await api.get<PerformanceData>(`/portfolio/${sid}/performance`, { params })
     return data
@@ -246,6 +277,11 @@ export const apiClient = {
     return data
   },
 
+  getTaxOptimize: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/portfolio/${sid}/tax/optimize`)
+    return data
+  },
+
   simulateTax: async (sid: string, fund: string, units_to_sell: number): Promise<any> => {
     const { data } = await api.get(`/portfolio/${sid}/tax/simulate`, { params: { fund, units_to_sell } })
     return data
@@ -253,6 +289,11 @@ export const apiClient = {
 
   getInsights: async (sid: string, params: Record<string, any> = {}): Promise<InsightsData> => {
     const { data } = await api.get<InsightsData>(`/portfolio/${sid}/insights`, { params })
+    return data
+  },
+
+  getJourney: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/journey/${sid}`)
     return data
   },
 
@@ -271,7 +312,7 @@ export const apiClient = {
     return data
   },
 
-  getCategoryPeers: async (category: string): Promise<{ peers: any[] }> => {
+  getCategoryPeers: async (category: string): Promise<{ peers: any[], fallback_triggered?: boolean }> => {
     const { data } = await api.get('/compare/peers', { params: { category } })
     return data
   },
@@ -303,6 +344,77 @@ export const apiClient = {
 
   updateMarketConfig: async (ttl: number): Promise<any> => {
     const { data } = await api.post(`/market/config?ttl=${ttl}`)
+    return data
+  },
+
+  // ── Tax Expert API ──────────────────────────────────────────────────────
+
+  /** Parse AIS PDF and create a tax computation session. */
+  parseAIS: async (file: File): Promise<any> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data } = await api.post('/tax-expert/parse-ais', fd)
+    return data
+  },
+
+  /** Upload a broker file to reconcile and auto-correct zero-cost AIS entries */
+  reconcileBrokerFile: async (sid: string, brokerFile: File): Promise<any> => {
+    const fd = new FormData()
+    fd.append('broker_file', brokerFile)
+    const { data } = await api.post(`/tax-expert/${sid}/tax/reconcile-broker`, fd)
+    return data
+  },
+
+  parseForm16: async (sid: string, file: File) => {
+    const fd = new FormData()
+    fd.append('form16_file', file)
+    const { data } = await api.post(`/tax-expert/${sid}/tax/form16`, fd)
+    return data
+  },
+
+  uploadITR: async (sid: string, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data } = await api.post(`/tax-expert/${sid}/tax/itr`, fd)
+    return data
+  },
+
+  getITRData: async (sid: string) => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/itr`)
+    return data.itr_data
+  },
+
+  /** Get complete tax computation summary for a given regime. */
+  getTaxExpertSummary: async (sid: string, regime: string = 'new'): Promise<any> => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/summary`, { params: { regime } })
+    return data
+  },
+
+  /** Get detailed income breakdown from AIS data. */
+  getTaxExpertIncome: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/income`)
+    return data
+  },
+
+  /** Get detailed capital gains breakdown. */
+  getTaxExpertCapitalGains: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/capital-gains`)
+    return data
+  },
+
+  updateTransactionCost: async (sid: string, category: string, sr: number, new_cost: number): Promise<any> => {
+    const { data } = await api.post(`/tax-expert/${sid}/tax/capital-gains/transaction`, { category, sr, new_cost })
+    return data
+  },
+
+  postTaxOverrides: async (sid: string, overrides: any): Promise<any> => {
+    const { data } = await api.post(`/tax-expert/${sid}/tax/recalculate`, overrides)
+    return data
+  },
+
+  /** Compare Old vs New regime side-by-side. */
+  compareTaxRegimes: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/compare-regimes`)
     return data
   },
 }

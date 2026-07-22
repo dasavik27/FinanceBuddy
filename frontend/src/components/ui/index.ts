@@ -5,3 +5,5 @@ export * from './SectionHeader'
 export * from './Selectors'
 export * from './States'
 export * from './ErrorBoundary'
+export * from './InfoTooltip'
+export * from './InlineEdit';

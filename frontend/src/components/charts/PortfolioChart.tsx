@@ -1,3 +1,4 @@
+import { fmtInr } from '../../api/fmt'
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { Box, Typography, Chip, Menu, MenuItem, Checkbox,
          ListItemText, IconButton, Tooltip as MuiTooltip,
@@ -120,7 +121,7 @@ function CrosshairTooltip({ active, payload, startDate, basePoint, benchColors }
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
         <Box sx={{ width: 8, height: 8, background: PORT_COLOR, borderRadius: '2px', flexShrink: 0, boxShadow: `0 0 8px ${PORT_COLOR}` }} />
         <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0' }}>
-          MF NAV: ₹{portVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          MF NAV: {fmtInr(portVal)}
         </Typography>
       </Box>
 
@@ -130,7 +131,7 @@ function CrosshairTooltip({ active, payload, startDate, basePoint, benchColors }
           <Box key={b.dataKey} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
             <Box sx={{ width: 8, height: 8, background: color, borderRadius: '2px', flexShrink: 0, boxShadow: `0 0 8px ${color}` }} />
             <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0' }}>
-              {b.name}: ₹{b.value?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {b.name}: {fmtInr(b.value)}
             </Typography>
           </Box>
         )
@@ -191,18 +192,21 @@ export default function PortfolioChart({
     const point: any = { date: d }
     
     // Portfolio is always aligned by index i
-    point.PortfolioK = parseFloat(((portfolioSeries[i] || 100) * 10).toFixed(2))
+    let pk = parseFloat(((portfolioSeries[i] || 100) * 10).toFixed(2))
+    point.PortfolioK = isNaN(pk) ? 1000 : pk
     
     // Primary benchmark is also aligned by index i
     if (selectedBenchmarks.includes(primaryBenchmark)) {
-      point[primaryBenchmark] = parseFloat(((primarySeries[i] || 100) * 10).toFixed(2))
+      let bk = parseFloat(((primarySeries[i] || 100) * 10).toFixed(2))
+      point[primaryBenchmark] = isNaN(bk) ? 1000 : bk
     }
     
     // Overlay benchmarks
     Object.entries(overlaySeries).forEach(([bm, series]) => {
       if (selectedBenchmarks.includes(bm)) {
         const val = series[i] !== undefined ? series[i] : series[series.length - 1]
-        point[bm] = parseFloat(((val || 100) * 10).toFixed(2))
+        let ovk = parseFloat(((val || 100) * 10).toFixed(2))
+        point[bm] = isNaN(ovk) ? 1000 : ovk
       }
     })
     return point

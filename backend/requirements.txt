@@ -9,7 +9,10 @@ pyxirr==0.10.8
 requests==2.33.1
 pydantic==2.13.3
 nsepython==2.97
-
 nselib==2.5.1
 fuzzywuzzy
 python-Levenshtein
+python-dateutil
+pdfplumber
+pypdf
+pytest>=9.0.0

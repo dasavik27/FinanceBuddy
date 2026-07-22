@@ -51,8 +51,8 @@ export default function InsightsRebalanceTab() {
   return (
     <Box sx={{ pb: 8 }}>
       <SectionHeader 
-        title="CIO Intelligence & Rebalancing Lab" 
-        subtitle="Real-time institutional diagnostics, fee drag auditing, and proactive portfolio restructuring" 
+        title="Insights & Rebalancing" 
+        subtitle="Actionable intelligence and rebalancing suggestions for your portfolio." 
       />
       {error && <Alert severity="error" sx={{ mb: 2, bgcolor: 'rgba(255, 81, 106, 0.1)', color: '#FF516A', border: '1px solid rgba(255, 81, 106, 0.3)' }}>Failed to load institutional insights.</Alert>}
 
@@ -129,7 +129,7 @@ export default function InsightsRebalanceTab() {
             }}>
               <Typography variant="h6" sx={{ mb: 3, fontWeight: 900, color: '#fff' }}>Portfolio Ledger</Typography>
               {[
-                { label: 'SIP Consistency',  value: `${data?.sip_score ?? 0}/10`, highlight: '#4EDE93' },
+                { label: 'SIP Consistency',  value: `${Number(data?.sip_score ?? 0).toFixed(1)}/10`, highlight: '#4EDE93' },
                 { label: 'Liquid Holdings',  value: `${fmtInr(data?.liquid_val, true)} (${data?.liquid_pct?.toFixed(1)}%)`, highlight: '#fff' },
                 { label: 'Expense Drag/yr',  value: fmtInr(data?.expense_drag), highlight: '#FF516A' },
                 { label: 'Expense Drag %',   value: `${data?.expense_pct?.toFixed(2)}%`, highlight: '#FF516A' },
@@ -264,7 +264,7 @@ export default function InsightsRebalanceTab() {
                         <Box sx={{ width: 14, height: 14, borderRadius: '50%', background: g.color, flexShrink: 0, boxShadow: `0 0 14px ${g.color}` }} />
                         <Box>
                           <Typography variant="body1" fontWeight={800} sx={{ color: '#fff' }}>{g.category}</Typography>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>{g.goal}</Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>{g.goal} • {g.timeline}</Typography>
                         </Box>
                       </Box>
                       <Box sx={{ textAlign: 'right' }}>

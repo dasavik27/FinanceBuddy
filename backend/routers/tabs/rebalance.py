@@ -37,8 +37,6 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
     if total_value <= 0:
         return {"status": "Empty", "orders": [], "drift_score": 0.0}
 
-    targets = RISK_PROFILES.get(profile, RISK_PROFILES["Balanced"])
-    
     df_h = df_h.copy()
     def roll_up(cat):
         c = get_standard_category(cat)
@@ -46,6 +44,21 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
         return "Other"
     
     df_h["SimpleCat"] = df_h["Category"].apply(roll_up)
+    
+    detected_profile = profile
+    if profile == "Auto":
+        # Derive investor's actual risk profile based on their revealed preference (current Equity allocation)
+        current_equity = df_h[df_h["SimpleCat"] == "Equity"]["Market Value"].sum()
+        equity_pct = (current_equity / total_value * 100)
+        
+        if equity_pct >= 65:
+            detected_profile = "Aggressive"
+        elif equity_pct >= 35:
+            detected_profile = "Balanced"
+        else:
+            detected_profile = "Conservative"
+            
+    targets = RISK_PROFILES.get(detected_profile, RISK_PROFILES["Balanced"])
     
     current_allocs = {}
     for cat in targets.keys():
@@ -64,19 +77,30 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
     for cat, d in drifts.items():
         if abs(d) > REBALANCE_THRESHOLD:
             amount = abs(d) / 100 * total_value
+            cat_funds = df_h[df_h["SimpleCat"] == cat].sort_values(by="Market Value", ascending=False)
+            if not cat_funds.empty:
+                fund_suggestion = f" (e.g. {cat_funds.iloc[0]['Fund']})"
+            else:
+                if cat == "Hybrid":
+                    fund_suggestion = " (e.g., consider adding a standard Aggressive Hybrid Fund)"
+                elif cat == "Other":
+                    fund_suggestion = " (e.g., consider adding a standard Gold ETF)"
+                else:
+                    fund_suggestion = f" (e.g., consider adding a standard {cat} Fund)"
+            
             if d > 0:
                 orders.append({
                     "action": "Sell (Overweight)",
                     "category": cat,
                     "amount": round(amount, 0),
-                    "note": f"Reduce {cat} exposure by {abs(d):.1f}% to reach target."
+                    "note": f"Reduce {cat} exposure by {abs(d):.1f}%{fund_suggestion} to reach target."
                 })
             else:
                 orders.append({
                     "action": "Buy (Underweight)",
                     "category": cat,
                     "amount": round(amount, 0),
-                    "note": f"Increase {cat} exposure by {abs(d):.1f}% to reach target."
+                    "note": f"Increase {cat} exposure by {abs(d):.1f}%{fund_suggestion} to reach target."
                 })
 
     # ── Institutional Fix: Intra-Equity Rebalancing (Aggressive Profile) ──

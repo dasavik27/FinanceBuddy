@@ -48,8 +48,8 @@ export default function OverviewTab() {
   return (
     <Box sx={{ pb: 6 }}>
       <SectionHeader 
-        title="Executive Dashboard" 
-        subtitle="Real-time institutional performance attribution & benchmark auditing" 
+        title="Overview" 
+        subtitle="High-level summary of your portfolio's valuation and overall performance." 
       />
 
       <Grid container spacing={4}>
@@ -60,7 +60,16 @@ export default function OverviewTab() {
             {[
               { label: 'Current Value',     value: fmtInr(sum?.total_value, true),    sub: `Invested: ${fmtInr(sum?.total_invested, true)}`, accent: 'info' as const, info: "Total current market valuation across all uploaded CAS portfolio accounts." },
               { label: 'Total Gains',       value: fmtInr(sum?.total_gain, true),     sub: `${fmtPct(sum?.gain_pct)} absolute performance`,      accent: (sum?.total_gain ?? 0) >= 0 ? 'success' as const : 'danger' as const, info: "Total net capital appreciation (Unrealized + Realized) since portfolio inception." },
-              { label: 'Annualized XIRR',   value: fmtPct(sum?.portfolio_xirr ?? 0),  sub: `Alpha: ${fmtPct(sum?.alpha ?? 0)} vs Benchmark`,  accent: (sum?.alpha ?? 0) >= 0 ? 'success' as const : 'danger' as const, info: "Extended Internal Rate of Return (XIRR). Annualized compounding rate accounting for exact dates of cash inflows and outflows." },
+              { 
+                /* SEBI Compliance: Dynamically shift metric label and tooltip explanation if holding period is < 1 Year */
+                label: sum?.is_absolute ? 'Absolute Return' : 'Annualized XIRR',   
+                value: fmtPct(sum?.portfolio_xirr ?? 0),  
+                sub: `Lifetime Alpha: ${fmtPct(sum?.alpha ?? 0)}`,  
+                accent: (sum?.alpha ?? 0) >= 0 ? 'success' as const : 'danger' as const, 
+                info: sum?.is_absolute 
+                  ? "Absolute point-to-point return for portfolios younger than 1 year. (Annualized XIRR is mathematically inaccurate for <1Y holding periods)." 
+                  : "Extended Internal Rate of Return (XIRR). Cashflow-weighted annualized return. Note: This may differ from the simple average of individual fund XIRRs due to the timing and magnitude of your SIPs/lumpsums." 
+              },
             ].map((card) => (
               <Grid item xs={12} sm={4} key={card.label}>
                 <MetricCard {...card} loading={sumL || sumF} />
@@ -115,7 +124,7 @@ export default function OverviewTab() {
                 <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.03)', borderRadius: '16px', border: '1px dashed rgba(255,255,255,0.1)' }}>
                   <Typography variant="caption" sx={{ color: '#fff', fontWeight: 700, display: 'block', mb: 0.5 }}>STRATEGY SIGNAL</Typography>
                   <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.4 }}>
-                    Portfolio is currently outperforming {primaryBenchmark} by <span style={{ color: alphaVal >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>{fmtPct(alphaVal)}</span> in the {period} window.
+                    Portfolio is currently <span style={{ color: alphaVal >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>{alphaVal >= 0 ? 'outperforming' : 'underperforming'}</span> {primaryBenchmark} by <span style={{ color: alphaVal >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>{fmtPct(Math.abs(alphaVal))}</span> in the {period} window.
                   </Typography>
                 </Box>
               </Paper>
@@ -203,17 +212,20 @@ export default function OverviewTab() {
             <Grid item xs={12} md={5}>
               <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 900, mb: 2, display: 'block', letterSpacing: '0.15em' }}>CAP SIZE DISTRIBUTION</Typography>
               <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap sx={{ gap: 2 }}>
-                {(alloc?.by_cap ?? []).map((c: any) => (
-                  <Chip 
-                    key={c['Cap Type']}
-                    label={`${c['Cap Type'].toUpperCase()}: ${c.pct}%`}
-                    variant="outlined"
-                    sx={{ 
-                      borderRadius: '12px', px: 1.5, py: 2.5, fontWeight: 800, fontSize: 11,
-                      bgcolor: 'rgba(255,255,255,0.03)', color: '#fff', borderColor: 'rgba(255,255,255,0.1)' 
-                    }} 
-                  />
-                ))}
+                {(alloc?.by_cap ?? []).map((c: any) => {
+                  const capLabel = String(c.label || c['Cap Type'] || 'Unknown')
+                  return (
+                    <Chip 
+                      key={capLabel}
+                      label={`${capLabel.toUpperCase()}: ${c.pct}%`}
+                      variant="outlined"
+                      sx={{ 
+                        borderRadius: '12px', px: 1.5, py: 2.5, fontWeight: 800, fontSize: 11,
+                        bgcolor: 'rgba(255,255,255,0.03)', color: '#fff', borderColor: 'rgba(255,255,255,0.1)' 
+                      }} 
+                    />
+                  )
+                })}
               </Stack>
             </Grid>
           </Grid>

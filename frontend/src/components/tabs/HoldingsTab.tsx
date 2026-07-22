@@ -12,7 +12,7 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import FilterListIcon from '@mui/icons-material/FilterList'
 
 import { useHoldings } from '../../hooks/useData'
-import { SectionHeader } from '../ui'
+import { SectionHeader, InfoTooltip } from '../ui'
 import { fmtInr, gainColor } from '../../api/fmt'
 import FundDetailDrawer from '../holdings/FundDetailDrawer'
 
@@ -64,7 +64,7 @@ export default function HoldingsTab() {
     <Box sx={{ pb: 6 }}>
       <SectionHeader 
         title="Holdings Explorer" 
-        subtitle="Full-width institutional instrument inventory, search, and dynamic factsheet inspection" 
+        subtitle="View and search your complete mutual fund portfolio inventory." 
       />
 
       <Box sx={{ mb: 4 }}>
@@ -179,13 +179,33 @@ export default function HoldingsTab() {
 
                       <Grid container spacing={2}>
                         <Grid item xs={6}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'block', mb: 0.5 }}>MARKET VALUE</Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                            MARKET VALUE <InfoTooltip title="Current value of this specific fund holding." />
+                          </Typography>
                           <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: '#fff' }}>{fmtInr(h['Market Value'])}</Typography>
                         </Grid>
                         <Grid item xs={6} sx={{ textAlign: 'right' }}>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'block', mb: 0.5 }}>NET GAINS</Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 0.5 }}>
+                            NET GAINS <InfoTooltip title="Absolute profit or loss for this fund." />
+                          </Typography>
                           <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: gainColor(h.Gain) }}>
                             {h.Gain >= 0 ? '+' : ''}{fmtInr(h.Gain)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                            DAY CHANGE <InfoTooltip title="The change in value based on the latest single-day NAV movement." />
+                          </Typography>
+                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: h['Day Chg.'] >= 0 ? '#4EDE93' : '#FF516A' }}>
+                            {h['Day Chg.'] != null ? `${h['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(h['Day Chg.'])}` : '—'}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={6} sx={{ textAlign: 'right' }}>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 0.5 }}>
+                            EXP. RATIO <InfoTooltip title="Total Expense Ratio (TER). The annual percentage fee charged by the AMC to manage this fund." />
+                          </Typography>
+                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: !h.TER_fallback ? '#94A3B8' : '#EAB308' }}>
+                            {h.TER_fallback ? `~${h.TER}%` : `${h.TER}%`}
                           </Typography>
                         </Grid>
                       </Grid>
@@ -195,16 +215,16 @@ export default function HoldingsTab() {
                       <Divider sx={{ mb: 2.5, borderColor: 'rgba(255,255,255,0.03)' }} />
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flex: 1 }}>
-                          <Box sx={{ flex: 1, maxWidth: 100, height: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 3 }}>
+                          <Box sx={{ flex: 1, maxWidth: 100, height: 8, background: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden' }}>
                             <Box sx={{ 
                               height: '100%', 
-                              background: 'primary.main', 
-                              borderRadius: 3, 
+                              background: 'linear-gradient(90deg, #6366F1 0%, #A855F7 100%)', 
+                              borderRadius: 4, 
                               width: `${Math.min(100, weight * 4)}%`,
-                              boxShadow: '0 0 10px rgba(99, 102, 241, 0.4)' 
+                              boxShadow: '0 0 12px rgba(168, 85, 247, 0.6)' 
                             }} />
                           </Box>
-                          <Typography variant="caption" className="num" sx={{ fontWeight: 800, color: 'text.secondary', fontSize: 11 }}>{weight.toFixed(1)}% WT</Typography>
+                          <Typography variant="caption" className="num" sx={{ fontWeight: 800, color: 'text.primary', fontSize: 12 }}>{weight.toFixed(1)}% WT</Typography>
                         </Box>
                         <Box sx={{ px: 1.25, py: 0.5, borderRadius: '8px', bgcolor: signal.bg }}>
                           <Typography variant="caption" className="num" sx={{ fontWeight: 800, color: signal.color, fontSize: 11 }}>

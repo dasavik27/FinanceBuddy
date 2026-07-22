@@ -1,0 +1,173 @@
+{
+  "slabs": {
+    "new_regime": [
+      [
+        400000,
+        0.0
+      ],
+      [
+        800000,
+        0.05
+      ],
+      [
+        1200000,
+        0.1
+      ],
+      [
+        1600000,
+        0.15
+      ],
+      [
+        2000000,
+        0.2
+      ],
+      [
+        2400000,
+        0.25
+      ],
+      [
+        null,
+        0.3
+      ]
+    ],
+    "old_regime": [
+      [
+        250000,
+        0.0
+      ],
+      [
+        500000,
+        0.05
+      ],
+      [
+        1000000,
+        0.2
+      ],
+      [
+        null,
+        0.3
+      ]
+    ],
+    "old_regime_senior": [
+      [
+        300000,
+        0.0
+      ],
+      [
+        500000,
+        0.05
+      ],
+      [
+        1000000,
+        0.2
+      ],
+      [
+        null,
+        0.3
+      ]
+    ],
+    "old_regime_super_senior": [
+      [
+        500000,
+        0.0
+      ],
+      [
+        1000000,
+        0.2
+      ],
+      [
+        null,
+        0.3
+      ]
+    ]
+  },
+  "capital_gains": {
+    "ltcg_equity_rate": 0.125,
+    "stcg_equity_rate": 0.2,
+    "ltcg_other_rate": 0.125,
+    "ltcg_equity_exemption": 125000
+  },
+  "special_rates": {
+    "crypto_rate": 0.3,
+    "gaming_rate": 0.3
+  },
+  "presumptive_business": {
+    "section_44ada_profit_rate": 0.5,
+    "section_44ad_profit_rate": 0.06
+  },
+  "deductions": {
+    "std_deduction_new": 75000,
+    "std_deduction_old": 50000,
+    "limit_80c": 150000,
+    "limit_80ccd1b": 50000,
+    "limit_80d_self": 25000,
+    "limit_80d_parents": 50000,
+    "limit_80tta": 10000,
+    "limit_80ttb": 50000,
+    "limit_ptax": 2500
+  },
+  "rebates": {
+    "new_regime_limit": 1200000,
+    "new_regime_max_rebate": 60000,
+    "old_regime_limit": 500000,
+    "old_regime_max_rebate": 12500
+  },
+  "surcharge_slabs": [
+    [
+      5000000,
+      0.0
+    ],
+    [
+      10000000,
+      0.1
+    ],
+    [
+      20000000,
+      0.15
+    ],
+    [
+      50000000,
+      0.25
+    ],
+    [
+      null,
+      0.37
+    ]
+  ],
+  "cess_rate": 0.04,
+  "ui_tooltips": {
+    "section_16_ia": {
+      "text": "Section 15-17: Gross Salary Income. Standard deduction applied automatically.\n\u2022 Old Regime: \u20b950,000 standard deduction. Exemptions like HRA, LTA, and Professional Tax are applicable.\n\u2022 New Regime: \u20b975,000 standard deduction. HRA, LTA, and Professional Tax exemptions are NOT applicable."
+    },
+    "section_80tta": {
+      "text": "Section 80TTA: Exemption on savings interest for individuals/HUFs (non-seniors).\n\u2022 Old Regime: Exemption up to \u20b910,000.\n\u2022 New Regime: No exemption allowed (fully taxable)."
+    },
+    "section_80ttb": {
+      "text": "Section 80TTB: Exemption on savings and FD interest for senior citizens.\n\u2022 Old Regime: Exemption up to \u20b950,000.\n\u2022 New Regime: No exemption allowed (fully taxable)."
+    },
+    "section_44ada": {
+      "text": "Section 44ADA: Presumptive taxation for professionals. Taxable profit is flat 50% of gross receipts. Max limit: \u20b975 Lakhs."
+    },
+    "section_44ad": {
+      "text": "Section 44AD: Presumptive taxation for businesses. Taxable profit is flat 6% of digital turnover (or 8% for cash). Max limit: \u20b93 Crores."
+    },
+    "misc_income": {
+      "text": "Income from other sources (Rent, Freelance, Family Pension). Rental Income gets a flat 30% deduction (Sec 24a).\n\u2022 Old Regime: Family Pension std deduction (Sec 57iia) is \u20b915,000. Home Loan Interest (Sec 24b) on self-occupied house allowed up to \u20b92 Lakhs.\n\u2022 New Regime: Family Pension std deduction is \u20b925,000. Home Loan Interest on self-occupied house is NOT allowed."
+    },
+    "other_interest": {
+      "text": "Interest from Bonds, PPF maturity, NSC, etc. PPF interest is fully exempt (Sec 10(11)). Bonds/NCDs are taxable at slab rates."
+    },
+    "dividend": {
+      "text": "Dividends are fully taxable at applicable slab rates. No deductions allowed. TDS is deducted at 10% under Section 194 if dividend exceeds \u20b95,000."
+    },
+    "foreign_interest": {
+      "text": "Taxable at slab rates. To be declared in Schedule FSI/FA. Double Taxation Relief (DTAA) under Section 90/90A may be claimed if tax was withheld abroad."
+    },
+    "crypto_vda": {
+      "text": "Section 115BBH: Taxed at flat 30%. No basic exemption limit. No deductions allowed except cost of acquisition. Losses from crypto cannot be set off against any other income."
+    },
+    "gaming_lottery": {
+      "text": "Section 115BB: Winnings from Lotteries, Game Shows, and Online Games. Taxed at flat 30%. TDS is deducted at 30% under Sec 194BA/194BB. No deductions allowed."
+    }
+  }
+}

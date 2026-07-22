@@ -3,7 +3,7 @@ import { Box, Typography, Paper, Grid, Button, Chip, Skeleton, Tooltip } from '@
 import { alpha } from '@mui/material/styles'
 import { useRebalancePlan } from '../../hooks/useData'
 import { fmtInr } from '../../api/fmt'
-import { SectionHeader } from '../ui'
+import { SectionHeader, InfoTooltip } from '../ui'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import BalanceIcon from '@mui/icons-material/Balance'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
@@ -13,13 +13,14 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import { motion, AnimatePresence } from 'framer-motion'
 
 const PROFILES = [
+  { id: 'Auto',         label: 'Auto (Detected)',      desc: 'Dynamically targets your actual revealed risk profile' },
   { id: 'Balanced',     label: 'Balanced Profile',     desc: '50% Equity / 30% Debt / 10% Hybrid / 10% Gold' },
   { id: 'Aggressive',   label: 'Aggressive Profile',   desc: '80% Equity / 10% Debt / 5% Hybrid / 5% Gold' },
   { id: 'Conservative', label: 'Conservative Profile', desc: '20% Equity / 60% Debt / 10% Hybrid / 10% Gold' },
 ]
 
 export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean }) {
-  const [profile, setProfile] = useState('Balanced')
+  const [profile, setProfile] = useState('Auto')
   const [filter, setFilter] = useState<'all' | 'buy' | 'sell' | 'switch'>('all')
   const { data, isLoading, isFetching } = useRebalancePlan(profile)
 
@@ -39,8 +40,8 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
     <Box sx={{ pb: isSubTab ? 0 : 8 }}>
       {!isSubTab && (
         <SectionHeader 
-          title="Strategic Rebalancing Cockpit" 
-          subtitle="Institutional Euclidean/RMSD allocation mapping and automated tax-aware drift optimization"
+          title="Strategic Rebalancing" 
+          subtitle="Realign your asset allocation to match your target risk profile."
         />
       )}
 
@@ -102,11 +103,7 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
                 <Typography variant="overline" sx={{ fontWeight: 900, color: '#6366F1', letterSpacing: '0.15em' }}>
                   RMSD DRIFT SCORE
                 </Typography>
-                <Tooltip title="Root Mean Square Deviation measuring divergence from target risk architecture across all asset classes" arrow>
-                  <span style={{ display: 'inline-flex' }}>
-                    <InfoOutlinedIcon sx={{ color: 'text.secondary', fontSize: 18 }} />
-                  </span>
-                </Tooltip>
+                <InfoTooltip title="Root Mean Square Deviation measuring divergence from target risk architecture across all asset classes. A higher score means rebalancing is urgently needed." size={18} />
               </Box>
               
               <Typography sx={{ fontFamily: '"DM Mono",monospace', fontSize: 48, fontWeight: 900, my: 1, color: '#fff', lineHeight: 1.1 }}>

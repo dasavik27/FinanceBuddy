@@ -37,7 +37,14 @@ def get_asset_class(category: str, fund_name: str = "") -> str:
     cat = (category or "").upper()
     name = (fund_name or "").upper()
     
-    if any(x in cat or x in name for x in ["LIQUID", "DEBT", "GILT", "BOND", "OVERNIGHT", "TREASURY"]):
+    debt_keywords = [
+        "LIQUID", "DEBT", "GILT", "BOND", "OVERNIGHT", "TREASURY",
+        "INCOME FUND", "SAVINGS FUND", "ALL SEASONS", "CORPORATE BOND",
+        "CREDIT RISK", "SHORT DURATION", "MEDIUM DURATION", "DYNAMIC BOND",
+        "FLOATING RATE", "LOW DURATION", "ULTRA SHORT", "MONEY MARKET",
+        "BANKING", "PSU",
+    ]
+    if any(x in cat or x in name for x in debt_keywords):
         return "DEBT"
     if "ELSS" in cat or "ELSS" in name:
         return "ELSS"
@@ -117,6 +124,13 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
     """
     Compute portfolio XIRR (annualised IRR) from transaction ledger.
 
+    Institutional Accounting Standards (SEBI Compliance):
+    - For holding periods >= 365 days: Returns the standard XIRR.
+    - For holding periods < 365 days: Annualizing short-term returns distorts 
+      performance (e.g. 5% in 1 month artificially inflates to ~80% p.a.). 
+      To prevent this, the engine intercepts the calculation and returns the 
+      Absolute Return ((Inflows - Outflows) / Outflows) instead.
+
     Parameters
     ----------
     df_t          : Transaction DataFrame for the fund/portfolio
@@ -124,7 +138,7 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
 
     Returns
     -------
-    XIRR as a percentage (e.g. 14.2 means 14.2% p.a.)
+    Return as a percentage (e.g. 14.2 means 14.2%).
     Returns 0.0 on any failure — never raises.
     """
     if current_value <= 0:
@@ -142,6 +156,15 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
         ldf = pd.DataFrame(rows).dropna(subset=["date", "amount"])
         ldf["date"]   = pd.to_datetime(ldf["date"], dayfirst=True)
         ldf["amount"] = ldf["amount"].astype(float)
+
+        # ── SEBI Standard: Absolute Return for < 1 Year Holding ──
+        days_held = (ldf["date"].max() - ldf["date"].min()).days
+        if 0 < days_held < 365:
+            total_outflows = abs(ldf[ldf["amount"] < 0]["amount"].sum())
+            total_inflows  = ldf[ldf["amount"] > 0]["amount"].sum()
+            if total_outflows > 0:
+                abs_pct = ((total_inflows - total_outflows) / total_outflows) * 100
+                return round(max(-99.0, min(abs_pct, 500.0)), 2)
 
         # Solvency Check: Verify presence of both capital inflows and outflows (terminal or actual)
         # to ensure IRR convergence within standard institutional thresholds.
@@ -163,6 +186,23 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
         print(f"[XIRR ERROR] current_value={current_value:.0f}: {e}")
         return 0.0
 
+
+def is_absolute_return(df_t: pd.DataFrame) -> bool:
+    """
+    Evaluates whether the investment holding period is strictly less than 1 year (365 days).
+    This boolean flag is passed to the frontend to dynamically shift UI labels from 
+    'Annualized XIRR' to 'Absolute Return' and trigger the 'ABS' warning badges.
+    """
+    ledger = _get_standard_ledger(df_t)
+    if not ledger:
+        return False
+    rows = [{"date": l["date"], "amount": l["amount"]} for l in ledger]
+    rows.append({"date": datetime.now().date(), "amount": 0.0})
+    ldf = pd.DataFrame(rows).dropna(subset=["date"])
+    ldf["date"] = pd.to_datetime(ldf["date"], dayfirst=True)
+    if ldf.empty: return False
+    days_held = (ldf["date"].max() - ldf["date"].min()).days
+    return 0 < days_held < 365
 
 # ---------------------------------------------------------------------------
 # Benchmark XIRR — simulate same cashflows into benchmark index
@@ -213,7 +253,10 @@ def compute_benchmark_xirr(
             elif l["type"] == "SELL":  # Redemption
                 units_sold = min(total_bench_units, amt / bench_price)
                 total_bench_units = max(0.0, total_bench_units - units_sold)
-                cashflows.append({"date": txn_date, "amount": amt})
+                # FIX C-3: Use benchmark-simulated redemption value, not fund's actual amount.
+                # The investor would have received units_sold * bench_price if invested in benchmark.
+                bench_redemption_value = units_sold * bench_price
+                cashflows.append({"date": txn_date, "amount": bench_redemption_value})
             elif l["type"] == "INCOME":
                 cashflows.append({"date": txn_date, "amount": amt})
 
@@ -227,6 +270,15 @@ def compute_benchmark_xirr(
 
         ldf = pd.DataFrame(cashflows).dropna()
         ldf["date"] = pd.to_datetime(ldf["date"], dayfirst=True)
+
+        # ── SEBI Standard: Absolute Return for < 1 Year Holding ──
+        days_held = (ldf["date"].max() - ldf["date"].min()).days
+        if 0 < days_held < 365:
+            total_outflows = abs(ldf[ldf["amount"] < 0]["amount"].sum())
+            total_inflows  = ldf[ldf["amount"] > 0]["amount"].sum()
+            if total_outflows > 0:
+                abs_pct = ((total_inflows - total_outflows) / total_outflows) * 100
+                return round(max(-99.0, min(abs_pct, 500.0)), 2), round(bench_sim_value, 2)
 
         if ldf[ldf["amount"] < 0].empty or ldf[ldf["amount"] > 0].empty:
             return 0.0, bench_sim_value
@@ -383,7 +435,9 @@ def compute_rolling_return_avg(
         if next_candidates.empty:
             break
         # Fix #8: Use searchsorted for robustness against duplicate timestamps
-        i = idx.searchsorted(next_candidates.index[0]) if not next_candidates.empty else i + 1
+        new_i = idx.searchsorted(next_candidates.index[0]) if not next_candidates.empty else i + 1
+        # FIX H-4: Guard against infinite loop if searchsorted returns same index
+        i = max(new_i, i + 1)
 
     if not rolling_cagrs:
         return None
@@ -441,7 +495,9 @@ def compute_rolling_return_series(
         next_candidates = nav_sorted[nav_sorted.index >= next_date]
         if next_candidates.empty:
             break
-        i = nav_sorted.index.searchsorted(next_candidates.index[0])
+        new_i = nav_sorted.index.searchsorted(next_candidates.index[0])
+        # FIX H-4: Guard against infinite loop if searchsorted returns same index
+        i = max(new_i, i + 1)
 
     return pd.Series(values, index=dates)
 
@@ -718,10 +774,12 @@ def compute_period_comparison(
         "chart_mode": "indexed"
     }
 
-    if bench_series is None or bench_series.empty or df_t_all is None or df_t_all.empty or df_h is None or df_h.empty:
+    if df_t_all is None or df_t_all.empty or df_h is None or df_h.empty:
         return result
 
-    bench_sorted = bench_series.sort_index().dropna()
+    bench_sorted = pd.Series(dtype=float)
+    if bench_series is not None and not bench_series.empty:
+        bench_sorted = bench_series.sort_index().dropna()
     
     # 1. Build complete timeline
     df_t = df_t_all.copy()
@@ -729,9 +787,21 @@ def compute_period_comparison(
     all_dates = df_t["Date"].sort_values()
     
     start_date = all_dates.iloc[0]
-    end_date = bench_sorted.index[-1]
+    
+    # If benchmark is missing or its end_date is before start_date (e.g. today vs yesterday),
+    # we extend the timeline to today to ensure the chart still renders.
+    today_dt = pd.Timestamp(datetime.now().date())
+    if bench_sorted.empty:
+        end_date = today_dt
+    else:
+        end_date = bench_sorted.index[-1]
+        
     if start_date > end_date:
-        return result
+        end_date = start_date
+        
+    # Cap end_date at today to prevent future dates
+    if end_date > today_dt:
+        end_date = today_dt
         
     calendar = pd.date_range(start_date, end_date, freq='D')
     
@@ -739,11 +809,21 @@ def compute_period_comparison(
     from services.market_data import fetch_nav_series_by_isin, fetch_nav_series_by_name, fetch_nav_series_by_code
     fund_navs = {}
     
+    # We need NAVs for ALL funds ever held, not just currently held funds
+    # df_t_all contains ISIN or Scheme_Code if available. Otherwise we fetch by name.
+    # First, let's build a map of Fund Name -> (ISIN, Scheme_Code) from both df_h and df_t_all
+    fund_metadata = {}
     for _, row in df_h.iterrows():
-        fn = str(row.get("Fund", ""))
+        f = str(row.get("Fund", ""))
+        if f: fund_metadata[f] = (str(row.get("ISIN", row.get("Isin", ""))).strip(), str(row.get("Scheme_Code", row.get("scheme_code", ""))).strip())
+    
+    for _, row in df_t_all.iterrows():
+        f = str(row.get("Fund", ""))
+        if f and f not in fund_metadata:
+            fund_metadata[f] = (str(row.get("ISIN", row.get("Isin", ""))).strip(), str(row.get("Scheme_Code", row.get("scheme_code", ""))).strip())
+            
+    for fn, (isin, scode) in fund_metadata.items():
         if not fn: continue
-        isin = str(row.get("ISIN", row.get("Isin", ""))).strip()
-        scode = str(row.get("Scheme_Code", row.get("scheme_code", ""))).strip()
         
         navs = pd.Series(dtype=float)
         if isin and isin not in ("N/A", "", "nan", "None"):
@@ -765,6 +845,7 @@ def compute_period_comparison(
     global_dates = []
     global_port_nav = []
     global_bench_nav = []
+    global_market_value = []
     
     port_units = 0.0
     port_nav = 100.0 # Base 100 on Day 1
@@ -792,7 +873,8 @@ def compute_period_comparison(
             if units > 0:
                 f_navs = fund_navs[f]
                 past_navs = f_navs[f_navs.index.date <= d_obj]
-                nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else 10.0
+                # FIX H-9: Forward-fill from last known NAV instead of hardcoded 10.0
+                nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else float(f_navs.iloc[0]) if not f_navs.empty else 10.0
                 market_value_sod += units * nav_today
                 
         if port_units > 0:
@@ -834,10 +916,16 @@ def compute_period_comparison(
         market_value_eod = 0.0
         for f, units in fund_units.items():
             if units > 0:
-                f_navs = fund_navs[f]
-                past_navs = f_navs[f_navs.index.date <= d_obj]
-                nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else 10.0
-                market_value_eod += units * nav_today
+                f_navs = fund_navs.get(f)
+                if f_navs is not None:
+                    past_navs = f_navs[f_navs.index.date <= d_obj]
+                    # FIX H-9: Forward-fill from last known NAV instead of hardcoded 10.0
+                    nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else float(f_navs.iloc[0]) if not f_navs.empty else 10.0
+                    market_value_eod += units * nav_today
+                else:
+                    # If we couldn't fetch NAV, assume a constant 10.0 or last known unit price.
+                    # For a sold fund, ideally we would use its historical purchase price or synthetic NAV.
+                    market_value_eod += units * 10.0
                 
         if port_units > 0:
             port_nav = market_value_eod / port_units
@@ -845,10 +933,12 @@ def compute_period_comparison(
         global_dates.append(d)
         global_port_nav.append(port_nav)
         global_bench_nav.append(b_idx)
+        global_market_value.append(market_value_eod)
         
     global_df = pd.DataFrame({
         "bench": global_bench_nav,
-        "port": global_port_nav
+        "port": global_port_nav,
+        "market_value": global_market_value
     }, index=global_dates)
 
     # 4. Slice the true curve for the requested period
@@ -880,12 +970,21 @@ def compute_period_comparison(
     # Benchmark is scaled to start at slice_start_port
     period_df["bench_scaled"] = (period_df["bench"] / slice_start_bench) * slice_start_port
 
-    # 6. Calculate exact point-to-point percentage returns for the period
+    # 6. Calculate exact percentage returns (Absolute for <1Y, Annualized CAGR for >=1Y)
     slice_end_port = float(period_df["port"].iloc[-1])
     slice_end_bench = float(period_df["bench"].iloc[-1])
-
-    period_port_pct = ((slice_end_port / slice_start_port) - 1) * 100.0
-    period_bench_pct = ((slice_end_bench / slice_start_bench) - 1) * 100.0
+    
+    actual_days = (period_df.index[-1] - period_df.index[0]).days
+    
+    if actual_days >= 365:
+        # Annualized CAGR
+        years = actual_days / 365.25
+        period_port_pct = (((slice_end_port / slice_start_port) ** (1 / years)) - 1) * 100.0
+        period_bench_pct = (((slice_end_bench / slice_start_bench) ** (1 / years)) - 1) * 100.0
+    else:
+        # Absolute Return
+        period_port_pct = ((slice_end_port / slice_start_port) - 1) * 100.0
+        period_bench_pct = ((slice_end_bench / slice_start_bench) - 1) * 100.0
 
     result["port_pct"] = round(period_port_pct, 2)
     result["bench_pct"] = round(period_bench_pct, 2)
@@ -901,16 +1000,18 @@ def compute_period_comparison(
     if (len(period_df) - 1) not in chart_indices:
         chart_indices.append(len(period_df) - 1)
 
-    dates_arr, port_vals, bench_vals = [], [], []
+    dates_arr, port_vals, bench_vals, market_vals = [], [], [], []
     for idx in chart_indices:
         d = period_df.index[idx]
         dates_arr.append(d.strftime("%Y-%m-%d"))
         port_vals.append(round(period_df["port"].iloc[idx], 2))
         bench_vals.append(round(period_df["bench_scaled"].iloc[idx], 2))
+        market_vals.append(round(period_df["market_value"].iloc[idx], 2))
 
     result["dates"] = dates_arr
     result["portfolio"] = port_vals
     result["benchmark"] = bench_vals
+    result["market_value"] = market_vals
 
     return result
 
@@ -1009,17 +1110,25 @@ def compute_ltcg_harvest(
     -------
     dict with eligible gains list and tax saved
     """
-    eligible = [
+    # 1. Gain Harvesting (up to ₹1.25L exemption)
+    gain_eligible = [
         h for h in holdings
         if h.get("holding_days", 0) >= 365 and h.get("gain", 0) > 0
     ]
-    eligible.sort(key=lambda x: x["gain"])  # smallest gains first for clean harvesting
+    gain_eligible.sort(key=lambda x: x["gain"])
+    
+    # 2. Loss Harvesting (STCL and LTCL)
+    loss_eligible = [
+        h for h in holdings
+        if h.get("stcg", 0) < -100 or h.get("ltcg", 0) < -100
+    ]
+    loss_eligible.sort(key=lambda x: min(x.get("stcg", 0), x.get("ltcg", 0))) # Largest losses first
 
     to_harvest   = []
     cumulative   = 0.0
     tax_saved    = 0.0
 
-    for h in eligible:
+    for h in gain_eligible:
         gain = h["gain"]
         if cumulative + gain <= ltcg_exemption:
             to_harvest.append({
@@ -1043,11 +1152,26 @@ def compute_ltcg_harvest(
                 })
                 tax_saved  += partial * ltcg_rate
             break
+            
+    total_loss_harvested = 0.0
+    for h in loss_eligible:
+        loss = min(h.get("stcg", 0), h.get("ltcg", 0))
+        # Tax saved by loss harvesting: roughly 20% for STCL, 12.5% for LTCL. Use average 15% for display.
+        # Loss harvesting allows offsetting future gains.
+        to_harvest.append({
+            "fund":       h["fund"],
+            "gain":       round(loss, 0),
+            "tax_at_rate": 0,
+            "tax_saved":  round(abs(loss) * 0.15, 0),
+            "action":     "TAX LOSS HARVEST — book loss to offset future gains",
+        })
+        total_loss_harvested += abs(loss)
+        tax_saved += abs(loss) * 0.15
 
     return {
-        "eligible_count": len(eligible),
+        "eligible_count": len(gain_eligible) + len(loss_eligible),
         "harvest_list":   to_harvest,
-        "total_harvested": round(cumulative, 0),
+        "total_harvested": round(cumulative + total_loss_harvested, 0),
         "total_tax_saved": round(tax_saved, 0),
         "remaining_exemption": round(max(ltcg_exemption - cumulative, 0), 0),
     }
@@ -1225,21 +1349,21 @@ def compute_fifo_tax(
     ltcg_gain = sum(r["Gain"] for r in results if r["Type"] == "LTCG")
     lock_in_gain = sum(r["Gain"] for r in results if r["Type"] == "LOCK-IN")
     lock_in_units = sum(r["Units Sold"] for r in results if r["Type"] == "LOCK-IN")
+    lock_in_value = sum(r["Value"] for r in results if r["Type"] == "LOCK-IN")
     
     # Rates — Centralized logic for Institutional Precision
     if is_debt:
-        # Post Finance Act 2023: Debt gains are taxed at slab rate (proxied at 20%)
-        # Note: All debt gains (STCG/LTCG) are effectively treated as income
-        stcg_tax_val = max(0, stcg_gain) * 0.20
-        ltcg_tax_val = max(0, ltcg_gain) * 0.20
+        # Post Budget 2024: Debt STCG = slab rate (proxied at 20%), Debt LTCG = 12.5%
+        stcg_tax_val = max(0, stcg_gain) * rules.get("STCG_RATE", TAX_RULES["capital_gains"]["stcg_equity_rate"])
+        ltcg_tax_val = max(0, ltcg_gain) * rules.get("LTCG_RATE", TAX_RULES["capital_gains"]["ltcg_equity_rate"])
     elif is_elss:
         stcg_tax_val = 0.0 # Not possible in ELSS due to lock-in, but handled for safety
-        ltcg_tax_val = max(0, ltcg_gain) * 0.125
+        ltcg_tax_val = max(0, ltcg_gain) * rules.get("LTCG_RATE", TAX_RULES["capital_gains"]["ltcg_equity_rate"])
     else: # Equity / Index
-        stcg_tax_val = max(0, stcg_gain) * 0.20
+        stcg_tax_val = max(0, stcg_gain) * rules.get("STCG_RATE", TAX_RULES["capital_gains"]["stcg_equity_rate"])
         # FIX P1-5: In a per-fund simulator, we show potential tax BEFORE the global ₹1.25L exemption.
         # This prevents misleading ₹0 results when the simulation doesn't have full FY context.
-        ltcg_tax_val = max(0, ltcg_gain) * 0.125
+        ltcg_tax_val = max(0, ltcg_gain) * rules.get("LTCG_RATE", TAX_RULES["capital_gains"]["ltcg_equity_rate"])
     
     total_tax = stcg_tax_val + ltcg_tax_val
     
@@ -1251,11 +1375,12 @@ def compute_fifo_tax(
         "stcg_gain":    round(stcg_gain, 2),
         "ltcg_gain":    round(ltcg_gain, 2),
         "lock_in_gain": round(lock_in_gain, 2),
+        "lock_in_value": round(lock_in_value, 2),
         "lock_in_units": round(lock_in_units, 4),
         "stcg_tax":     round(stcg_tax_val, 2),
         "ltcg_tax":     round(ltcg_tax_val, 2),
         "total_tax":    round(total_tax, 2),
         "net_proceeds": round(total_value - total_tax, 2),
-        "lock_in_warning": f"₹{lock_in_gain:,.0f} in ELSS units are within 3-year lock-in — redemption blocked." if lock_in_gain > 0 else None,
+        "lock_in_warning": f"₹{lock_in_value:,.0f} in ELSS units are within 3-year lock-in — redemption blocked." if lock_in_value > 0 else None,
         "details":      results
     }

@@ -89,12 +89,12 @@ export function useRebalancePlan(profile: string) {
 }
 
 // ── Tax ───────────────────────────────────────────────────────────────────────
-export function useTax(fy: string = 'Current Portfolio') {
+export function useTax(fy: string = 'Current Portfolio', debt_slab: number = 30.0) {
   const sid = useSessionId()
   const p = useFilterParams()
   return useQuery({
-    queryKey: ['tax', sid, p, fy],
-    queryFn: () => apiClient.getTax(sid!, { ...p, fy }),
+    queryKey: ['tax', sid, p, fy, debt_slab],
+    queryFn: () => apiClient.getTax(sid!, { ...p, fy, debt_slab }),
     enabled: !!sid,
   })
 }
@@ -108,6 +108,15 @@ export function useTaxYears() {
   })
 }
 
+export function useTaxOptimize() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['tax-optimize', sid],
+    queryFn: () => apiClient.getTaxOptimize(sid!),
+    enabled: !!sid,
+  })
+}
+
 // ── Insights ──────────────────────────────────────────────────────────────────
 export function useInsights() {
   const sid = useSessionId()
@@ -115,6 +124,15 @@ export function useInsights() {
   return useQuery({
     queryKey: ['insights', sid, p],
     queryFn: () => apiClient.getInsights(sid!, p),
+    enabled: !!sid,
+  })
+}
+
+export function useJourney() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['journey', sid],
+    queryFn: () => apiClient.getJourney(sid!),
     enabled: !!sid,
   })
 }
