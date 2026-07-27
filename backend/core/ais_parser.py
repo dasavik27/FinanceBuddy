@@ -51,12 +51,12 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
         tmp_path = tmp.name
 
     try:
-        # Extract personal info using pdfplumber for raw text
-        pdf = pdfplumber.open(tmp_path)
+        import pypdf
         full_text = ""
-        for page in pdf.pages:
-            full_text += (page.extract_text() or "") + "\n"
-        pdf.close()
+        with open(tmp_path, "rb") as f:
+            reader = pypdf.PdfReader(f)
+            for page in reader.pages:
+                full_text += (page.extract_text() or "") + "\n"
         
         personal = _extract_personal(full_text)
 

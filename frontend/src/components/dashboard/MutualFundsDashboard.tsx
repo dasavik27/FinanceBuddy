@@ -7,7 +7,7 @@ import OverviewTab    from '../tabs/OverviewTab'
 import HoldingsTab    from '../tabs/HoldingsTab'
 import PerformanceTab from '../tabs/PerformanceTab'
 import CompareTab     from '../tabs/CompareTab'
-import InsightsRebalanceTab from '../tabs/InsightsRebalanceTab'
+import InsightsTab from '../tabs/InsightsTab'
 import JourneyTab from '../tabs/JourneyTab'
 import { ErrorBoundary } from '../ui'
 
@@ -90,7 +90,7 @@ export default function MutualFundsDashboard() {
         <Route path="performance"  element={<ErrorBoundary fallbackMessage="Performance tab encountered a rendering error."><PerformanceTab /></ErrorBoundary>} />
         <Route path="compare"      element={<ErrorBoundary fallbackMessage="Compare tab encountered a rendering error."><CompareTab /></ErrorBoundary>} />
         <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
-        <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsRebalanceTab /></ErrorBoundary>} />
+        <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsTab /></ErrorBoundary>} />
         <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
       </Routes>
     </Box>

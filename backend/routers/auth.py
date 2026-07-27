@@ -3,6 +3,9 @@ from pydantic import BaseModel
 import sqlite3
 import re
 from core.storage import DB_PATH
+import logging
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
 
@@ -31,13 +34,13 @@ def login_with_pan(req: LoginRequest):
             cursor = conn.execute("SELECT COUNT(*) FROM users")
             user_count = cursor.fetchone()[0]
             if user_count == 1:
-                print(f"[AUTH] First user {pan} created. Migrating orphaned sessions...")
+                logger.info(f"[AUTH] First user {pan} created. Migrating orphaned sessions...")
                 conn.execute("UPDATE sessions SET pan_id = ? WHERE pan_id IS NULL", (pan,))
                 
             conn.commit()
-            print(f"[AUTH] New user profile created for PAN: {pan}")
+            logger.info(f"[AUTH] New user profile created for PAN: {pan}")
         else:
-            print(f"[AUTH] Existing user logged in: {pan}")
+            logger.info(f"[AUTH] Existing user logged in: {pan}")
             
     return {"status": "success", "pan": pan}
 
@@ -48,5 +51,5 @@ def logout_user(req: LoginRequest):
     sessions = get_sessions_by_pan(pan)
     for s in sessions:
         delete_tax_session(s["session_id"])
-    print(f"[AUTH] Logged out {pan} and cleared {len(sessions)} tax sessions from memory and disk.")
+    logger.info(f"[AUTH] Logged out {pan} and cleared {len(sessions)} tax sessions from memory and disk.")
     return {"status": "success"}

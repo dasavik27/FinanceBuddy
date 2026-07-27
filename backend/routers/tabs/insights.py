@@ -53,30 +53,9 @@ def get_insights(session_id: str):
     from core.config import get_standard_category
     goal_data = []
     
-    def _get_goal_val(c: str) -> float:
-        if c == "ELSS": return float(df_h[df_h["Category"] == "ELSS"]["Market Value"].sum())
-        if c == "Liquid": 
-            mask = (df_h["Category"].str.contains("Liquid", case=False, na=False)) | (df_h["Fund"].str.upper().str.contains("LIQUID", na=False))
-            return float(df_h[mask]["Market Value"].sum())
-        if c == "Index": return float(df_h[df_h["Category"].str.contains("Index", case=False, na=False)]["Market Value"].sum())
-        if c in ["Mid Cap", "Small Cap"] and "Cap Type" in df_h.columns:
-            return float(df_h[df_h["Cap Type"] == c]["Market Value"].sum())
-        if c == "Debt":
-            mask = df_h["Category"].apply(get_standard_category) == "Debt"
-            liq_mask = (df_h["Category"].str.contains("Liquid", case=False, na=False)) | (df_h["Fund"].str.upper().str.contains("LIQUID", na=False))
-            mask = mask & ~liq_mask
-            return float(df_h[mask]["Market Value"].sum())
-        if c == "Equity":
-            mask = df_h["Category"].apply(get_standard_category) == "Equity"
-            mask = mask & (df_h["Category"] != "ELSS")
-            mask = mask & ~df_h["Category"].str.contains("Index", case=False, na=False)
-            if "Cap Type" in df_h.columns:
-                mask = mask & ~df_h["Cap Type"].isin(["Mid Cap", "Small Cap"])
-            return float(df_h[mask]["Market Value"].sum())
-        return 0.0
-
+    from core.tab_common import get_goal_value
     for cat, (goal_label, color, timeline) in GOAL_TIMELINE.items():
-        val = _get_goal_val(cat)
+        val = get_goal_value(df_h, cat)
         if val > 0:
             goal_data.append({
                 "category": cat, "goal": goal_label, "value": round(val, 0),

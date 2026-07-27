@@ -10,6 +10,9 @@ import pandas as pd
 from pyxirr import xirr
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Tuple, Optional
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 # Centralized Institutional Tax Configuration
@@ -183,7 +186,7 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
         return round(max(-99.0, min(pct, 200.0)), 2)
 
     except Exception as e:
-        print(f"[XIRR ERROR] current_value={current_value:.0f}: {e}")
+        logger.error(f"[XIRR ERROR] current_value={current_value:.0f}: {e}")
         return 0.0
 
 
@@ -291,7 +294,7 @@ def compute_benchmark_xirr(
         return pct, round(bench_sim_value, 2)
 
     except Exception as e:
-        print(f"[BENCH XIRR ERROR] {e}")
+        logger.error(f"[BENCH XIRR ERROR] {e}")
         return 0.0, 0.0
 
 
@@ -363,7 +366,7 @@ def compute_trailing_returns(nav_series: pd.Series) -> Dict[str, Optional[float]
         if nav_5y > 0:
             pct_diff = abs(nav_3y - nav_5y) / nav_5y * 100
             if pct_diff < 2.0:  # Less than 2% difference
-                print(f"[TRAILING RETURNS WARN] 3Y ({_start_navs['3Y'][0].date()} NAV={nav_3y:.2f}) and "
+                logger.warning(f"[TRAILING RETURNS WARN] 3Y ({_start_navs['3Y'][0].date()} NAV={nav_3y:.2f}) and "
                       f"5Y ({_start_navs['5Y'][0].date()} NAV={nav_5y:.2f}) start NAVs differ by only {pct_diff:.2f}%. "
                       f"Returns 3Y={result.get('3Y')}% 5Y={result.get('5Y')}% — verify NAV data availability.")
 
@@ -651,18 +654,18 @@ def compute_risk_metrics(
                     
                     # Sanity check: OLS alpha should not be near-zero when trailing CAGR diff is significant
                     if abs(j_alpha) < 0.05 and abs(simple_alpha) > 1.0:
-                        print(f"[ALPHA WARN] Jensen's Alpha={j_alpha:.3f}% near-zero but simple_alpha={simple_alpha:.2f}%. "
+                        logger.warning(f"[ALPHA WARN] Jensen's Alpha={j_alpha:.3f}% near-zero but simple_alpha={simple_alpha:.2f}%. "
                               f"Using simple_alpha as fallback (n_months={n_months}).")
                         defaults["alpha"] = simple_alpha
                     else:
                         defaults["alpha"] = round(j_alpha, 2)
                 else:
                     # < 24 months — OLS unreliable, use simple alpha
-                    print(f"[ALPHA INFO] Only {n_months} months of overlap — using simple alpha={simple_alpha:.2f}%.")
+                    logger.info(f"[ALPHA INFO] Only {n_months} months of overlap — using simple alpha={simple_alpha:.2f}%.")
                     defaults["alpha"] = simple_alpha
         else:
             # < 12 months — cannot run OLS
-            print(f"[ALPHA INFO] Only {n_months} months of overlap — cannot compute OLS alpha. Using simple_alpha={simple_alpha:.2f}%.")
+            logger.info(f"[ALPHA INFO] Only {n_months} months of overlap — cannot compute OLS alpha. Using simple_alpha={simple_alpha:.2f}%.")
             defaults["alpha"] = simple_alpha
 
     # ── Risk Label (Annualized Vol based) ───────────────────────────────

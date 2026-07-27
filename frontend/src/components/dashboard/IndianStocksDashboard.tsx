@@ -3,7 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Box } from '@mui/material'
 import { useStocksSessionId, useAppStore } from '../../store/appStore'
 import DocumentUpload from './DocumentUpload'
-import StocksTab from '../tabs/StocksTab'
+import IndianStocksTab from '../tabs/IndianStocksTab'
 import { ErrorBoundary } from '../ui'
 
 export default function IndianStocksDashboard() {
@@ -29,7 +29,7 @@ export default function IndianStocksDashboard() {
   return (
     <Box>
       <Routes>
-        <Route index element={<ErrorBoundary fallbackMessage="Stocks tab encountered an error."><StocksTab /></ErrorBoundary>} />
+        <Route index element={<ErrorBoundary fallbackMessage="Stocks tab encountered an error."><IndianStocksTab /></ErrorBoundary>} />
         <Route path="*" element={<Navigate to="/dashboard/indian-stocks" replace />} />
       </Routes>
     </Box>

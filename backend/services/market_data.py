@@ -125,11 +125,14 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]
             _ISIN_TO_CODE_CACHE.update(isin_map)
             
     except Exception as e:
-        print(f"[AMFI UNIFIED ERROR] {e}")
+        logger.error(f"[AMFI UNIFIED ERROR] {e}")
         
     return live_map, isin_map, date_map
 
 from core.cache import MarketCache
+import logging
+logger = logging.getLogger(__name__)
+
 
 def fetch_live_navs(refresh: bool = False) -> Dict[str, float]:
     """
@@ -366,7 +369,7 @@ def fetch_fund_metadata(scheme_code: str) -> Dict:
         provider = get_provider()
         return provider.fetch_fund_meta(scheme_code)
     except Exception as e:
-        print(f"[METADATA ERROR] scheme={scheme_code}: {e}")
+        logger.error(f"[METADATA ERROR] scheme={scheme_code}: {e}")
         return {}
 
 
@@ -412,7 +415,7 @@ def fetch_peer_returns(scheme_code: str) -> Tuple[float, float]:
         return ret_1y, ret_3y
 
     except Exception as e:
-        print(f"[PEER RETURNS ERROR] scheme={scheme_code}: {e}")
+        logger.error(f"[PEER RETURNS ERROR] scheme={scheme_code}: {e}")
         return 0.0, 0.0
 
 
@@ -435,7 +438,7 @@ def search_mutual_funds(query: str) -> List[Dict]:
             for item in raw_results[:15]
         ]
     except Exception as e:
-        print(f"[SEARCH ERROR] query={query}: {e}")
+        logger.error(f"[SEARCH ERROR] query={query}: {e}")
         return []
 
 

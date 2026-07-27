@@ -174,19 +174,18 @@ export default function TaxITRCompareTab() {
             {/* CMP-5: Salary sub-rows so FB vs ITR comparison is fair */}
             <ComputeRow label="Gross Salary" folioVal={summary.income_heads.salary.gross} itrVal={itrData.income.salary_gross ?? itrData.income.salary} />
             
-            {(summary.income_heads.salary.sec10_hra > 0 || summary.income_heads.salary.sec10_lta > 0) && (
+            {(summary.income_heads.salary.sec10_hra > 0 || summary.income_heads.salary.sec10_lta > 0 || (itrData.income.salary_exemptions && itrData.income.salary_exemptions > 0)) && (
               <ComputeRow 
                 label="Less: HRA, LTA & Sec 10 Exemptions" 
-                folioVal={-(summary.income_heads.salary.sec10_hra + summary.income_heads.salary.sec10_lta)} 
+                folioVal={-(summary.income_heads.salary.sec10_hra + summary.income_heads.salary.sec10_lta + summary.income_heads.salary.sec10_other)} 
                 itrVal={itrData.income.salary_exemptions ? -itrData.income.salary_exemptions : null} 
                 color="#38BDF8" 
               />
             )}
             
-            {/* Standard deduction (50k) is typically applied in the net calculation. We derive it visually here. */}
             <ComputeRow 
               label="Less: Standard Deduction & Sec 16" 
-              folioVal={-(50000 + (summary.income_heads.salary.sec16_ptax || 0))} 
+              folioVal={-( (summary.income_heads.salary.std_deduction || 50000) + (summary.income_heads.salary.sec16_ptax || 0) )} 
               itrVal={itrData.income.salary_gross && itrData.income.salary ? -(itrData.income.salary_gross - (itrData.income.salary_exemptions || 0) - itrData.income.salary) : null} 
               color="#38BDF8" 
             />

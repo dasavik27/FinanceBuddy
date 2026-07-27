@@ -20,6 +20,9 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from services.providers.factory import get_provider
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ── Thread-safe Cache Lock ──────────────────────────────────────────────
 _BENCH_LOCK = threading.Lock()
@@ -64,7 +67,7 @@ def fetch_live_market_summary() -> Dict:
                 }
             }
     except Exception as e:
-        print(f"[MARKET ERROR] Nifty live fetch failed: {e}")
+        logger.error(f"[MARKET ERROR] Nifty live fetch failed: {e}")
 
     # Return stale/fallback data — explicitly flagged as not live
     return {
@@ -149,7 +152,7 @@ def _fetch_nselib_series(index_name: str, period_days: int) -> pd.Series:
     try:
         from nselib import capital_market
     except ImportError:
-        print("[NSELIB] nselib package not installed.")
+        logger.info("[NSELIB] nselib package not installed.")
         return pd.Series(dtype=float)
 
     import time
@@ -170,7 +173,7 @@ def _fetch_nselib_series(index_name: str, period_days: int) -> pd.Series:
                 dfs.append(df[['TIMESTAMP', 'CLOSE_INDEX_VAL']])
         except Exception as e:
             # Fix #10: Log chunk failures instead of swallowing silently
-            print(f"[NSELIB CHUNK ERROR] {index_name} ({from_str} to {to_str}): {e}")
+            logger.error(f"[NSELIB CHUNK ERROR] {index_name} ({from_str} to {to_str}): {e}")
             
         end = start - timedelta(days=1)
         time.sleep(0.5) # respect NSE rate limits
@@ -183,7 +186,7 @@ def _fetch_nselib_series(index_name: str, period_days: int) -> pd.Series:
             series = pd.to_numeric(full['CLOSE_INDEX_VAL'], errors='coerce').dropna()
             return series
         except Exception as e:
-            print(f"[NSELIB ERROR] Parsing failed: {e}")
+            logger.error(f"[NSELIB ERROR] Parsing failed: {e}")
             
     return pd.Series(dtype=float)
 
@@ -255,7 +258,7 @@ def _fetch_benchmark_series_uncached(ticker: str, period_days: int) -> pd.Series
             required_start = datetime.now() - timedelta(days=period_days if period_days < 9999 else 3650)
             if series.empty or (period_days > 1000 and series.index.min() > required_start):
                 yahoo_ticker = _MFAPI_TO_YAHOO_MAP[str(ticker)]
-                print(f"[HYBRID FETCH] MFAPI series {ticker} is too short. Splicing with {yahoo_ticker} via yfinance...")
+                logger.info(f"[HYBRID FETCH] MFAPI series {ticker} is too short. Splicing with {yahoo_ticker} via yfinance...")
                 yf_series = _fetch_yahoo_series(yahoo_ticker, period_days)
                 
                 # BSE Fallback if Yahoo NSE fails
@@ -289,7 +292,7 @@ def _fetch_benchmark_series_uncached(ticker: str, period_days: int) -> pd.Series
     # ── 3.5 Fallback to BSE Index on Yahoo if NSE fails ──────────────────
     if (series.empty or len(series) < 10) and ticker in _BSE_FALLBACK_MAP:
         bse_ticker = _BSE_FALLBACK_MAP[ticker]
-        print(f"[BENCH FETCH] Yahoo failed for {ticker}, falling back to BSE equivalent {bse_ticker} via Yahoo...")
+        logger.info(f"[BENCH FETCH] Yahoo failed for {ticker}, falling back to BSE equivalent {bse_ticker} via Yahoo...")
         series = _fetch_yahoo_series(bse_ticker, period_days)
     
     # ── 4. User Warning if Yahoo completely fails ──────────────────────────
@@ -333,7 +336,7 @@ def _fetch_yahoo_series(ticker: str, period_days: int) -> pd.Series:
 
     except Exception as e:
         # FIX #11: Return empty, NOT a synthetic growth curve
-        print(f"[BENCH FETCH ERROR] ticker={ticker}: {e}")
+        logger.error(f"[BENCH FETCH ERROR] ticker={ticker}: {e}")
         return pd.Series(dtype=float)
 
 
@@ -343,7 +346,7 @@ def _fetch_mf_nav_series(scheme_code: str, period_days: int) -> pd.Series:
         provider = get_provider()
         return provider.fetch_nav_series(scheme_code, period_days)
     except Exception as e:
-        print(f"[MF NAV BENCH ERROR] code={scheme_code}: {e}")
+        logger.error(f"[MF NAV BENCH ERROR] code={scheme_code}: {e}")
         return pd.Series(dtype=float)
 
 

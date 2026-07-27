@@ -10,6 +10,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import List, Dict, Any
 from .base import MarketDataProvider
+import logging
+logger = logging.getLogger(__name__)
+
 
 class MFApiProvider(MarketDataProvider):
     """
@@ -50,7 +53,7 @@ class MFApiProvider(MarketDataProvider):
             return series
 
         except Exception as e:
-            print(f"[MFAPI PROVIDER] Error fetching NAV for {scheme_code}: {e}")
+            logger.info(f"[MFAPI PROVIDER] Error fetching NAV for {scheme_code}: {e}")
             return pd.Series(dtype=float)
 
     def fetch_fund_meta(self, scheme_code: str) -> Dict[str, Any]:
@@ -67,7 +70,7 @@ class MFApiProvider(MarketDataProvider):
                 "scheme_category":  meta.get("scheme_category", ""),
             }
         except Exception as e:
-            print(f"[MFAPI PROVIDER] Metadata error for {scheme_code}: {e}")
+            logger.info(f"[MFAPI PROVIDER] Metadata error for {scheme_code}: {e}")
             return {}
 
     def search_funds(self, query: str) -> List[Dict[str, Any]]:
@@ -78,5 +81,5 @@ class MFApiProvider(MarketDataProvider):
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
-            print(f"[MFAPI PROVIDER] Search error for query '{query}': {e}")
+            logger.info(f"[MFAPI PROVIDER] Search error for query '{query}': {e}")
             return []

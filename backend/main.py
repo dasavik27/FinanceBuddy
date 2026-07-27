@@ -15,9 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 # Core System & Market Gateways
-from routers import portfolio, market, auth, accounts
+from routers import portfolio, market, auth, accounts, history
 # Specialized Analytical Tab Routers (1:1 Modular Mapping with Frontend Navigation)
-from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy, overlap, history, journey
+from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy, journey
 
 app = FastAPI(
     title="Finance Buddy API",
@@ -52,8 +52,7 @@ app.include_router(insights.router,     prefix="/portfolio", tags=["Analytics - 
 app.include_router(rebalance.router,    prefix="/rebalance", tags=["Analytics - Rebalancing & Drift Audit"])
 app.include_router(tax_strategy.router, prefix="/portfolio", tags=["Analytics - Tax Strategy Lab"])
 app.include_router(tax_strategy.router, prefix="/tax-expert", tags=["Tax Expert - AIS Filing"])
-app.include_router(overlap.router,      prefix="/portfolio", tags=["Analytics - Overlap Analysis"])
-app.include_router(history.router,      prefix="/history",   tags=["Analytics - History Timeline"])
+app.include_router(history.router,      prefix="/history",   tags=["Infrastructure - History Timeline"])
 app.include_router(journey.router,      prefix="/journey",   tags=["Analytics - Wealth Journey Timeline"])
 
 @app.get("/health", tags=["Infrastructure - Health"])

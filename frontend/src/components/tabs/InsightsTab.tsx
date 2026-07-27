@@ -27,7 +27,7 @@ const NUDGE_STYLE: Record<string, { bg: string; color: string; border: string; g
   info:    { bg: 'rgba(99, 102, 241, 0.04)', color: '#6366F1', border: 'rgba(99, 102, 241, 0.2)', glow: 'rgba(99, 102, 241, 0.15)' },
 }
 
-export default function InsightsRebalanceTab() {
+export default function InsightsTab() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeSubTab = searchParams.get('tab') === 'rebalance' ? 'rebalance' : 'diagnostics'
   

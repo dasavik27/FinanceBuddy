@@ -38,12 +38,9 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
         return {"status": "Empty", "orders": [], "drift_score": 0.0}
 
     df_h = df_h.copy()
-    def roll_up(cat):
-        c = get_standard_category(cat)
-        if c in ["Equity", "Debt", "Hybrid"]: return c
-        return "Other"
+    from core.tab_common import rebalance_roll_up
     
-    df_h["SimpleCat"] = df_h["Category"].apply(roll_up)
+    df_h["SimpleCat"] = df_h["Category"].apply(rebalance_roll_up)
     
     detected_profile = profile
     if profile == "Auto":

@@ -12,8 +12,9 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import FilterListIcon from '@mui/icons-material/FilterList'
 
 import { useHoldings } from '../../hooks/useData'
-import { SectionHeader, InfoTooltip } from '../ui'
+import { VerdictChip, SectionHeader, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../ui'
 import { fmtInr, gainColor } from '../../api/fmt'
+import { getHealthSignal } from '../../rules/tabCommon'
 import FundDetailDrawer from '../holdings/FundDetailDrawer'
 
 /**
@@ -24,12 +25,7 @@ import FundDetailDrawer from '../holdings/FundDetailDrawer'
  * - NEUTRAL (0% - 5% gain): Modest or recent allocations
  * - REVIEW (< 0% gain): Capital erosion requiring attention
  */
-function getHealthSignal(gainPct: number): { label: string; color: string; bg: string } {
-  if (gainPct >= 15) return { label: 'STRONG', color: '#4EDE93', bg: 'rgba(78, 222, 147, 0.1)' }
-  if (gainPct >= 5)  return { label: 'WATCH',  color: '#6366F1', bg: 'rgba(99, 102, 241, 0.1)' }
-  if (gainPct >= 0)  return { label: 'NEUTRAL', color: '#94A3B8', bg: 'rgba(255, 255, 255, 0.05)' }
-  return { label: 'REVIEW', color: '#FF516A', bg: 'rgba(255, 81, 106, 0.1)' }
-}
+
 
 /**
  * HoldingsTab: Institutional Asset Explorer

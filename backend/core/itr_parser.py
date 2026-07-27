@@ -58,12 +58,38 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     """
     Parse a filed ITR PDF and extract detailed summary figures.
     """
-    if not _PDFPLUMBER_AVAILABLE:
-        raise RuntimeError("pdfplumber is not installed. Run: pip install pdfplumber")
-
     import io
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        pages_text = [page.extract_text() or "" for page in pdf.pages]
+
+    import tempfile
+    import pdfplumber
+    import os
+
+    # Monkey-patch pdfplumber.utils.decimalize to prevent crashes on None or PDFColorSpace
+    import pdfplumber.utils
+    original_decimalize = pdfplumber.utils.decimalize
+
+    def safe_decimalize(v, q=None):
+        if v is None:
+            return None
+        if "PDFColorSpace" in str(type(v)):
+            return None
+        try:
+            return original_decimalize(v, q)
+        except Exception:
+            return None
+
+    pdfplumber.utils.decimalize = safe_decimalize
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        with pdfplumber.open(tmp_path) as pdf:
+            pages_text = [page.extract_text() or "" for page in pdf.pages]
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
     full_text = "\n".join(pages_text)
 
@@ -141,6 +167,10 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     else:
         total_taxable_income = max(0.0, gross_total_income - total_deductions)
 
+    # Derive total_deductions mathematically if regex failed
+    if total_deductions == 0.0 and gross_total_income > 0 and total_taxable_income > 0 and gross_total_income > total_taxable_income:
+        total_deductions = round(gross_total_income - total_taxable_income, 0)
+
     # Tax Liability
     tax_at_slab_rates = _find_value(
         full_text,
@@ -154,7 +184,7 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     
     tax_before_rebate = _find_value(
         full_text,
-        r"(?:Tax payable on total income|Tax before rebate|Tax on total income).*?([\d,]{3,}|\b0\b)"
+        r"(?:Tax payable on total income|Tax before rebate).*?([\d,]{3,}|\b0\b)"
     ) or 0.0
     
     # Fallback for tax_on_income if specific fields are not found (for older ITRs or ITR-1)
@@ -164,29 +194,36 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
 
     rebate_87a = _find_value(full_text, r"(?:Rebate u/s 87A|Less: Rebate u/s 87A).*?([\d,]{3,}|\b0\b)") or 0.0
     surcharge = _find_value(full_text, r"Surcharge.*?([\d,]{3,}|\b0\b)") or 0.0
-    cess = _find_value(full_text, r"(?:Health and Education Cess|Health & Education Cess|Add: Health & Education Cess).*?([\d,]{3,}|\b0\b)") or 0.0
+    cess = _find_value(full_text, r"(?:Health and Education Cess|Health & Education Cess).*?([\d,]{3,}|\b0\b)") or 0.0
 
     total_tax_liability = _find_value(
         full_text,
-        r"(?:Total Tax,\s*Surcharge.*?Cess|Gross Tax Liability|Net Tax Liability|Net Tax Payable|Total Tax and Cess|Total tax and fee payable).*?([\d,]{3,}|\b0\b)",
-        r"Total Tax Payable.*?([\d,]{3,}|\b0\b)",
-        r"Tax Payable.*?([\d,]{3,}|\b0\b)"
+        r"Aggregate liability\s*\(12\+13e\).*?([\d,]{3,}|\b0\b)",
+        r"(?:Gross Tax Liability|Net Tax Liability|Total Tax and Cess).*?([\d,]{3,}|\b0\b)"
     ) or 0.0
 
     # Taxes Paid
-    tds_tcs_paid = _find_value(full_text, r"(?:TDS|Tax Deducted at Source).*?([\d,]{3,}|\b0\b)") or 0.0
-    advance_tax = _find_value(full_text, r"Advance Tax.*?([\d,]{3,}|\b0\b)") or 0.0
+    tds_tcs_paid = _find_value(
+        full_text, 
+        r"TDS\s*\(total of column.*?([\d,]{3,}|\b0\b)",
+        r"(?:TDS|Tax Deducted at Source).*?([\d,]{3,}|\b0\b)"
+    ) or 0.0
+    advance_tax = _find_value(
+        full_text, 
+        r"Advance Tax\s*\(from column.*?([\d,]{3,}|\b0\b)",
+        r"Advance Tax.*?([\d,]{3,}|\b0\b)"
+    ) or 0.0
+    
+    # Check if section 234 or 115 was matched accidentally
+    if advance_tax == 234.0: advance_tax = 0.0
+    if total_tax_liability == 115.0: total_tax_liability = 0.0
+
     total_taxes_paid = _find_value(
         full_text,
-        r"Total Tax Paid.*?([\d,]{3,}|\b0\b)",
-        r"Total Taxes Paid.*?([\d,]{3,}|\b0\b)"
+        r"Total Taxes Paid\s*\(15a.*?([\d,]{3,}|\b0\b)",
+        r"Total Taxes Paid.*?([\d,]{3,}|\b0\b)",
+        r"Total Tax Paid.*?([\d,]{3,}|\b0\b)"
     ) or (tds_tcs_paid + advance_tax)
-
-    # Prevent false positives (like Section 234) for Advance Tax if Total equals TDS
-    if total_taxes_paid > 0 and abs(total_taxes_paid - tds_tcs_paid) < 10:
-        advance_tax = 0.0
-    elif total_taxes_paid > 0 and abs(total_taxes_paid - advance_tax) < 10:
-        tds_tcs_paid = 0.0
 
     # Refund / Tax Due
     refund = _find_value(full_text, r"Refund.*?([\d,]{3,}|\b0\b)") or 0.0

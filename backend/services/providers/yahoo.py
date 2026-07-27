@@ -2,6 +2,9 @@ import requests
 import yfinance as yf
 from typing import Dict, Optional
 from services.providers.base import BaseMetadataProvider
+import logging
+logger = logging.getLogger(__name__)
+
 
 class YahooMetadataProvider(BaseMetadataProvider):
     """
@@ -55,7 +58,7 @@ class YahooMetadataProvider(BaseMetadataProvider):
             if not hist.empty:
                 return float(hist['Close'].iloc[-1])
         except Exception as e:
-            print(f"[YAHOO NAV ERROR] Failed to fetch live NAV for {symbol}: {e}")
+            logger.error(f"[YAHOO NAV ERROR] Failed to fetch live NAV for {symbol}: {e}")
         return None
 
     def fetch_insights(self, isin: str, fund_name: str, category: str) -> Dict:

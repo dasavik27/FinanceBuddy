@@ -9,6 +9,9 @@ and full rolling return series for institutional performance benchmarking.
 """
 
 from fastapi import APIRouter, HTTPException
+import logging
+logger = logging.getLogger(__name__)
+
 from typing import Optional
 import pandas as pd
 import numpy as np
@@ -134,22 +137,22 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
     if scheme_code and scheme_code not in ("", "nan", "None"):
         er = fetch_fund_ter(scheme_code, plan_r)
         if er is None:
-            print(f"[TER] scheme_code={scheme_code} for '{fn[:30]}' returned None from AMFI TER file.")
+            logger.info(f"[TER] scheme_code={scheme_code} for '{fn[:30]}' returned None from AMFI TER file.")
     if er is None and isin and isin not in ("", "nan", "None"):
         resolved_code = resolve_scheme_code_from_isin(isin)
         if resolved_code:
             er = fetch_fund_ter(resolved_code, plan_r)
             if er is None:
-                print(f"[TER] ISIN-resolved scheme_code={resolved_code} for '{fn[:30]}' also returned None.")
+                logger.info(f"[TER] ISIN-resolved scheme_code={resolved_code} for '{fn[:30]}' also returned None.")
         else:
-            print(f"[TER] Could not resolve ISIN={isin} to a scheme code for '{fn[:30]}'.")
+            logger.info(f"[TER] Could not resolve ISIN={isin} to a scheme code for '{fn[:30]}'.")
 
     er_is_estimate = er is None
     if er is None:
         from services.fallbacks.deterministic import DeterministicFallback
         fb = DeterministicFallback().generate_fallbacks(isin, cat, fn, {})
         er = fb.get("expense_ratio", 0.50)
-        print(f"[TER] Deterministic fallback={er:.2f}% used for '{fn[:30]}' ({cat}).")
+        logger.info(f"[TER] Deterministic fallback={er:.2f}% used for '{fn[:30]}' ({cat}).")
     
     is_debt = any(kw in cat.lower() for kw in ["debt", "bond", "liquid", "gilt", "psu", "money", "banking", "credit"])
     pe_ratio = None if is_debt else PE_ESTIMATES.get(cap_type, PE_ESTIMATES.get(cat, PE_ESTIMATES["Default"]))
@@ -285,7 +288,7 @@ def get_performance(
         futures = [executor.submit(_compute_fund_performance, row, df_t) for _, row in df_h.iterrows()]
         for f in futures:
             try: results.append(f.result())
-            except Exception as e: print(f"[PERF ERROR] {e}")
+            except Exception as e: logger.error(f"[PERF ERROR] {e}")
 
     # Calculate benchmark metrics (relative to itself for base stats)
     bench_risk = compute_risk_metrics(bench_data, bench_data)
@@ -365,115 +368,19 @@ async def peer_comparison(session_id: str, fund_name: str):
     bench_trailing = compute_trailing_returns(bench_series)
 
     clean_cat = (cap_type if cap_type and "cap" in cap_type.lower() else category).replace("Fund", "").strip()
-    from services.market_data import search_mutual_funds
-    live_matches = search_mutual_funds(f"{clean_cat} Direct")
-    live_matches.extend(search_mutual_funds(f"{clean_cat} Growth"))
-    if " " in clean_cat:
-        short_cat = clean_cat.split()[0]
-        live_matches.extend(search_mutual_funds(f"{short_cat} Direct"))
-        
-    peers = []
-    seen = set()
-    for item in live_matches:
-        code = str(item["symbol"])
-        name = str(item["name"])
-        if code not in seen and any(x in name.lower() for x in ["direct", "dir"]) and any(x in name.lower() for x in ["growth", "gr"]):
-            ter = fetch_fund_ter(code) or 0.65
-            peers.append({"name": name, "code": code, "er": ter})
-            seen.add(code)
-            if len(peers) >= 30:
-                break
-
-    def _extract_amc(fund_name: str) -> str:
-        # FIX M-12: Use centralized implementation
-        from core.logic import CategorizationEngine
-        return CategorizationEngine.extract_amc_brand(fund_name)
-
-    peer_results = []
-    peer_1y_returns = []
-
-    for peer in peers:
-        code = str(peer["code"])
-        if fund_name.lower()[:20] in str(peer["name"]).lower():
-            continue
-
-        er = float(peer.get("er", 0.0))
-        peer_nav = fetch_nav_series_by_code(code, days=1825 + 90)
-        if peer_nav.empty:
-            continue
-
-        peer_trailing = compute_trailing_returns(peer_nav)
-        ret5y = peer_trailing.get("5Y")
-        if ret5y is None or ret5y == 0.0:
-            print(f"[PEER FILTER] Skipping {peer['name']} (insufficient 5Y history)")
-            continue
-
-        peer_consistency = compute_consistency_score(peer_nav, bench_series)
-        risk = compute_risk_metrics(peer_nav, bench_series, risk_free_rate=6.5)
-
-        peer_results.append({
-            "name":           peer["name"],
-            "code":           code,
-            "er":             er,
-            "er_label":       classify_er(er, category),
-            "returns":        peer_trailing,
-            "consistency":    round(peer_consistency, 1),
-            "category":       category,
-            "alpha":          round(risk.get("alpha", 0.0), 2),
-            "sharpe":         round(risk.get("sharpe", 0.0), 2),
-            "amc":            _extract_amc(peer["name"]),
-        })
-        if peer_trailing.get("1Y"):
-            peer_1y_returns.append(peer_trailing.get("1Y"))
-
+    from core.tab_common import get_diverse_category_peers
+    diverse_peers, _ = get_diverse_category_peers(category, base_fund_name=fund_name)
+    
+    peer_1y_returns = [p["ret1y"] for p in diverse_peers if "ret1y" in p and p["ret1y"] is not None]
     cat_rank, cat_total = None, None
     if fund_1y and peer_1y_returns:
         all_returns  = sorted(peer_1y_returns + [fund_1y], reverse=True)
         cat_rank     = all_returns.index(fund_1y) + 1
         cat_total    = len(all_returns)
-
-    peer_results.sort(key=lambda x: (x["returns"].get("1Y") or 0.0), reverse=True)
-    diverse_peers = []
-    seen_amcs = set()
-    for r in peer_results:
-        if r["amc"] not in seen_amcs:
-            diverse_peers.append(r)
-            seen_amcs.add(r["amc"])
-        if len(diverse_peers) >= 5:
-            break
-
-    if len(diverse_peers) < 5:
-        print(f"[PEER HARVEST] Category {category} only yielded {len(diverse_peers)} diverse 5Y peers. Harvesting backup veterans...")
-        backup_queries = ["Flexi Cap Direct", "Large Cap Direct", "Multi Cap Direct", "Value Fund Direct", "Index Fund Direct"]
-        for bq in backup_queries:
-            if len(diverse_peers) >= 5: break
-            b_matches = search_mutual_funds(bq)
-            for bm in b_matches:
-                code = str(bm["symbol"])
-                name = str(bm["name"])
-                amc = _extract_amc(name)
-                if code not in seen and amc not in seen_amcs and any(x in name.lower() for x in ["direct", "dir"]) and any(x in name.lower() for x in ["growth", "gr"]):
-                    seen.add(code)
-                    nav_s = fetch_nav_series_by_code(code, days=1825 + 90)
-                    if nav_s.empty: continue
-                    tr = compute_trailing_returns(nav_s)
-                    if tr.get("5Y"):
-                        risk_m = compute_risk_metrics(nav_s, bench_series, risk_free_rate=6.5)
-                        er_val = fetch_fund_ter(code) or 0.65
-                        diverse_peers.append({
-                            "name":           name,
-                            "code":           code,
-                            "er":             er_val,
-                            "er_label":       classify_er(er_val, category),
-                            "returns":        tr,
-                            "consistency":    round(compute_consistency_score(nav_s, bench_series), 1),
-                            "category":       category,
-                            "alpha":          round(risk_m.get("alpha", 0.0), 2),
-                            "sharpe":         round(risk_m.get("sharpe", 0.0), 2),
-                            "amc":            amc,
-                        })
-                        seen_amcs.add(amc)
-                        if len(diverse_peers) >= 5: break
+        
+    for p in diverse_peers:
+        p["er_label"] = classify_er(p["er"], category)
+        p["category"] = category
 
     return {
         "fund_name":       fund_name,
@@ -492,8 +399,7 @@ async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 
     s    = get_session(session_id)
     df_h = s.df_h
     
-    def series_to_list(ser: pd.Series) -> list:
-        return [{"date": str(idx.date()), "value": float(val)} for idx, val in ser.items() if not np.isnan(val)]
+    from core.tab_common import series_to_list
 
     fund_row = pd.DataFrame()
     if "ISIN" in df_h.columns:

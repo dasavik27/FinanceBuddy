@@ -2,7 +2,7 @@ import { Box, Typography, Paper, Alert } from '@mui/material'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import { SectionHeader } from '../ui'
 
-export default function StocksTab() {
+export default function IndianStocksTab() {
   return (
     <Box sx={{ pb: 6 }}>
       <SectionHeader 

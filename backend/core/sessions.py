@@ -19,6 +19,9 @@ from typing import Dict, Any
 
 from core.models import Portfolio
 from core import storage
+import logging
+logger = logging.getLogger(__name__)
+
 
 # Ephemeral session store (Zero disk logging) with auto-expiration tracking
 _SESSIONS: Dict[str, Dict[str, Any]] = {}
@@ -97,7 +100,7 @@ def _session_purge_worker():
             # We can leave the tax_sessions.json or we can purge them if they are too old.
             
         except Exception as e:
-            print(f"[GC ERROR] {e}")
+            logger.error(f"[GC ERROR] {e}")
         time.sleep(600)  # GC sweep execution interval: 10 minutes
 
 # Initialize background garbage collection daemon

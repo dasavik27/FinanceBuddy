@@ -25,14 +25,13 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { useHoldings, usePerformance } from '../../hooks/useData'
-import { useSessionId } from '../../store/appStore'
+import { useSessionId, useAppStore } from '../../store/appStore'
 import { apiClient } from '../../api/client'
-import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader } from '../ui'
+import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../ui'
 import { ChartTooltip } from '../charts/ChartTooltip'
 import { gainColor } from '../../api/fmt'
 
-// ── Constants & Config ───────────────────────────────────────────────────────
-const COLORS = ['#6366F1', '#4EDE93', '#F472B6', '#FBBF24', '#FB7185']
+import { COLORS, calculateDrawdown } from '../../rules/tabCommon'
 
 // ── Motion Variants ──────────────────────────────────────────────────────────
 const containerVar = {
@@ -43,27 +42,6 @@ const containerVar = {
 const itemVar = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { type: 'spring', damping: 25, stiffness: 300 } }
-}
-
-function InfoTooltip({ text }: { text: string }) {
-  return (
-    <MuiTooltip title={text} arrow placement="top" sx={{ '& .MuiTooltip-tooltip': { bgcolor: '#0F172A', color: '#fff', fontSize: 12, p: 1.5, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' } }}>
-      <span style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
-        <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, opacity: 0.6, cursor: 'pointer', '&:hover': { opacity: 1, color: 'primary.main' } }} />
-      </span>
-    </MuiTooltip>
-  )
-}
-
-// ── Logic Helpers ────────────────────────────────────────────────────────────
-
-function calculateDrawdown(values: number[]): number[] {
-  if (!values || !values.length) return []
-  let peak = -Infinity
-  return values.map(v => {
-    if (v > peak) peak = v
-    return peak === 0 ? 0 : ((v / peak) - 1) * 100
-  })
 }
 
 // ── Main Component ───────────────────────────────────────────────────────────
@@ -462,12 +440,12 @@ export default function CompareTab() {
                           <TableHead>
                             <TableRow>
                               <TableCell sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ASSET NAME</TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>1Y RET <InfoTooltip text="Trailing 1-year CAGR from NAV data." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>3Y RET <InfoTooltip text="Trailing 3-year CAGR (annualized)." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ALPHA <InfoTooltip text="Jensen's Alpha: Excess return over the benchmark for the risk taken." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SHARPE <InfoTooltip text="Excess return per unit of total volatility. Higher is better." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SORTINO <InfoTooltip text="Excess return per unit of downside volatility. Better risk measure than Sharpe." /></TableCell>
-                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>VERDICT <InfoTooltip text="Multi-factor institutional quality score." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>1Y RET <InfoTooltip title="Trailing 1-year CAGR from NAV data." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>3Y RET <InfoTooltip title="Trailing 3-year CAGR (annualized)." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>ALPHA <InfoTooltip title="Jensen's Alpha: Excess return over the benchmark for the risk taken." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SHARPE <InfoTooltip title="Excess return per unit of total volatility. Higher is better." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>SORTINO <InfoTooltip title="Excess return per unit of downside volatility. Better risk measure than Sharpe." /></TableCell>
+                              <TableCell align="center" sx={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 800, color: 'text.secondary', fontSize: 10 }}>VERDICT <InfoTooltip title="Multi-factor institutional quality score." /></TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -544,7 +522,7 @@ export default function CompareTab() {
                               <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                   <Typography variant="caption" sx={{ color: 'text.secondary' }}>{stat.label}</Typography>
-                                  <InfoTooltip text={stat.info} />
+                                  <InfoTooltip title={stat.info} />
                                 </Box>
                                 <Typography className="num" sx={{ fontSize: 13, fontWeight: 700, color: (stat as any).color ?? '#fff' }}>{stat.val}</Typography>
                               </Box>

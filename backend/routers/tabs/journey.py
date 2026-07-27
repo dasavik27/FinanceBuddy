@@ -4,6 +4,9 @@ import pandas as pd
 from typing import Dict, Any
 from core.finance import compute_period_comparison
 from services.market_indices import fetch_benchmark_series
+import logging
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
 
@@ -122,7 +125,7 @@ def get_journey_data(session_id: str) -> Dict[str, Any]:
             raise Exception("Market curve is empty")
             
     except Exception as e:
-        print(f"Error computing market value curve: {e}")
+        logger.error(f"Error computing market value curve: {e}")
         # Fallback to just capital invested
         curve_by_month = {}
         for pt in capital_curve_raw:

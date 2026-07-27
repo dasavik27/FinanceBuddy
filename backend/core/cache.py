@@ -3,6 +3,9 @@ import os
 import time
 from typing import Any, Optional
 from core.config import CACHE_DIR, CACHE_TTL_MINUTES
+import logging
+logger = logging.getLogger(__name__)
+
 
 class MarketCache:
     """
@@ -51,7 +54,7 @@ class MarketCache:
             with open(path, 'w') as f:
                 json.dump(data, f)
         except Exception as e:
-            print(f"[CACHE ERROR] Failed to persist {key}: {e}")
+            logger.error(f"[CACHE ERROR] Failed to persist {key}: {e}")
 
     @classmethod
     def invalidate(cls, key_pattern: str = ""):

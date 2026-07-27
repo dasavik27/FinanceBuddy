@@ -77,7 +77,7 @@ async def parse_ais(
             reconciliation_flags = reconcile_trades(ais_data, broker_trades)
         except Exception as e:
             # We don't fail the whole parsing if broker file fails
-            print(f"Failed to parse broker file: {e}")
+            logger.info(f"Failed to parse broker file: {e}")
             pass
 
     session_id = create_tax_session(ais_data, pan_id=x_user_pan, flags=reconciliation_flags)

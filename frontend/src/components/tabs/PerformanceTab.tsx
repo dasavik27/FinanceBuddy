@@ -27,49 +27,7 @@ import {
 } from '../ui'
 import { fmtInr, fmtPct } from '../../api/fmt'
 
-// ── Constants & Config ───────────────────────────────────────────────────────
-const CATEGORY_INSIGHTS: Record<string, { strategy: string, focus: string, timeline: string }> = {
-  'Large Cap': {
-    strategy: 'Allocates heavily to top 100 blue-chip entities. Acts as a core foundation that prioritizes capital preservation.',
-    focus: 'Capital Stability & Dividend Yields',
-    timeline: '3 - 5 Years'
-  },
-  'Mid Cap': {
-    strategy: 'Targets fast-growing mid-tier companies ranked 101-250. Offers a balance of scalability and market agility.',
-    focus: 'Aggressive Capital Appreciation',
-    timeline: '5 - 7 Years'
-  },
-  'Small Cap': {
-    strategy: 'Mandated to target high-alpha micro-companies. Leads aggressive bullish market trends but exhibits deeper volatile pullbacks.',
-    focus: 'High Alpha Compounding',
-    timeline: '7+ Years'
-  },
-  'Flexi/Multi Cap': {
-    strategy: 'Unconstrained deployment allowing managers to shift between cap sizes based on economic tailwinds.',
-    focus: 'All-Weather Diversification',
-    timeline: '5 Years'
-  },
-  'ELSS': {
-    strategy: 'Tax-saving equity funds with a 3-year statutory lock-in period. Promotes disciplined compounding.',
-    focus: 'Section 80C Tax Breaks & Growth',
-    timeline: '3+ Years'
-  },
-  'Index': {
-    strategy: 'Passively tracks primary benchmarks like the Nifty 50. Minimizes active manager risk and maximizes cost efficiency.',
-    focus: 'Low-Cost Market Beta',
-    timeline: '3 - 5 Years'
-  },
-  'Debt': {
-    strategy: 'Invests in sovereign securities, corporate debentures, and money market instruments to insulate against equity downturns.',
-    focus: 'Yield Accrual & Capital Preservation',
-    timeline: '1 - 3 Years'
-  },
-  'Hybrid': {
-    strategy: 'Dynamic asset allocation models balancing equity growth momentum with fixed income stability.',
-    focus: 'Risk-Adjusted Compounding',
-    timeline: '3 - 5 Years'
-  }
-}
+import { CATEGORY_INSIGHTS } from '../../rules/tabCommon'
 
 // ── Peer Comparison Component (Zerodha Coin style) ──────────────────────────
 function FundPeers({ fund }: { fund: any }) {

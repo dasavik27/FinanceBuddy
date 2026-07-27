@@ -14,6 +14,9 @@ import sqlite3
 import pandas as pd
 import hashlib
 from typing import Optional, Dict, Any, Tuple
+import logging
+logger = logging.getLogger(__name__)
+
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
@@ -162,7 +165,7 @@ def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, 
                 
         return df_h, df_t, df_s, is_partial
     except Exception as e:
-        print(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
         return None
 
 def get_history(pan_id: str = None, upload_type: str = None) -> list:
@@ -204,7 +207,7 @@ def delete_session(session_id: str) -> bool:
             conn.commit()
         return True
     except Exception as e:
-        print(f"[STORAGE ERROR] Failed to delete session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to delete session {session_id}: {str(e)}")
         return False
 
 def delete_all_for_pan(pan_id: str) -> int:

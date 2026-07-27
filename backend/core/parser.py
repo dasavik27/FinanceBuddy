@@ -26,13 +26,13 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
         tmp.write(file_bytes)
         temp_path = tmp.name
 
-    print(f"[DEBUG] Starting CAS parse. Bytes: {len(file_bytes)}")
+    logger.info(f"[DEBUG] Starting CAS parse. Bytes: {len(file_bytes)}")
     try:
         try:
             data = casparser.read_cas_pdf(temp_path, password)
-            print("[DEBUG] CASParser success.")
+            logger.info("[DEBUG] CASParser success.")
         except Exception as e:
-            print(f"[DEBUG] CASParser ERROR: {e}")
+            logger.info(f"[DEBUG] CASParser ERROR: {e}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), f"CASParser Error: {str(e)}", False
         finally:
             if os.path.exists(temp_path):
@@ -40,7 +40,7 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                 except: pass
 
         folios = _get(data, 'folios', [])
-        print(f"[DEBUG] Found {len(folios)} folios.")
+        logger.info(f"[DEBUG] Found {len(folios)} folios.")
         if not folios:
             # Check if it's a 'data' object but empty
             if hasattr(data, 'folios') and not data.folios:
@@ -85,27 +85,27 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                 if isin in live_nav_map:
                     nav = live_nav_map[isin]
                     if abs(nav - cas_nav) < 0.001:
-                        print(f"[NAV STALENESS DIAGNOSTIC] ⚠️ AMFI Live NAV == CAS NAV ({cas_nav}) for ISIN {isin} ({name}). AMFI feed is stale or ISIN is for Dividend instead of Growth.")
+                        logger.info(f"[NAV STALENESS DIAGNOSTIC] ⚠️ AMFI Live NAV == CAS NAV ({cas_nav}) for ISIN {isin} ({name}). AMFI feed is stale or ISIN is for Dividend instead of Growth.")
                         is_stale = True
                 else:
-                    print(f"[NAV FETCH DIAGNOSTIC] ❌ ISIN {isin} not found in AMFI live feed! Falling back to CAS NAV ({cas_nav}).")
+                    logger.info(f"[NAV FETCH DIAGNOSTIC] ❌ ISIN {isin} not found in AMFI live feed! Falling back to CAS NAV ({cas_nav}).")
                     is_stale = True
                     
                 # --- YAHOO FINANCE FALLBACK ADAPTER ---
                 if is_stale:
-                    print(f"[YAHOO ADAPTER] AMFI feed failed or is stale for {isin}. Attempting to fetch live NAV from Yahoo Finance...")
+                    logger.info(f"[YAHOO ADAPTER] AMFI feed failed or is stale for {isin}. Attempting to fetch live NAV from Yahoo Finance...")
                     try:
                         from services.providers.yahoo import YahooMetadataProvider
                         yahoo_provider = YahooMetadataProvider()
                         yahoo_nav = yahoo_provider.fetch_live_nav(isin, name)
                         if yahoo_nav and yahoo_nav > 0:
-                            print(f"[YAHOO ADAPTER] ✅ Successfully fetched live NAV {yahoo_nav} for {isin} from Yahoo!")
+                            logger.info(f"[YAHOO ADAPTER] ✅ Successfully fetched live NAV {yahoo_nav} for {isin} from Yahoo!")
                             nav = yahoo_nav
                             is_stale = False
                         else:
-                            print(f"[YAHOO ADAPTER] ❌ Yahoo Finance failed to return NAV for {isin}. Falling back to CAS NAV.")
+                            logger.info(f"[YAHOO ADAPTER] ❌ Yahoo Finance failed to return NAV for {isin}. Falling back to CAS NAV.")
                     except Exception as e:
-                        print(f"[YAHOO ADAPTER] ❌ Error: {e}")
+                        logger.info(f"[YAHOO ADAPTER] ❌ Error: {e}")
                 
                 # --- EXACT-FIRST METADATA DETECTION ---
                 raw_cat = _get(scheme, 'category', "")
@@ -189,6 +189,9 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e), False
 
 from core.logic import CategorizationEngine
+import logging
+logger = logging.getLogger(__name__)
+
 
 def _estimate_invested(scheme) -> float:
     """
