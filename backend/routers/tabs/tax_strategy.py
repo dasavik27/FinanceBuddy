@@ -29,6 +29,8 @@ router = APIRouter(tags=["Tax Expert"])
 
 # ── AIS Upload & Session Creation ─────────────────────────────────────────
 
+from core.ais_schemas import AISStructureChangedError, AISUnknownCodeError
+
 @router.post("/parse-ais")
 async def parse_ais(
     file: UploadFile = File(...),
@@ -39,10 +41,20 @@ async def parse_ais(
     raw = await file.read()
     
     try:
-        ais_data = parse_ais_pdf(raw)
+        import os; os.environ["AIS_DEBUG"] = "1"; ais_data = parse_ais_pdf(raw)
+    except AISUnknownCodeError as e:
+        logger.error(f"AIS Unknown Code: {e.code}")
+        raise HTTPException(status_code=422, detail={"type": "AIS_UNKNOWN_CODE", "message": str(e), "code": e.code})
+    except AISStructureChangedError as e:
+        import json
+        with open("/tmp/ais_diff.json", "w") as f:
+            json.dump(e.diff, f)
+        logger.error(f"AIS Structure Changed: {e.diff}")
+        raise HTTPException(status_code=422, detail={"type": "AIS_STRUCTURE_CHANGED", "message": str(e), "diff": e.diff})
     except Exception as e:
+        logger.error(f"Error in parse_ais_pdf: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Failed to parse AIS PDF: {str(e)}")
-    
+
     # Validate that we got meaningful data
     salary = ais_data.get("salary", {})
     has_income = (
@@ -54,7 +66,8 @@ async def parse_ais(
         bool(ais_data.get("capital_gains_mf_other"))
     )
     if not has_income:
-        raise HTTPException(status_code=422, detail="Could not extract financial data from this PDF. Please upload a valid AIS document.")
+        logger.warning(f"No income extracted from AIS PDF. Personal details: {ais_data.get('personal', {})}")
+        raise HTTPException(status_code=422, detail="Could not extract financial data from this PDF. Please verify that the PDF is a valid AIS document and not password-protected.")
     
     reconciliation_flags = {}
     if broker_file:
@@ -114,16 +127,19 @@ async def reconcile_broker(
     
     from collections import defaultdict
     flag_key_sales = defaultdict(float)
+    flag_key_declared_cost = defaultdict(float)
     if zero_cost_flags or mismatch_flags:
         for cat in cat_keys:
             for t in ais_data.get(cat, []):
                 sec = str(t.get("security", t.get("amc", "") + " " + t.get("fund", ""))).strip()
                 t_type = t.get("type", "UNKNOWN")
                 flag_key = f"{sec}___{t_type}"
-                if float(t.get("cost", 0)) == 0 and float(t.get("consideration", 0)) > 0:
+                t_cost = float(t.get("cost", 0))
+                if t_cost == 0 and float(t.get("consideration", 0)) > 0:
                     flag_key_sales[flag_key] += float(t.get("consideration", 0))
-                elif float(t.get("cost", 0)) > 0:
+                elif t_cost > 0:
                     flag_key_sales[flag_key + "_mismatch"] += float(t.get("consideration", 0))
+                    flag_key_declared_cost[flag_key] += t_cost
                     
         for cat in cat_keys:
             trades = ais_data.get(cat, [])
@@ -145,7 +161,12 @@ async def reconcile_broker(
                 if cost == 0 and sale > 0 and flag_key in zero_cost_flags:
                     total_sale = flag_key_sales.get(flag_key, sale)
                     proportion = sale / total_sale if total_sale > 0 else 1
-                    t["cost"] = round(float(zero_cost_flags[flag_key]) * proportion, 2)
+                    
+                    broker_cost = float(zero_cost_flags[flag_key])
+                    declared_cost = flag_key_declared_cost.get(flag_key, 0.0)
+                    remaining_cost = max(0.0, broker_cost - declared_cost)
+                    
+                    t["cost"] = round(remaining_cost * proportion, 2)
                     t["gain"] = sale - t["cost"]
                     t["needs_review"] = False
                     t["patched"] = True
@@ -218,37 +239,6 @@ async def reconcile_broker(
     session["reconciliation_flags"] = reconciliation_flags
     
     return {"status": "success", "corrected": corrected_count, "duplicates_removed": duplicates_removed_count}
-
-
-@router.post("/{session_id}/tax/form16")
-async def parse_form16(
-    session_id: str,
-    form16_file: UploadFile = File(...)
-):
-    """Parse a Form 16 PDF and auto-fill deductions."""
-    session = get_tax_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Tax session not found")
-        
-    raw = await form16_file.read()
-    try:
-        from core.form16_parser import parse_form16_pdf
-        extracted_deductions = parse_form16_pdf(raw)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse Form 16: {str(e)}")
-        
-    # Merge into existing overrides
-    overrides = session.get("overrides", {})
-    existing_deductions = overrides.get("deductions", {})
-    
-    # Overwrite existing with the extracted ones (as Form 16 is the source of truth)
-    for k, v in extracted_deductions.items():
-        existing_deductions[k] = v
-        
-    overrides["deductions"] = existing_deductions
-    update_overrides(session_id, overrides)
-    
-    return {"status": "success", "flags": reconciliation_flags}
 
 
 # ── ITR Upload & Comparison ───────────────────────────────────────────────

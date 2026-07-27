@@ -34,5 +34,17 @@ def get_market_config():
 @router.post("/config")
 def update_market_config(ttl: int):
     from core import config
+    from core.storage import DB_PATH
+    import sqlite3
+    
     config.CACHE_TTL_MINUTES = ttl
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('cache_ttl', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(ttl),)
+        )
+        conn.commit()
+        
     return {"status": "ok", "cache_ttl": config.CACHE_TTL_MINUTES}

@@ -27,22 +27,166 @@ const TransactionTable = ({ title, data, count, color, onSaveCost, category }: a
   let grandTotalCost = 0;
   let grandTotalGain = 0;
 
-  // Group transactions by share/fund name
-  const grouped = data.reduce((acc: any, tx: any) => {
-    const name = tx.security || tx.fund || 'Unknown'
-    const gain = tx.gain || (tx.consideration - tx.cost)
-    
-    grandTotalSale += (tx.consideration || 0)
-    grandTotalCost += (tx.cost || 0)
-    grandTotalGain += gain
+  const stcgData = data.filter((tx: any) => tx.type === 'STCG');
+  const ltcgData = data.filter((tx: any) => tx.type === 'LTCG');
+  
+  data.forEach((tx: any) => {
+     const gain = tx.gain || (tx.consideration - tx.cost)
+     grandTotalSale += (tx.consideration || 0)
+     grandTotalCost += (tx.cost || 0)
+     grandTotalGain += gain
+  });
 
-    if (!acc[name]) acc[name] = { transactions: [], totalSale: 0, totalCost: 0, totalGain: 0 }
-    acc[name].transactions.push(tx)
-    acc[name].totalSale += (tx.consideration || 0)
-    acc[name].totalCost += (tx.cost || 0)
-    acc[name].totalGain += gain
-    return acc
-  }, {})
+  const renderSubCategory = (termData: any[], termTitle: string, termColor: string) => {
+    if (termData.length === 0) return null;
+    let termSale = 0, termCost = 0, termGain = 0;
+    const grouped = termData.reduce((acc: any, tx: any) => {
+      const name = tx.security || tx.fund || 'Unknown'
+      const gain = tx.gain || (tx.consideration - tx.cost)
+      
+      termSale += (tx.consideration || 0)
+      termCost += (tx.cost || 0)
+      termGain += gain
+
+      if (!acc[name]) acc[name] = { transactions: [], totalSale: 0, totalCost: 0, totalGain: 0 }
+      acc[name].transactions.push(tx)
+      acc[name].totalSale += (tx.consideration || 0)
+      acc[name].totalCost += (tx.cost || 0)
+      acc[name].totalGain += gain
+      return acc
+    }, {})
+
+    return (
+      <Box sx={{ mb: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, borderBottom: `2px solid ${termColor}40`, pb: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800, color: termColor }}>{termTitle}</Typography>
+          <Box sx={{ display: 'flex', gap: 3, textAlign: 'right' }}>
+            <Box>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Sale</Typography>
+              <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(termSale)}</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Cost</Typography>
+              <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(termCost)}</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Gain</Typography>
+              <Typography variant="caption" className="num" sx={{ color: termGain >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
+                {termGain >= 0 ? '+' : ''}{fmtInr(termGain)}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+        <Stack spacing={2.5}>
+          {Object.entries(grouped).map(([name, group]: [string, any], groupIdx) => (
+            <Box key={groupIdx} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              {/* Group Summary Header */}
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'rgba(255,255,255,0.03)', px: 2, py: 1.5, borderRadius: '8px' }}>
+                <Typography variant="body2" sx={{ fontWeight: 800, color: '#fff', fontSize: '0.85rem' }}>{name}</Typography>
+                <Box sx={{ display: 'flex', gap: 3, textAlign: 'right' }}>
+                  <Box>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Sale</Typography>
+                    <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(group.totalSale)}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Cost</Typography>
+                    <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(group.totalCost)}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Gain</Typography>
+                    <Typography variant="caption" className="num" sx={{ color: group.totalGain >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
+                      {group.totalGain >= 0 ? '+' : ''}{fmtInr(group.totalGain)}
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+
+              {/* Individual Transactions */}
+              <Stack spacing={1}>
+                {group.transactions.map((tx: any, i: number) => {
+                  const gain = tx.gain || (tx.consideration - tx.cost)
+                  const isGain = gain >= 0
+                  return (
+                    <Box key={i} sx={{
+                      p: 1.5, px: 2, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.015)',
+                      borderLeft: `2px solid ${tx.type === 'LTCG' ? '#4EDE93' : '#38BDF8'}`,
+                      transition: 'all 0.2s', '&:hover': { bgcolor: 'rgba(255,255,255,0.04)', transform: 'translateX(3px)' }
+                    }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                          {tx.cost === 0 && <WarningAmberIcon sx={{ color: '#EAB308', fontSize: 16 }} />}
+                          <Chip label={tx.type} size="small" sx={{
+                            fontWeight: 900, fontSize: '0.55rem', height: 18,
+                            bgcolor: alpha(tx.type === 'LTCG' ? '#4EDE93' : '#38BDF8', 0.1),
+                            color: tx.type === 'LTCG' ? '#4EDE93' : '#38BDF8',
+                          }} />
+                        </Box>
+                        {tx.patched && (
+                          <Chip icon={<CheckCircleIcon sx={{ fontSize: '12px !important' }} />} label="Auto-Fixed" size="small" sx={{
+                            fontWeight: 800, fontSize: '0.55rem', height: 18,
+                            bgcolor: alpha('#3B82F6', 0.1), color: '#3B82F6',
+                            '& .MuiChip-icon': { color: '#3B82F6', ml: '4px' }
+                          }} />
+                        )}
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Date</Typography>
+                          <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{tx.date}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Qty</Typography>
+                          <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{tx.quantity || '-'}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Sale</Typography>
+                          <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{fmtInr(tx.consideration)}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Cost</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <InlineEdit 
+                              value={tx.cost}
+                              onSave={(val: any) => onSaveCost(tx, category, Number(val))}
+                              type="number"
+                              placeholder="Cost"
+                              formatDisplay={(val: any) => val > 0 ? fmtInr(val) : (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <ErrorOutlineIcon sx={{ fontSize: 14 }} /> Add
+                                </Box>
+                              )}
+                              textProps={{ variant: "caption", className: "num", sx: { fontSize: '0.75rem', color: tx.cost === 0 ? '#EAB308' : '#fff', fontWeight: 700 } }}
+                              inputProps={{ textAlign: 'left', fontWeight: 700, fontSize: '0.75rem' }}
+                              sx={{ 
+                                width: tx.cost === 0 ? 80 : 'auto', 
+                                justifyContent: tx.cost === 0 ? 'center' : 'flex-start',
+                                border: tx.cost === 0 ? '1px dashed rgba(234, 179, 8, 0.4)' : 'none',
+                                bgcolor: tx.cost === 0 ? 'rgba(234, 179, 8, 0.05)' : 'transparent',
+                                px: tx.cost === 0 ? 1 : 0,
+                                py: tx.cost === 0 ? 0.2 : 0,
+                                borderRadius: 1,
+                                '&:hover': tx.cost === 0 ? { borderColor: '#EAB308', bgcolor: 'rgba(234, 179, 8, 0.1)' } : undefined
+                              }}
+                            />
+                          </Box>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Gain</Typography>
+                          <Typography variant="caption" className="num" sx={{ color: isGain ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
+                            {isGain ? '+' : ''}{fmtInr(gain)}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                  )
+                })}
+              </Stack>
+            </Box>
+          ))}
+        </Stack>
+      </Box>
+    )
+  }
 
   return (
   <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
@@ -53,128 +197,26 @@ const TransactionTable = ({ title, data, count, color, onSaveCost, category }: a
       </Box>
       <Box sx={{ display: 'flex', gap: 3, textAlign: 'right', bgcolor: 'rgba(255,255,255,0.02)', px: 2, py: 1, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
         <Box>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Sale</Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Grand Total Sale</Typography>
           <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(grandTotalSale)}</Typography>
         </Box>
         <Box>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Cost</Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Grand Total Cost</Typography>
           <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(grandTotalCost)}</Typography>
         </Box>
         <Box>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Gain</Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Grand Total Gain</Typography>
           <Typography variant="caption" className="num" sx={{ color: grandTotalGain >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
             {grandTotalGain >= 0 ? '+' : ''}{fmtInr(grandTotalGain)}
           </Typography>
         </Box>
       </Box>
     </Box>
-    <Box sx={{ maxHeight: 350, overflowY: 'auto', pr: 1, '&::-webkit-scrollbar': { width: 3 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 2 } }}>
+    <Box sx={{ maxHeight: 600, overflowY: 'auto', pr: 1, '&::-webkit-scrollbar': { width: 3 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 2 } }}>
       <Stack spacing={2.5}>
-        {Object.entries(grouped).map(([name, group]: [string, any], groupIdx) => (
-          <Box key={groupIdx} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            {/* Group Summary Header */}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'rgba(255,255,255,0.03)', px: 2, py: 1.5, borderRadius: '8px' }}>
-              <Typography variant="body2" sx={{ fontWeight: 800, color: '#fff', fontSize: '0.85rem' }}>{name}</Typography>
-              <Box sx={{ display: 'flex', gap: 3, textAlign: 'right' }}>
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Sale</Typography>
-                  <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(group.totalSale)}</Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Cost</Typography>
-                  <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 800 }}>{fmtInr(group.totalCost)}</Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.6rem' }}>Total Gain</Typography>
-                  <Typography variant="caption" className="num" sx={{ color: group.totalGain >= 0 ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
-                    {group.totalGain >= 0 ? '+' : ''}{fmtInr(group.totalGain)}
-                  </Typography>
-                </Box>
-              </Box>
-            </Box>
-
-            {/* Individual Transactions for this group */}
-            <Stack spacing={1}>
-              {group.transactions.map((tx: any, i: number) => {
-                const gain = tx.gain || (tx.consideration - tx.cost)
-                const isGain = gain >= 0
-                return (
-                  <Box key={i} sx={{
-                    p: 1.5, px: 2, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.015)',
-                    borderLeft: `2px solid ${tx.type === 'LTCG' ? '#4EDE93' : '#FF516A'}`,
-                    transition: 'all 0.2s', '&:hover': { bgcolor: 'rgba(255,255,255,0.04)', transform: 'translateX(3px)' }
-                  }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
-                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                        {tx.cost === 0 && <WarningAmberIcon sx={{ color: '#EAB308', fontSize: 16 }} />}
-                        <Chip label={tx.type} size="small" sx={{
-                          fontWeight: 900, fontSize: '0.55rem', height: 18,
-                          bgcolor: alpha(tx.type === 'LTCG' ? '#4EDE93' : '#FF516A', 0.1),
-                          color: tx.type === 'LTCG' ? '#4EDE93' : '#FF516A',
-                        }} />
-                      </Box>
-                      {tx.patched && (
-                        <Chip icon={<CheckCircleIcon sx={{ fontSize: '12px !important' }} />} label="Auto-Fixed" size="small" sx={{
-                          fontWeight: 800, fontSize: '0.55rem', height: 18,
-                          bgcolor: alpha('#3B82F6', 0.1), color: '#3B82F6',
-                          '& .MuiChip-icon': { color: '#3B82F6', ml: '4px' }
-                        }} />
-                      )}
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                      <Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Date</Typography>
-                        <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{tx.date}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Qty</Typography>
-                        <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{tx.quantity || '-'}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Sale</Typography>
-                        <Typography variant="caption" className="num" sx={{ color: '#fff', fontWeight: 700 }}>{fmtInr(tx.consideration)}</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Cost</Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <InlineEdit 
-                            value={tx.cost}
-                            onSave={(val: any) => onSaveCost(tx, category, Number(val))}
-                            type="number"
-                            placeholder="Cost"
-                            formatDisplay={(val: any) => val > 0 ? fmtInr(val) : (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                <ErrorOutlineIcon sx={{ fontSize: 14 }} /> Add
-                              </Box>
-                            )}
-                            textProps={{ variant: "caption", className: "num", sx: { fontSize: '0.75rem', color: tx.cost === 0 ? '#EAB308' : '#fff', fontWeight: 700 } }}
-                            inputProps={{ textAlign: 'left', fontWeight: 700, fontSize: '0.75rem' }}
-                            sx={{ 
-                              width: tx.cost === 0 ? 80 : 'auto', 
-                              justifyContent: tx.cost === 0 ? 'center' : 'flex-start',
-                              border: tx.cost === 0 ? '1px dashed rgba(234, 179, 8, 0.4)' : 'none',
-                              bgcolor: tx.cost === 0 ? 'rgba(234, 179, 8, 0.05)' : 'transparent',
-                              px: tx.cost === 0 ? 1 : 0,
-                              py: tx.cost === 0 ? 0.2 : 0,
-                              borderRadius: 1,
-                              '&:hover': tx.cost === 0 ? { borderColor: '#EAB308', bgcolor: 'rgba(234, 179, 8, 0.1)' } : undefined
-                            }}
-                          />
-                        </Box>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block', fontSize: '0.65rem' }}>Gain</Typography>
-                        <Typography variant="caption" className="num" sx={{ color: isGain ? '#4EDE93' : '#FF516A', fontWeight: 800 }}>
-                          {isGain ? '+' : ''}{fmtInr(gain)}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                )
-              })}
-            </Stack>
-          </Box>
-        ))}
+        {renderSubCategory(ltcgData, 'Long Term Capital Gains (LTCG)', '#4EDE93')}
+        {renderSubCategory(stcgData, 'Short Term Capital Gains (STCG)', '#38BDF8')}
+        
         {data.length === 0 && (
           <Typography variant="body2" sx={{ color: 'text.secondary', textAlign: 'center', py: 4, fontWeight: 600 }}>
             No transactions found

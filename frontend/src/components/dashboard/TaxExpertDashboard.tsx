@@ -62,7 +62,7 @@ export default function TaxExpertDashboard() {
     <Box>
       <Routes>
         <Route index element={<ErrorBoundary fallbackMessage="Tax Expert encountered an error."><TaxStrategyTab /></ErrorBoundary>} />
-        <Route path="*" element={<Navigate to="" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard/tax-expert" replace />} />
       </Routes>
     </Box>
   )
@@ -96,7 +96,17 @@ function AISUpload({ onSessionCreated, sessionExpired = false }: { onSessionCrea
       const data = await apiClient.parseAIS(file)
       onSessionCreated(data.session_id, data)
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? 'Failed to parse AIS. Ensure this is a valid Annual Information Statement PDF.')
+      const type = e?.response?.data?.detail?.type
+      if (type === 'AIS_UNKNOWN_CODE') {
+        const code = e.response.data.detail.code
+        setError(`⚠️ New AIS Information Code Detected: ${code}. Please contact support to map this new data source.`)
+      } else if (type === 'AIS_STRUCTURE_CHANGED') {
+        const msg = e.response.data.detail.message
+        const diff = JSON.stringify(e.response.data.detail.diff, null, 2)
+        setError(`⚠️ ${msg}\n\nDiff: ${diff}\n\nThis means the Income Tax Department updated the PDF format. Please contact support.`)
+      } else {
+        setError(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'Failed to parse AIS. Ensure this is a valid Annual Information Statement PDF.')
+      }
     } finally {
       setLoading(false)
     }

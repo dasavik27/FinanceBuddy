@@ -1,7 +1,7 @@
 /**
  * rules/taxRules.ts
  * Centralized Indian Mutual Fund Tax Rulebook (Updated for Budget 2024 & beyond)
- * Single source of truth for tax classification, slabs, and exemptions across AlphaTrack Pro.
+ * Single source of truth for tax classification, slabs, and exemptions across Finance Buddy.
  */
 
 export interface TaxProfile {

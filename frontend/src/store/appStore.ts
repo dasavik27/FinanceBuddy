@@ -1,5 +1,30 @@
+import api from '../api/client'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import CryptoJS from 'crypto-js'
+
+const SECRET_KEY = 'FINANCE_BUDDY_SECURE_STORAGE_KEY_2026'
+
+const encryptedStorage = {
+  getItem: (name: string): string | null => {
+    const encrypted = localStorage.getItem(name)
+    if (!encrypted) return null
+    try {
+      const decrypted = CryptoJS.AES.decrypt(encrypted, SECRET_KEY).toString(CryptoJS.enc.Utf8)
+      return decrypted || null
+    } catch {
+      return null
+    }
+  },
+  setItem: (name: string, value: string): void => {
+    const encrypted = CryptoJS.AES.encrypt(value, SECRET_KEY).toString()
+    localStorage.setItem(name, encrypted)
+  },
+  removeItem: (name: string): void => {
+    localStorage.removeItem(name)
+  }
+}
+
 
 interface Filters {
   benchmark: string
@@ -34,14 +59,20 @@ interface AppState {
   setSession: (id: string, type: string, data: any) => void
   setSessionById: (id: string, type: string) => void
   clearSession: (type: string) => void
+  clearAllSessionsByPan: (pan: string) => void
   setFilters: (f: Partial<Filters>) => void
   triggerRefresh: () => void
   logout: () => void
+
+  compareFunds: Record<string, string[]>
+  setCompareFunds: (sid: string, funds: string[]) => void
+  compareBench: Record<string, string>
+  setCompareBench: (sid: string, bench: string) => void
 }
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       pan: null,
       setPan: (pan) => set({ pan }),
 
@@ -68,6 +99,12 @@ export const useAppStore = create<AppState>()(
         plan: 'All',
         minAlloc: 0,
       },
+
+      compareFunds: {},
+      setCompareFunds: (sid, funds) => set((s) => ({ compareFunds: { ...s.compareFunds, [sid]: funds } })),
+      compareBench: {},
+      setCompareBench: (sid, bench) => set((s) => ({ compareBench: { ...s.compareBench, [sid]: bench } })),
+
 
       setSession: (id, type, data) =>
         set((state) => ({
@@ -104,8 +141,47 @@ export const useAppStore = create<AppState>()(
           isPartial: false, 
           lastSynced: Date.now() 
         })),
+        
+      clearAllSessionsByPan: (panToClear: string) => {
+        const state = get()
+        if (state.pan?.toUpperCase() === panToClear.toUpperCase()) {
+            set({
+                pan: null,
+                mfSessionId: null,
+                stocksSessionId: null,
+                taxSessionId: null,
+                parseData: null,
+                isPartial: false,
+                lastSynced: Date.now()
+            })
+        }
+      },
 
-      logout: () => set({ pan: null, mfSessionId: null, stocksSessionId: null, taxSessionId: null, parseData: null, isPartial: false }),
+      logout: () => {
+        try {
+          const pan = get().pan;
+          if (pan) {
+            api.post('/auth/logout', { pan }).catch(console.error);
+          }
+          localStorage.clear()
+          sessionStorage.clear()
+        } catch (e) {
+          console.error(e)
+        }
+        set({
+          pan: null,
+          mfSessionId: null,
+          stocksSessionId: null,
+          taxSessionId: null,
+          parseData: null,
+          isPartial: false,
+          taxRegime: 'new',
+          filters: { benchmark: 'Nifty 50', categories: [], amcs: [], plan: 'All', minAlloc: 0 },
+          lastSynced: Date.now(),
+          compareFunds: {},
+          compareBench: {}
+        })
+      },
 
       setFilters: (f) =>
         set((s) => ({ filters: { ...s.filters, ...f } })),
@@ -114,7 +190,14 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'finance-buddy-storage',
-      partialize: (state) => ({ pan: state.pan, taxRegime: state.taxRegime, taxSessionId: state.taxSessionId })
+      storage: createJSONStorage(() => encryptedStorage),
+      partialize: (state) => ({ 
+        pan: state.pan, 
+        taxRegime: state.taxRegime, 
+        taxSessionId: state.taxSessionId,
+        compareFunds: state.compareFunds,
+        compareBench: state.compareBench
+      })
     }
   )
 )
@@ -140,3 +223,4 @@ export const useTaxSlab = () => useAppStore(s => s.taxSlab)
 export const useSetTaxSlab = () => useAppStore(s => s.setTaxSlab)
 export const useTaxRegime = () => useAppStore(s => s.taxRegime)
 export const useSetTaxRegime = () => useAppStore(s => s.setTaxRegime)
+export const useClearAllSessionsByPan = () => useAppStore(s => s.clearAllSessionsByPan)

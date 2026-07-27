@@ -15,4 +15,8 @@ python-Levenshtein
 python-dateutil
 pdfplumber
 pypdf
+openpyxl
+xlrd
 pytest>=9.0.0
+pyarrow==25.0.0
+fastparquet==2026.5.0

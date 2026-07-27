@@ -198,6 +198,10 @@ export default function TaxITRCompareTab() {
             <ComputeRow label="Capital Gains" folioVal={summary.income_heads.capital_gains?.total ?? 0} itrVal={itrData.income.capital_gains} />
             <ComputeRow label="Income from Other Sources" folioVal={summary.income_heads.other_sources?.total || 0} itrVal={itrData.income.other_sources} />
             
+            {((summary.income_heads.crypto?.gains || 0) + (summary.income_heads.gaming?.gains || 0)) > 0 && (
+              <ComputeRow label="Special Incomes (Crypto, Gaming)" folioVal={(summary.income_heads.crypto?.gains || 0) + (summary.income_heads.gaming?.gains || 0)} itrVal={null} />
+            )}
+
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 1 }} />
             
             <ComputeRow label="Gross Total Income" folioVal={summary.gross_income} itrVal={itrData.income.gross_total} bold />
@@ -206,10 +210,10 @@ export default function TaxITRCompareTab() {
             
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 1 }} />
             
-            {/* CMP-4: Total Income = taxable_normal (already includes stcg_other) + special rate CG */}
+            {/* CMP-4: Total Income = taxable_normal (already includes stcg_other) + special rate CG + special rate crypto/gaming */}
             <ComputeRow 
               label="Total Income" 
-              folioVal={summary.taxable_normal_income + (summary.income_heads.capital_gains?.total_special_rate ?? ((summary.income_heads.capital_gains?.ltcg_equity || 0) + (summary.income_heads.capital_gains?.stcg_equity || 0) + (summary.income_heads.capital_gains?.ltcg_other || 0)))} 
+              folioVal={summary.taxable_normal_income + (summary.income_heads.capital_gains?.total_special_rate ?? ((summary.income_heads.capital_gains?.ltcg_equity || 0) + (summary.income_heads.capital_gains?.stcg_equity || 0) + (summary.income_heads.capital_gains?.ltcg_other || 0))) + (summary.income_heads.crypto?.gains || 0) + (summary.income_heads.gaming?.gains || 0)} 
               itrVal={itrData.tax.taxable_income} 
               bold 
               highlight 
@@ -219,18 +223,18 @@ export default function TaxITRCompareTab() {
           {/* ── 2. TAX CALCULATION ─────────────────────────────── */}
           <SimpleCard title="Tax Calculation" color="#F59E0B">
             <ComputeRow label="Tax at normal slab rates" folioVal={summary.tax_on_normal_income} itrVal={itrData.tax.tax_at_slab_rates ?? itrData.tax.tax_on_income} />
-            <ComputeRow label="Tax at special rates (Capital Gains)" folioVal={taxCg.total || 0} itrVal={itrData.tax.tax_at_special_rate} />
+            <ComputeRow label="Tax at special rates (CG, Crypto, Lottery)" folioVal={(taxCg.total || 0) + (summary.income_heads.crypto?.tax || 0) + (summary.income_heads.gaming?.tax || 0)} itrVal={itrData.tax.tax_at_special_rate} />
             
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 1 }} />
             
-            <ComputeRow label="Tax before rebate" folioVal={summary.tax_on_normal_income + (taxCg.total || 0)} itrVal={itrData.tax.tax_before_rebate ?? itrData.tax.tax_on_income} bold />
+            <ComputeRow label="Tax before rebate" folioVal={summary.tax_on_normal_income + (taxCg.total || 0) + (summary.income_heads.crypto?.tax || 0) + (summary.income_heads.gaming?.tax || 0)} itrVal={itrData.tax.tax_before_rebate ?? itrData.tax.tax_on_income} bold />
             
             <ComputeRow label="Less: Rebate u/s 87A" folioVal={summary.rebate_87a > 0 ? `- ${fmtInr(summary.rebate_87a)}` : 0} itrVal={itrData.tax.rebate_87a ? `- ${fmtInr(itrData.tax.rebate_87a)}` : 0} color="#4EDE93" />
             
             {/* Added optional tax after rebate row for clarity */}
             {(summary.rebate_87a > 0 || itrData.tax.rebate_87a > 0) && (
               <ComputeRow label="Tax after rebate" 
-                folioVal={summary.tax_on_normal_income + (taxCg.total || 0) - summary.rebate_87a} 
+                folioVal={summary.tax_on_normal_income + (taxCg.total || 0) + (summary.income_heads.crypto?.tax || 0) + (summary.income_heads.gaming?.tax || 0) - summary.rebate_87a} 
                 itrVal={(itrData.tax.tax_before_rebate ?? itrData.tax.tax_on_income) - (itrData.tax.rebate_87a || 0)} 
                 bold />
             )}

@@ -68,25 +68,23 @@ function calculateDrawdown(values: number[]): number[] {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 export default function CompareTab() {
-  const sid = useSessionId()
-  const [selectedFunds, setSelectedFunds] = useState<string[]>(() => {
-    const saved = localStorage.getItem(`compare_funds_${sid}`)
-    return saved ? JSON.parse(saved) : []
-  })
+  const sid = useSessionId() || 'default'
+  
+  const compareFundsState = useAppStore(s => s.compareFunds)
+  const setCompareFunds = useAppStore(s => s.setCompareFunds)
+  const compareBenchState = useAppStore(s => s.compareBench)
+  const setCompareBench = useAppStore(s => s.setCompareBench)
 
-  useEffect(() => {
-    localStorage.setItem(`compare_funds_${sid}`, JSON.stringify(selectedFunds))
-  }, [selectedFunds, sid])
+  const selectedFunds = compareFundsState[sid] || []
+  const setSelectedFunds = (funds: string[]) => setCompareFunds(sid, funds)
 
   const [extSearch, setExtSearch] = useState('')
-  const [extTicker, setExtTicker] = useState<{ symbol: string; name: string } | null>(() => {
-    const saved = localStorage.getItem(`compare_bench_${sid}`)
-    return saved ? JSON.parse(saved) : null
-  })
+  const extTickerStr = compareBenchState[sid]
+  const extTicker = extTickerStr ? JSON.parse(extTickerStr) : null
+  const setExtTicker = (ticker: { symbol: string; name: string } | null) => {
+    setCompareBench(sid, ticker ? JSON.stringify(ticker) : '')
+  }
 
-  useEffect(() => {
-    if (extTicker) localStorage.setItem(`compare_bench_${sid}`, JSON.stringify(extTicker))
-  }, [extTicker, sid])
   const [mode, setMode] = useState<'Overview' | 'Technical' | 'Trends'>('Overview')
   const [activeTrend, setActiveTrend] = useState<'Trailing' | 'Rolling' | 'Wealth' | 'Drawdown'>('Trailing')
   const [showSim, setShowSim] = useState(false)

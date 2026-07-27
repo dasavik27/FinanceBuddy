@@ -12,6 +12,8 @@ import BoltIcon from '@mui/icons-material/Bolt'
 import SpeedIcon from '@mui/icons-material/Speed'
 import CachedIcon from '@mui/icons-material/Cached'
 import PersonIcon from '@mui/icons-material/Person'
+import SecurityIcon from '@mui/icons-material/Security'
+import LockIcon from '@mui/icons-material/Lock'
 import LogoutIcon from '@mui/icons-material/Logout'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import Menu from '@mui/material/Menu'
@@ -294,19 +296,18 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                     </Box>
                     <Box>
                       <Typography sx={{ fontWeight: 800, fontSize: '0.875rem', color: '#F8FAFC', lineHeight: 1.2 }}>{pan}</Typography>
-                      <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>PRO VAULT</Typography>
+                      <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>ACTIVE ACCOUNT</Typography>
                     </Box>
                   </Box>
 
-                  <Divider sx={{ my: 1, borderColor: 'rgba(255,255,255,0.05)' }} />
 
                   <MenuItem 
-                    onClick={() => { setProfileAnchor(null); navigate('/dashboard/account'); }}
+                    onClick={() => { setProfileAnchor(null); navigate('/dashboard/accounts'); }}
                     sx={{ color: '#F8FAFC' }}
                   >
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
-                      <PersonIcon sx={{ fontSize: 18, color: '#818CF8' }} />
-                      <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Your Account</Typography>
+                      <SecurityIcon sx={{ fontSize: 18, color: '#4EDE93' }} />
+                      <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Account</Typography>
                     </Box>
                   </MenuItem>
 

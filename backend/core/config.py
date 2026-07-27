@@ -14,7 +14,22 @@ import os
 # Time-To-Live (TTL) for in-memory and disk persistence layers (NAV & CAS Records)
 # Set via environment variable 'FINANCEBUDDY_CACHE_TTL' (Default: 60 minutes).
 # A value <= 0 triggers real-time direct fetching across all network providers.
-CACHE_TTL_MINUTES = int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
+import sqlite3
+
+def _get_ttl_from_db():
+    try:
+        db_path = os.path.join(os.path.dirname(__file__), "..", "data", "metadata.sqlite3")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
+            cursor = conn.execute("SELECT value FROM app_settings WHERE key='cache_ttl'")
+            row = cursor.fetchone()
+            if row: 
+                return int(row[0])
+    except Exception:
+        pass
+    return int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
+
+CACHE_TTL_MINUTES = _get_ttl_from_db()
 
 # Absolute directory path for disk-backed JSON cache storage
 CACHE_DIR = os.path.join(os.getcwd(), ".cache")

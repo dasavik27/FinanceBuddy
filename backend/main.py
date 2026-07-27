@@ -1,26 +1,27 @@
 """
 main.py
 
-FolioPulse API Service Gateway
+Finance Buddy API Service Gateway
 ===========================
 Enterprise-grade REST API backend powered by FastAPI. Features an asynchronous,
-multi-layered routing architecture specifically structured to mirror the AlphaTrack Pro
+multi-layered routing architecture specifically structured to mirror the Finance Buddy
 cockpit navigation interface. Implements robust GZip payload compression and CORS middleware
 for high-performance institutional data delivery.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 # Core System & Market Gateways
-from routers import portfolio, market, auth
+from routers import portfolio, market, auth, accounts
 # Specialized Analytical Tab Routers (1:1 Modular Mapping with Frontend Navigation)
 from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy, overlap, history, journey
 
 app = FastAPI(
-    title="FolioPulse Institutional Intelligence API",
-    description="Advanced Mutual Fund Portfolio Analytics, Risk Metrics, and CIO Rebalancing Engine",
+    title="Finance Buddy API",
+    description="Smart Wealth Dashboard, Mutual Fund Portfolio Analytics, and Tax Expert Engine",
     version="8.0.0",
 )
 
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(portfolio.router, prefix="/portfolio", tags=["Infrastructure - Session Management"])
 app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
 app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
+app.include_router(accounts.router,  prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
 
 # ── Specialized Analytical Cockpit Routers (1:1 with UI Navigation) ──────
 app.include_router(overview.router,     prefix="/portfolio", tags=["Analytics - Overview & Allocation"])

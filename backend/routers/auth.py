@@ -40,3 +40,13 @@ def login_with_pan(req: LoginRequest):
             print(f"[AUTH] Existing user logged in: {pan}")
             
     return {"status": "success", "pan": pan}
+
+@router.post("/logout")
+def logout_user(req: LoginRequest):
+    pan = req.pan.strip().upper()
+    from core.tax_sessions import get_sessions_by_pan, delete_tax_session
+    sessions = get_sessions_by_pan(pan)
+    for s in sessions:
+        delete_tax_session(s["session_id"])
+    print(f"[AUTH] Logged out {pan} and cleared {len(sessions)} tax sessions from memory and disk.")
+    return {"status": "success"}

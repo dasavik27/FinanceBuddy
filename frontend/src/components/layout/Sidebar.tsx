@@ -12,11 +12,11 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import LogoutIcon from '@mui/icons-material/Logout'
 import PersonIcon from '@mui/icons-material/Person'
+import TimelineIcon from '@mui/icons-material/Timeline'
+import SecurityIcon from '@mui/icons-material/Security'
 import { useAppStore } from '../../store/appStore'
 
 const DRAWER_W = 280
-
-import TimelineIcon from '@mui/icons-material/Timeline'
 
 const NAV = [
   { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/dashboard/mutual-funds' },
@@ -193,7 +193,7 @@ function SidebarContent({ location, navigate, isPartial, clearSession, onClose, 
           gap: 1.5
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: 'text.secondary', letterSpacing: '0.1em' }}>VAULT STATUS</Typography>
+            <Typography sx={{ fontSize: 11, fontWeight: 800, color: 'text.secondary', letterSpacing: '0.1em' }}>ACCOUNT STATUS</Typography>
             <IconButton size="small" onClick={clearSession} sx={{ color: 'tertiary', '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
               <LogoutIcon sx={{ fontSize: 18, color: '#FF516A' }} />
             </IconButton>

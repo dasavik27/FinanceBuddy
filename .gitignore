@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build & Cache
+dist/
+build/
+.vite/
+*.pyc
+__pycache__/
+.cache/
+
+# Environment & IDE
+.env
+.env.local
+.DS_Store
+.idea/
+.vscode/
+
+# Python Virtual Environment
+venv/
+.venv/
+env/

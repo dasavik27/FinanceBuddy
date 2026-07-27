@@ -3,8 +3,8 @@ core/storage.py
 
 Data Lake Persistence & Transaction Ledger Reconciliation Engine
 ================================================================
-Manages robust disk-level storage of CAS uploaded DataFrames using highly compressed Parquet
-files, mapped against an SQLite metadata registry. Includes a deterministic row-level hashing
+Manages robust disk-level storage of CAS uploaded DataFrames using a unified SQLite database,
+mapped against an SQLite metadata registry. Includes a deterministic row-level hashing
 engine to prevent duplicate snapshots and allow semantic ledger reconciliation.
 """
 
@@ -92,17 +92,26 @@ def check_duplicate_upload(df_t: pd.DataFrame) -> Optional[str]:
 
 def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
     """
-    Persists the dataframes as Parquet files and registers the session in SQLite, tied to a PAN.
+    Persists the dataframes to SQLite and registers the session, tied to a PAN.
     """
     ledger_hash = _compute_ledger_hash(df_t)
     
-    # 1. Save DataFrames to Parquet (Fast, Compressed)
-    session_dir = os.path.join(SESSIONS_DIR, session_id)
-    os.makedirs(session_dir, exist_ok=True)
-    
-    df_h.to_parquet(os.path.join(session_dir, "df_h.parquet"), index=False)
-    df_t.to_parquet(os.path.join(session_dir, "df_t.parquet"), index=False)
-    df_s.to_parquet(os.path.join(session_dir, "df_s.parquet"), index=False)
+    # 1. Save DataFrames to SQLite
+    with sqlite3.connect(DB_PATH) as conn:
+        if not df_h.empty:
+            df_h_copy = df_h.copy()
+            df_h_copy['session_id'] = session_id
+            df_h_copy.to_sql("mf_holdings", conn, if_exists="append", index=False)
+            
+        if not df_t.empty:
+            df_t_copy = df_t.copy()
+            df_t_copy['session_id'] = session_id
+            df_t_copy.to_sql("mf_transactions", conn, if_exists="append", index=False)
+            
+        if not df_s.empty:
+            df_s_copy = df_s.copy()
+            df_s_copy['session_id'] = session_id
+            df_s_copy.to_sql("mf_sips", conn, if_exists="append", index=False)
     
     # 2. Extract quick metrics for the registry
     total_value = float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0
@@ -121,22 +130,36 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
 
 def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]]:
     """
-    Reconstructs the portfolio from disk using the session_id.
+    Reconstructs the portfolio from SQLite using the session_id.
     """
-    session_dir = os.path.join(SESSIONS_DIR, session_id)
-    if not os.path.exists(session_dir):
-        return None
-        
     try:
-        df_h = pd.read_parquet(os.path.join(session_dir, "df_h.parquet"))
-        df_t = pd.read_parquet(os.path.join(session_dir, "df_t.parquet"))
-        df_s = pd.read_parquet(os.path.join(session_dir, "df_s.parquet"))
-        
         with sqlite3.connect(DB_PATH) as conn:
+            # Check if session exists
             cursor = conn.execute("SELECT is_partial FROM sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
-            is_partial = bool(row[0]) if row else False
+            if not row:
+                return None
+            is_partial = bool(row[0])
             
+            # Read dataframes
+            try:
+                df_h = pd.read_sql(f"SELECT * FROM mf_holdings WHERE session_id='{session_id}'", conn)
+                df_h.drop(columns=['session_id'], inplace=True, errors='ignore')
+            except Exception:
+                df_h = pd.DataFrame()
+                
+            try:
+                df_t = pd.read_sql(f"SELECT * FROM mf_transactions WHERE session_id='{session_id}'", conn)
+                df_t.drop(columns=['session_id'], inplace=True, errors='ignore')
+            except Exception:
+                df_t = pd.DataFrame()
+                
+            try:
+                df_s = pd.read_sql(f"SELECT * FROM mf_sips WHERE session_id='{session_id}'", conn)
+                df_s.drop(columns=['session_id'], inplace=True, errors='ignore')
+            except Exception:
+                df_s = pd.DataFrame()
+                
         return df_h, df_t, df_s, is_partial
     except Exception as e:
         print(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
@@ -167,22 +190,35 @@ def get_history(pan_id: str = None, upload_type: str = None) -> list:
 
 def delete_session(session_id: str) -> bool:
     """
-    Deletes a session from the SQLite registry and removes its Parquet files from disk.
+    Deletes a session from the SQLite registry and its associated dataframes.
     """
-    import shutil
-    
-    # 1. Remove from SQLite
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            try:
+                conn.execute("DELETE FROM mf_holdings WHERE session_id = ?", (session_id,))
+                conn.execute("DELETE FROM mf_transactions WHERE session_id = ?", (session_id,))
+                conn.execute("DELETE FROM mf_sips WHERE session_id = ?", (session_id,))
+            except sqlite3.OperationalError:
+                pass # Tables might not exist yet
+            conn.commit()
+        return True
+    except Exception as e:
+        print(f"[STORAGE ERROR] Failed to delete session {session_id}: {str(e)}")
+        return False
+
+def delete_all_for_pan(pan_id: str) -> int:
+    """
+    Deletes all sessions associated with a given PAN.
+    Returns the number of sessions deleted.
+    """
+    count = 0
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-        conn.commit()
+        cursor = conn.execute("SELECT session_id FROM sessions WHERE pan_id = ?", (pan_id,))
+        sessions = [row[0] for row in cursor.fetchall()]
         
-    # 2. Remove from Disk
-    session_dir = os.path.join(SESSIONS_DIR, session_id)
-    if os.path.exists(session_dir):
-        try:
-            shutil.rmtree(session_dir)
-            return True
-        except Exception as e:
-            print(f"[STORAGE ERROR] Failed to delete session directory {session_id}: {str(e)}")
-            return False
-    return True
+        for sid in sessions:
+            if delete_session(sid):
+                count += 1
+                
+    return count

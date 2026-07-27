@@ -357,12 +357,34 @@ export const apiClient = {
     return data
   },
 
-  /** Upload a broker file to reconcile and auto-correct zero-cost AIS entries */
-  reconcileBrokerFile: async (sid: string, brokerFile: File): Promise<any> => {
+  parseBrokerFile: async (file: File): Promise<any> => {
     const fd = new FormData()
-    fd.append('broker_file', brokerFile)
-    const { data } = await api.post(`/tax-expert/${sid}/tax/reconcile-broker`, fd)
-    return data
+    fd.append('file', file)
+    const res = await api.post('/portfolio/parse-broker', fd)
+    return res.data
+  },
+  
+  reconcileBrokerFile: async (sessionId: string, file: File): Promise<any> => {
+    const fd = new FormData()
+    fd.append('broker_file', file)
+    const res = await api.post(`/tax-expert/${sessionId}/tax/reconcile-broker`, fd)
+    return res.data
+  },
+  
+  // ── Accounts / Vault Manager ───────────────────────────────────────────────
+  getAccountsSummary: async (): Promise<any> => {
+    const res = await api.get('/accounts/summary')
+    return res.data
+  },
+  
+  purgeAccount: async (panId: string): Promise<any> => {
+    const res = await api.delete(`/accounts/${panId}`)
+    return res.data
+  },
+
+  clearSystemCaches: async (): Promise<any> => {
+    const res = await api.post('/accounts/clear_caches')
+    return res.data
   },
 
   parseForm16: async (sid: string, file: File) => {

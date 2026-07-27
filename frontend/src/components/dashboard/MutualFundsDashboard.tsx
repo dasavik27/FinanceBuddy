@@ -8,7 +8,6 @@ import HoldingsTab    from '../tabs/HoldingsTab'
 import PerformanceTab from '../tabs/PerformanceTab'
 import CompareTab     from '../tabs/CompareTab'
 import InsightsRebalanceTab from '../tabs/InsightsRebalanceTab'
-import HistoryTab from '../tabs/HistoryTab'
 import JourneyTab from '../tabs/JourneyTab'
 import { ErrorBoundary } from '../ui'
 
@@ -37,7 +36,7 @@ export default function MutualFundsDashboard() {
   // Derive current tab from pathname
   const pathParts = location.pathname.split('/')
   const currentTab = pathParts[pathParts.length - 1]
-  const tabValue = ['overview', 'holdings', 'performance', 'compare', 'journey', 'insights', 'account'].includes(currentTab) 
+  const tabValue = ['overview', 'holdings', 'performance', 'compare', 'journey', 'insights'].includes(currentTab) 
     ? currentTab 
     : 'overview'
 
@@ -85,15 +84,14 @@ export default function MutualFundsDashboard() {
       </Paper>
 
       <Routes>
-        <Route index               element={<Navigate to="overview" replace />} />
+        <Route index               element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
         <Route path="overview"     element={<ErrorBoundary fallbackMessage="Overview tab encountered a rendering error."><OverviewTab /></ErrorBoundary>} />
         <Route path="holdings"     element={<ErrorBoundary fallbackMessage="Holdings tab encountered a rendering error."><HoldingsTab /></ErrorBoundary>} />
         <Route path="performance"  element={<ErrorBoundary fallbackMessage="Performance tab encountered a rendering error."><PerformanceTab /></ErrorBoundary>} />
         <Route path="compare"      element={<ErrorBoundary fallbackMessage="Compare tab encountered a rendering error."><CompareTab /></ErrorBoundary>} />
         <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
         <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsRebalanceTab /></ErrorBoundary>} />
-        <Route path="account"      element={<ErrorBoundary fallbackMessage="Account tab encountered a rendering error."><HistoryTab /></ErrorBoundary>} />
-        <Route path="*"            element={<Navigate to="overview" replace />} />
+        <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
       </Routes>
     </Box>
   )

@@ -30,7 +30,7 @@ export default function IndianStocksDashboard() {
     <Box>
       <Routes>
         <Route index element={<ErrorBoundary fallbackMessage="Stocks tab encountered an error."><StocksTab /></ErrorBoundary>} />
-        <Route path="*" element={<Navigate to="" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard/indian-stocks" replace />} />
       </Routes>
     </Box>
   )

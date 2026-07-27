@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('FolioPulse UI Component Error:', error, errorInfo)
+    console.error('Finance Buddy UI Component Error:', error, errorInfo)
   }
 
   private handleReset = () => {

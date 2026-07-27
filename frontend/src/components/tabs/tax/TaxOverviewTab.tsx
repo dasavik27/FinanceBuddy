@@ -16,7 +16,7 @@ const ComputeRow = ({ label, valueOld, valueNew, indent = false, bold = false, c
 
   return (
     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pl: indent ? 4 : 2, pr: 2, py: highlight ? 1.5 : 0.5, bgcolor: highlight ? 'rgba(255,255,255,0.02)' : 'transparent', borderRadius: '12px' }}>
-      <Typography variant="body2" sx={{ color: highlight ? '#fff' : 'text.secondary', fontWeight: bold ? 800 : 600, flex: 1 }}>{label}</Typography>
+      <Typography component="div" variant="body2" sx={{ color: highlight ? '#fff' : 'text.secondary', fontWeight: bold ? 800 : 600, flex: 1 }}>{label}</Typography>
       <Box sx={{ display: 'flex', gap: 4, width: { xs: '180px', sm: '250px' }, justifyContent: 'flex-end' }}>
         <Typography variant="body1" className="num" sx={{ fontWeight: bold ? 900 : 700, color, width: { xs: '80px', sm: '100px' }, textAlign: 'right' }}>{valueOld}</Typography>
         <Typography variant="body1" className="num" sx={{ fontWeight: bold ? 900 : 700, color, width: { xs: '80px', sm: '100px' }, textAlign: 'right' }}>{valueNew}</Typography>
@@ -119,8 +119,8 @@ export default function TaxOverviewTab() {
             <ComputeRow label="Less: Other Sec 10 Exemptions" valueOld={oldRegime.income_heads.salary.sec10_other > 0 ? `- ${fmtInr(oldRegime.income_heads.salary.sec10_other)}` : '₹0'} valueNew="₹0" color="#38BDF8" indent />
             <ComputeRow label="Less: Professional Tax u/s 16(iii)" valueOld={oldRegime.income_heads.salary.sec16_ptax > 0 ? `- ${fmtInr(oldRegime.income_heads.salary.sec16_ptax)}` : '₹0'} valueNew="₹0" color="#38BDF8" indent />
             <ComputeRow label="Profits & Gains of Business or Profession" valueOld={fmtInr(oldRegime.income_heads.business?.total_profit || 0)} valueNew={fmtInr(newRegime.income_heads.business?.total_profit || 0)} />
-            {/* CG: use total_special_rate (excludes STCG Other which flows through slab) */}
-            <ComputeRow label="Capital Gains (Special Rate)" valueOld={fmtInr(oldRegime.income_heads.capital_gains?.total_special_rate ?? oldRegime.income_heads.capital_gains?.total ?? 0)} valueNew={fmtInr(newRegime.income_heads.capital_gains?.total_special_rate ?? newRegime.income_heads.capital_gains?.total ?? 0)} />
+            {/* CG: display total capital gains so it mathematically sums to gross total income */}
+            <ComputeRow label="Capital Gains" valueOld={fmtInr(oldRegime.income_heads.capital_gains?.total ?? 0)} valueNew={fmtInr(newRegime.income_heads.capital_gains?.total ?? 0)} />
             <ComputeRow label="Income from Other Sources" valueOld={fmtInr(oldRegime.income_heads.other_sources?.total || 0)} valueNew={fmtInr(newRegime.income_heads.other_sources?.total || 0)} />
             <ComputeRow label="Special Incomes (Crypto, Gaming, Misc)" valueOld={fmtInr((oldRegime.income_heads.crypto?.gains || 0) + (oldRegime.income_heads.gaming?.gains || 0) + (oldRegime.income_heads.misc_income?.total || 0))} valueNew={fmtInr((newRegime.income_heads.crypto?.gains || 0) + (newRegime.income_heads.gaming?.gains || 0) + (newRegime.income_heads.misc_income?.total || 0))} />
           </StepCard>
@@ -143,8 +143,13 @@ export default function TaxOverviewTab() {
           <StepCard step="3" title="Net Taxable Income" color="#EC4899" totalLabel="Taxable Normal Income" totalOld={fmtInr(oldRegime.taxable_normal_income)} totalNew={fmtInr(newRegime.taxable_normal_income)}>
             <ComputeRow label="Gross Total Income (Step 1)" valueOld={fmtInr(oldRegime.gross_income)} valueNew={fmtInr(newRegime.gross_income)} />
             <ComputeRow label="Less: Total Deductions (Step 2)" valueOld={`- ${fmtInr(oldRegime.chapter_via_deductions_total ?? oldRegime.total_deductions)}`} valueNew={`- ${fmtInr(newRegime.chapter_via_deductions_total ?? newRegime.total_deductions)}`} color="#38BDF8" />
-            {/* Special rate incomes: use direct sum of LTCG equity + STCG equity + LTCG other (NOT stcg_other which is slab-rated) */}
-            <ComputeRow label="Less: Special Rate Incomes (Taxed in Step 4)" valueOld={`- ${fmtInr((oldRegime.income_heads.capital_gains?.total_special_rate ?? oldRegime.income_heads.capital_gains?.total ?? 0))}`} valueNew={`- ${fmtInr((newRegime.income_heads.capital_gains?.total_special_rate ?? newRegime.income_heads.capital_gains?.total ?? 0))}`} color="#A855F7" />
+            {/* Special rate incomes: use direct sum of LTCG equity + STCG equity + LTCG other + Crypto + Gaming */}
+            <ComputeRow 
+              label="Less: Special Rate Incomes (CG, Crypto, Lottery)" 
+              valueOld={`- ${fmtInr((oldRegime.income_heads.capital_gains?.total_special_rate ?? 0) + (oldRegime.income_heads.crypto?.gains || 0) + (oldRegime.income_heads.gaming?.gains || 0))}`} 
+              valueNew={`- ${fmtInr((newRegime.income_heads.capital_gains?.total_special_rate ?? 0) + (newRegime.income_heads.crypto?.gains || 0) + (newRegime.income_heads.gaming?.gains || 0))}`} 
+              color="#A855F7" 
+            />
           </StepCard>
 
           <StepCard step="4" title="Tax Calculation" color="#F59E0B" totalLabel="Total Tax Liability" totalOld={fmtInr(oldRegime.total_tax)} totalNew={fmtInr(newRegime.total_tax)}>
@@ -183,6 +188,15 @@ export default function TaxOverviewTab() {
               valueNew={`- ${fmtInr(newRegime.rebate_87a)}`}
               color="#4EDE93"
             />
+            
+            {(oldRegime.rebate_87a > 0 || newRegime.rebate_87a > 0) && (
+              <ComputeRow 
+                label="Tax after rebate" 
+                valueOld={fmtInr(oldRegime.tax_on_normal_income + (oldRegime.tax_on_capital_gains.total || 0) + (oldRegime.income_heads.crypto?.tax || 0) + (oldRegime.income_heads.gaming?.tax || 0) - oldRegime.rebate_87a)}
+                valueNew={fmtInr(newRegime.tax_on_normal_income + (newRegime.tax_on_capital_gains.total || 0) + (newRegime.income_heads.crypto?.tax || 0) + (newRegime.income_heads.gaming?.tax || 0) - newRegime.rebate_87a)}
+                bold
+              />
+            )}
             <ComputeRow label="Add: Surcharge" valueOld={fmtInr(oldRegime.surcharge)} valueNew={fmtInr(newRegime.surcharge)} hideIfZero={false} />
             <ComputeRow label="Add: Health & Education Cess (4%)" valueOld={fmtInr(oldRegime.cess)} valueNew={fmtInr(newRegime.cess)} />
           </StepCard>

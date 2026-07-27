@@ -3,7 +3,7 @@ import { createTheme, alpha } from '@mui/material/styles'
 const FONT = '"Plus Jakarta Sans", sans-serif'
 const MONO = '"DM Mono", monospace'
 
-// ── AlphaTrack Pro Palette ──────────────────────────────────────────────────
+// ── Finance Buddy Palette ──────────────────────────────────────────────────
 const P = {
   background: '#0B1326',
   surface: '#131B2E',
@@ -77,7 +77,7 @@ export const theme = createTheme({
           color: #F8FAFC;
           overflow-x: hidden;
         }
-        /* AlphaTrack Pro Scrollbars */
+        /* Finance Buddy Scrollbars */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { 
