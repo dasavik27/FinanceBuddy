@@ -50,8 +50,8 @@ class RecalculateInput(BaseModel):
 
 
 @router.post("/{session_id}/tax/recalculate")
-def recalculate_tax(session_id: str, body: RecalculateInput):
-    """Save manual user overrides and return updated computation."""
+def recalculate_tax(session_id: str, body: RecalculateInput, regime: str = "new"):
+    """Save manual user overrides and return updated computation for the chosen regime."""
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
@@ -82,8 +82,8 @@ def recalculate_tax(session_id: str, body: RecalculateInput):
 
     update_overrides(session_id, overrides)
 
-    # Return updated session state summary
-    result = compute_tax(session["ais_data"], regime="new", overrides=session.get("overrides", {}))
+    # Return updated session state summary for the requested regime
+    result = compute_tax(session["ais_data"], regime=regime, overrides=session.get("overrides", {}))
     result["overrides"] = session.get("overrides", {})
     return result
 

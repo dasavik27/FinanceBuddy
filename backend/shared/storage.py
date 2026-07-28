@@ -144,21 +144,27 @@ def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, 
                 return None
             is_partial = bool(row[0])
             
-            # Read dataframes
+            # Read dataframes (parameterized — session_id is untrusted input)
             try:
-                df_h = pd.read_sql(f"SELECT * FROM mf_holdings WHERE session_id='{session_id}'", conn)
+                df_h = pd.read_sql("SELECT * FROM mf_holdings WHERE session_id=?", conn, params=(session_id,))
                 df_h.drop(columns=['session_id'], inplace=True, errors='ignore')
             except Exception:
                 df_h = pd.DataFrame()
-                
+
             try:
-                df_t = pd.read_sql(f"SELECT * FROM mf_transactions WHERE session_id='{session_id}'", conn)
+                df_t = pd.read_sql("SELECT * FROM mf_transactions WHERE session_id=?", conn, params=(session_id,))
                 df_t.drop(columns=['session_id'], inplace=True, errors='ignore')
+                # SQLite has no native datetime type — to_sql wrote "Date" as ISO (year-first)
+                # strings, so it comes back as plain object dtype, not datetime64. Every
+                # downstream consumer (FIFO lots, XIRR, rolling returns) expects datetime64;
+                # restore it here once instead of forcing every caller to defend against it.
+                if not df_t.empty and "Date" in df_t.columns and not pd.api.types.is_datetime64_any_dtype(df_t["Date"]):
+                    df_t["Date"] = pd.to_datetime(df_t["Date"])
             except Exception:
                 df_t = pd.DataFrame()
-                
+
             try:
-                df_s = pd.read_sql(f"SELECT * FROM mf_sips WHERE session_id='{session_id}'", conn)
+                df_s = pd.read_sql("SELECT * FROM mf_sips WHERE session_id=?", conn, params=(session_id,))
                 df_s.drop(columns=['session_id'], inplace=True, errors='ignore')
             except Exception:
                 df_s = pd.DataFrame()

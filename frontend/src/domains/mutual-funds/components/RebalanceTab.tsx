@@ -269,6 +269,22 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
                               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>
                                 EXECUTION TARGET
                               </Typography>
+                              {typeof order.tax_estimate === 'number' && (
+                                <Chip
+                                  label={`~${fmtInr(order.tax_estimate, true)} tax`}
+                                  size="small"
+                                  sx={{ mt: 0.5, fontWeight: 800, fontSize: 10, height: 20, bgcolor: alpha('#F59E0B', 0.15), color: '#F59E0B', border: '1px solid rgba(245,158,11,0.3)' }}
+                                />
+                              )}
+                              {typeof order.exit_load_estimate === 'number' && order.exit_load_estimate > 0 && (
+                                <Tooltip title="Assumes the standard 1-year exit-load window (no per-scheme exit-load data is available) — check your factsheet.">
+                                  <Chip
+                                    label={`~${fmtInr(order.exit_load_estimate, true)} exit load`}
+                                    size="small"
+                                    sx={{ mt: 0.5, ml: 0.5, fontWeight: 800, fontSize: 10, height: 20, bgcolor: alpha('#FB7185', 0.15), color: '#FB7185', border: '1px solid rgba(251,113,133,0.3)' }}
+                                  />
+                                </Tooltip>
+                              )}
                             </Box>
                           </Box>
                         </motion.div>

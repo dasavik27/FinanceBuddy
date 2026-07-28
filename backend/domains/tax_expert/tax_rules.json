@@ -85,7 +85,13 @@
     "ltcg_equity_rate": 0.125,
     "stcg_equity_rate": 0.2,
     "ltcg_other_rate": 0.125,
-    "ltcg_equity_exemption": 125000
+    "ltcg_equity_exemption": 125000,
+    "stcg_debt_rate": 0.3,
+    "equity_ltcg_days": 365,
+    "debt_ltcg_days": 1095,
+    "elss_lockin_days": 1095,
+    "debt_regime_cutoff": "2023-04-01",
+    "grandfather_date": "2018-01-31"
   },
   "special_rates": {
     "crypto_rate": 0.3,
@@ -101,16 +107,21 @@
     "limit_80c": 150000,
     "limit_80ccd1b": 50000,
     "limit_80d_self": 25000,
+    "limit_80d_self_senior": 50000,
     "limit_80d_parents": 50000,
+    "limit_80d_preventive": 5000,
     "limit_80tta": 10000,
     "limit_80ttb": 50000,
-    "limit_ptax": 2500
+    "limit_ptax": 2500,
+    "limit_80ccd1_salary_pct": 0.10
   },
   "rebates": {
     "new_regime_limit": 1200000,
     "new_regime_max_rebate": 60000,
     "old_regime_limit": 500000,
-    "old_regime_max_rebate": 12500
+    "old_regime_max_rebate": 12500,
+    "allow_on_special_income": false,
+    "new_regime_marginal_relief": true
   },
   "surcharge_slabs": [
     [
@@ -134,7 +145,18 @@
       0.37
     ]
   ],
+  "surcharge_cg_cap_rate": 0.15,
+  "surcharge_new_regime_max_rate": 0.25,
+  "surcharge_marginal_relief": true,
   "cess_rate": 0.04,
+  "interest_234": {
+    "monthly_rate": 0.01,
+    "due_date": "2026-07-31",
+    "ay_start": "2026-04-01",
+    "advance_tax_threshold_pct": 0.90,
+    "senior_no_business_exempt_234b_234c": true,
+    "min_liability_for_advance_tax": 10000
+  },
   "ui_tooltips": {
     "section_16_ia": {
       "text": "Section 15-17: Gross Salary Income. Standard deduction applied automatically.\n\u2022 Old Regime: \u20b950,000 standard deduction. Exemptions like HRA, LTA, and Professional Tax are applicable.\n\u2022 New Regime: \u20b975,000 standard deduction. HRA, LTA, and Professional Tax exemptions are NOT applicable."

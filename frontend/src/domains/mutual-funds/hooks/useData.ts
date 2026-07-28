@@ -88,6 +88,72 @@ export function useRebalancePlan(profile: string) {
   })
 }
 
+// ── Tax Harvest ───────────────────────────────────────────────────────────────
+export function useTaxHarvest() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['tax-harvest', sid],
+    queryFn:  () => apiClient.getTaxHarvest(sid!),
+    enabled:  !!sid,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ── SIP Step-Up Projection ────────────────────────────────────────────────────
+export function useSipProjection(params: Record<string, any> = {}) {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['sip-projection', sid, params],
+    queryFn:  () => apiClient.getSipProjection(sid!, params),
+    enabled:  !!sid,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ── XIRR by Financial Year ─────────────────────────────────────────────────────
+export function useXirrByFy() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['xirr-by-fy', sid],
+    queryFn:  () => apiClient.getXirrByFy(sid!),
+    enabled:  !!sid,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ── SIP vs Lumpsum Attribution ────────────────────────────────────────────────
+export function useSipAttribution() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['sip-attribution', sid],
+    queryFn:  () => apiClient.getSipAttribution(sid!),
+    enabled:  !!sid,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ── What-If SIP Simulator (candidate fund, not yet held) ──────────────────────
+export function useWhatIf(params: Record<string, any>, enabled: boolean) {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['what-if', sid, params],
+    queryFn:  () => apiClient.getWhatIf(sid!, params),
+    enabled:  !!sid && enabled,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+// ── Mandate Overlap (category/AMC-level proxy for stock overlap) ─────────────
+export function useMandateOverlap() {
+  const sid = useSessionId()
+  return useQuery({
+    queryKey: ['mandate-overlap', sid],
+    queryFn:  () => apiClient.getMandateOverlap(sid!),
+    enabled:  !!sid,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
 // ── Insights ──────────────────────────────────────────────────────────────────
 export function useInsights() {
   const sid = useSessionId()

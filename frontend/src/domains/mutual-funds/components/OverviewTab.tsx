@@ -3,7 +3,7 @@ import {
   Box, Grid, Typography, Stack, Paper, alpha, Avatar, Skeleton, Tooltip as MuiTooltip, Chip
 } from '@mui/material'
 
-import { useSummary, useOverview, useBenchmarkOverlay, useHoldings, useAllocation } from '../hooks/useData'
+import { useSummary, useOverview, useBenchmarkOverlay, useHoldings, useAllocation, usePerformance } from '../hooks/useData'
 import { MetricCard, SectionHeader } from '../../../shared/components/ui'
 import PortfolioChart from '../../../shared/components/charts/PortfolioChart'
 import { fmtInr, fmtPct } from '../../../shared/utils/fmt'
@@ -24,6 +24,7 @@ export default function OverviewTab() {
   const { data: overlayData } = useBenchmarkOverlay(period, selectedBenchmarks)
   const { data: hold } = useHoldings({ sort_by: 'Market Value' })
   const { data: alloc } = useAllocation()
+  const { data: perf } = usePerformance(period, { benchmark: primaryBenchmark })
 
   // Chart data
   const dates    = ov?.chart?.dates     ?? []
@@ -96,6 +97,11 @@ export default function OverviewTab() {
               />
             </Paper>
           )}
+          {perf?.benchmark_price_index_blend && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: 'text.secondary', fontStyle: 'italic' }}>
+              Note: for this window, {primaryBenchmark}'s earliest years (before the underlying index fund existed) are blended from a price-only index — actual benchmark return in that stretch may be understated by ~1-1.5%/yr of reinvested dividends.
+            </Typography>
+          )}
         </Grid>
 
         {/* ── Intelligence Sidebar (3/12) ───────────────────────────── */}
@@ -118,7 +124,10 @@ export default function OverviewTab() {
                   </Avatar>
                   <Box>
                     <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#fff' }}>{isHealthy ? 'Optimal Momentum' : 'Underperforming Benchmark'}</Typography>
-                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>Portfolio Beta: ~0.94 (Stable)</Typography>
+                    <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                      Portfolio Beta: {perf?.portfolio_beta != null ? perf.portfolio_beta.toFixed(2) : '—'}
+                      {perf?.portfolio_beta != null && (perf.portfolio_beta < 1 ? ' (Defensive)' : perf.portfolio_beta > 1.1 ? ' (Aggressive)' : ' (Stable)')}
+                    </Typography>
                   </Box>
                 </Box>
                 <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.03)', borderRadius: '16px', border: '1px dashed rgba(255,255,255,0.1)' }}>

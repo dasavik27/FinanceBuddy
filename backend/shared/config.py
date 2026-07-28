@@ -8,6 +8,7 @@ taxation slabs (Budget 2024 compliance), UI color tokens, and risk evaluation th
 Provides strict mathematical bounds for mutual fund analytics across the entire backend.
 """
 import os
+import json
 
 # ── Caching & Performance Architecture ────────────────────────────────────
 
@@ -75,12 +76,35 @@ FUND_BENCH_BY_CAP = {
 }
 
 # ── Institutional Taxation Parameters (Budget 2024 Slabs) ─────────────────
-TAX_RATES = {
-    "LTCG_EQUITY": 0.125,      # 12.5% Long Term Capital Gains on Equity (>12M)
-    "STCG_EQUITY": 0.20,       # 20.0% Short Term Capital Gains on Equity (<12M)
-    "LTCG_EXEMPTION": 125000,  # ₹1.25 Lakh annual tax-exempt threshold
-    "STCG_DEBT": 0.30          # Marginal tax slab proxy for Debt instruments (30%)
-}
+# Single source of truth: sourced from the Tax Expert domain's tax_rules.json so every
+# domain computing capital-gains tax (Mutual Funds, Tax Expert) shares one rule file —
+# a rate/threshold change next Budget only needs editing there.
+_TAX_RULES_PATH = os.path.join(os.path.dirname(__file__), "..", "domains", "tax_expert", "tax_rules.json")
+
+def _load_tax_rates() -> dict:
+    try:
+        with open(_TAX_RULES_PATH, "r") as f:
+            cg = json.load(f)["capital_gains"]
+        return {
+            "LTCG_EQUITY":        cg["ltcg_equity_rate"],       # 12.5% Long Term Capital Gains on Equity (>12M)
+            "STCG_EQUITY":        cg["stcg_equity_rate"],       # 20.0% Short Term Capital Gains on Equity (<12M)
+            "LTCG_EXEMPTION":     cg["ltcg_equity_exemption"],  # ₹1.25 Lakh annual tax-exempt threshold
+            "STCG_DEBT":          cg["stcg_debt_rate"],         # Marginal tax slab proxy for Debt instruments
+            "EQUITY_LTCG_DAYS":   cg["equity_ltcg_days"],       # Holding period after which equity gains are LTCG
+            "DEBT_LTCG_DAYS":     cg["debt_ltcg_days"],         # Holding period for pre-Apr-2023 debt units' LTCG
+            "ELSS_LOCKIN_DAYS":   cg["elss_lockin_days"],       # ELSS statutory lock-in
+            "DEBT_REGIME_CUTOFF": cg["debt_regime_cutoff"],     # Finance Act 2023 (Sec 50AA) cutoff, ISO date string
+        }
+    except Exception:
+        # Defensive fallback if tax_rules.json is ever missing/malformed — keeps the
+        # Mutual Funds tax engine from crashing outright rather than blocking on a hard read.
+        return {
+            "LTCG_EQUITY": 0.125, "STCG_EQUITY": 0.20, "LTCG_EXEMPTION": 125000, "STCG_DEBT": 0.30,
+            "EQUITY_LTCG_DAYS": 365, "DEBT_LTCG_DAYS": 1095, "ELSS_LOCKIN_DAYS": 1095,
+            "DEBT_REGIME_CUTOFF": "2023-04-01",
+        }
+
+TAX_RATES = _load_tax_rates()
 
 # ── Design Tokens & Visual Hierarchy ──────────────────────────────────────
 CATEGORY_COLORS = {
@@ -183,5 +207,3 @@ def classify_er(er: float, category: str) -> str:
     if er <= lo: return "Low"
     if er <= hi: return "Moderate"
     return "High"
-
-TEST_PASSWORD = os.getenv("FINANCEBUDDY_TEST_PASSWORD", "BBPPD9383N")

@@ -85,7 +85,13 @@
     "ltcg_equity_rate": 0.125,
     "stcg_equity_rate": 0.2,
     "ltcg_other_rate": 0.125,
-    "ltcg_equity_exemption": 125000
+    "ltcg_equity_exemption": 125000,
+    "stcg_debt_rate": 0.3,
+    "equity_ltcg_days": 365,
+    "debt_ltcg_days": 1095,
+    "elss_lockin_days": 1095,
+    "debt_regime_cutoff": "2023-04-01",
+    "grandfather_date": "2018-01-31"
   },
   "special_rates": {
     "crypto_rate": 0.3,
@@ -101,16 +107,21 @@
     "limit_80c": 150000,
     "limit_80ccd1b": 50000,
     "limit_80d_self": 25000,
+    "limit_80d_self_senior": 50000,
     "limit_80d_parents": 50000,
+    "limit_80d_preventive": 5000,
     "limit_80tta": 10000,
     "limit_80ttb": 50000,
-    "limit_ptax": 2500
+    "limit_ptax": 2500,
+    "limit_80ccd1_salary_pct": 0.10
   },
   "rebates": {
     "new_regime_limit": 1200000,
     "new_regime_max_rebate": 60000,
     "old_regime_limit": 500000,
-    "old_regime_max_rebate": 12500
+    "old_regime_max_rebate": 12500,
+    "allow_on_special_income": false,
+    "new_regime_marginal_relief": true
   },
   "surcharge_slabs": [
     [
@@ -134,31 +145,42 @@
       0.37
     ]
   ],
+  "surcharge_cg_cap_rate": 0.15,
+  "surcharge_new_regime_max_rate": 0.25,
+  "surcharge_marginal_relief": true,
   "cess_rate": 0.04,
+  "interest_234": {
+    "monthly_rate": 0.01,
+    "due_date": "2026-07-31",
+    "ay_start": "2026-04-01",
+    "advance_tax_threshold_pct": 0.90,
+    "senior_no_business_exempt_234b_234c": true,
+    "min_liability_for_advance_tax": 10000
+  },
   "ui_tooltips": {
     "section_16_ia": {
-      "text": "Section 15-17: Gross Salary Income. Standard deduction applied automatically.\n• Old Regime: ₹50,000 standard deduction. Exemptions like HRA, LTA, and Professional Tax are applicable.\n• New Regime: ₹75,000 standard deduction. HRA, LTA, and Professional Tax exemptions are NOT applicable."
+      "text": "Section 15-17: Gross Salary Income. Standard deduction applied automatically.\n\u2022 Old Regime: \u20b950,000 standard deduction. Exemptions like HRA, LTA, and Professional Tax are applicable.\n\u2022 New Regime: \u20b975,000 standard deduction. HRA, LTA, and Professional Tax exemptions are NOT applicable."
     },
     "section_80tta": {
-      "text": "Section 80TTA: Exemption on savings interest for individuals/HUFs (non-seniors).\n• Old Regime: Exemption up to ₹10,000.\n• New Regime: No exemption allowed (fully taxable)."
+      "text": "Section 80TTA: Exemption on savings interest for individuals/HUFs (non-seniors).\n\u2022 Old Regime: Exemption up to \u20b910,000.\n\u2022 New Regime: No exemption allowed (fully taxable)."
     },
     "section_80ttb": {
-      "text": "Section 80TTB: Exemption on savings and FD interest for senior citizens.\n• Old Regime: Exemption up to ₹50,000.\n• New Regime: No exemption allowed (fully taxable)."
+      "text": "Section 80TTB: Exemption on savings and FD interest for senior citizens.\n\u2022 Old Regime: Exemption up to \u20b950,000.\n\u2022 New Regime: No exemption allowed (fully taxable)."
     },
     "section_44ada": {
-      "text": "Section 44ADA: Presumptive taxation for professionals. Taxable profit is flat 50% of gross receipts. Max limit: ₹75 Lakhs."
+      "text": "Section 44ADA: Presumptive taxation for professionals. Taxable profit is flat 50% of gross receipts. Max limit: \u20b975 Lakhs."
     },
     "section_44ad": {
-      "text": "Section 44AD: Presumptive taxation for businesses. Taxable profit is flat 6% of digital turnover (or 8% for cash). Max limit: ₹3 Crores."
+      "text": "Section 44AD: Presumptive taxation for businesses. Taxable profit is flat 6% of digital turnover (or 8% for cash). Max limit: \u20b93 Crores."
     },
     "misc_income": {
-      "text": "Income from other sources (Rent, Freelance, Family Pension). Rental Income gets a flat 30% deduction (Sec 24a).\n• Old Regime: Family Pension std deduction (Sec 57iia) is ₹15,000. Home Loan Interest (Sec 24b) on self-occupied house allowed up to ₹2 Lakhs.\n• New Regime: Family Pension std deduction is ₹25,000. Home Loan Interest on self-occupied house is NOT allowed."
+      "text": "Income from other sources (Rent, Freelance, Family Pension). Rental Income gets a flat 30% deduction (Sec 24a).\n\u2022 Old Regime: Family Pension std deduction (Sec 57iia) is \u20b915,000. Home Loan Interest (Sec 24b) on self-occupied house allowed up to \u20b92 Lakhs.\n\u2022 New Regime: Family Pension std deduction is \u20b925,000. Home Loan Interest on self-occupied house is NOT allowed."
     },
     "other_interest": {
       "text": "Interest from Bonds, PPF maturity, NSC, etc. PPF interest is fully exempt (Sec 10(11)). Bonds/NCDs are taxable at slab rates."
     },
     "dividend": {
-      "text": "Dividends are fully taxable at applicable slab rates. No deductions allowed. TDS is deducted at 10% under Section 194 if dividend exceeds ₹5,000."
+      "text": "Dividends are fully taxable at applicable slab rates. No deductions allowed. TDS is deducted at 10% under Section 194 if dividend exceeds \u20b95,000."
     },
     "foreign_interest": {
       "text": "Taxable at slab rates. To be declared in Schedule FSI/FA. Double Taxation Relief (DTAA) under Section 90/90A may be claimed if tax was withheld abroad."

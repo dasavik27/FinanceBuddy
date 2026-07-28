@@ -195,6 +195,16 @@ export default function TaxITRCompareTab() {
             <ComputeRow label="Business & Profession" folioVal={summary.income_heads.business?.total_profit || 0} itrVal={itrData.income.business} />
             {/* CMP-3: Use capital_gains.total to match ITR Schedule CG which includes ALL CG buckets */}
             <ComputeRow label="Capital Gains" folioVal={summary.income_heads.capital_gains?.total ?? 0} itrVal={itrData.income.capital_gains} />
+            {(summary.income_heads.capital_gains?.grandfather_benefit || 0) > 0 && (
+              <Typography variant="caption" sx={{ color: '#94A3B8', px: 2, display: 'block', mt: -0.5, mb: 0.5 }}>
+                Incl. Sec 112A grandfathering benefit of {fmtInr(summary.income_heads.capital_gains.grandfather_benefit)} (31-Jan-2018 FMV)
+              </Typography>
+            )}
+            {(summary.income_heads.capital_gains?.slab_taxed_cg || 0) > 0 && (
+              <Typography variant="caption" sx={{ color: '#94A3B8', px: 2, display: 'block', mt: -0.5, mb: 0.5 }}>
+                Incl. {fmtInr(summary.income_heads.capital_gains.slab_taxed_cg)} debt/specified-fund gains taxed at slab (Sec 50AA)
+              </Typography>
+            )}
             <ComputeRow label="Income from Other Sources" folioVal={summary.income_heads.other_sources?.total || 0} itrVal={itrData.income.other_sources} />
             
             {((summary.income_heads.crypto?.gains || 0) + (summary.income_heads.gaming?.gains || 0)) > 0 && (
@@ -239,11 +249,27 @@ export default function TaxITRCompareTab() {
             )}
 
             <ComputeRow label="Add: Surcharge" folioVal={summary.surcharge} itrVal={itrData.tax.surcharge} />
+            {summary.surcharge > 0 && summary.surcharge_detail && (
+              <Typography variant="caption" sx={{ color: '#94A3B8', px: 2, display: 'block', mt: -0.5, mb: 0.5 }}>
+                Rate {Math.round((summary.surcharge_detail.rate || 0) * 100)}% · capital gains capped at {Math.round((summary.surcharge_detail.cg_rate || 0) * 100)}%
+                {summary.surcharge_detail.marginal_relief > 0 ? ` · marginal relief ${fmtInr(summary.surcharge_detail.marginal_relief)}` : ''}
+              </Typography>
+            )}
             <ComputeRow label="Add: Health & Education Cess @4%" folioVal={summary.cess} itrVal={itrData.tax.cess} />
-            
+
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 1 }} />
-            
+
             <ComputeRow label="Net Tax Liability" folioVal={summary.total_tax} itrVal={itrData.tax.total_tax_liability} bold highlight />
+
+            {((summary.interest_234_total || 0) > 0 || (itrData.tax.interest_234_total || 0) > 0) && (
+              <>
+                <ComputeRow label="Interest u/s 234A (late filing)" folioVal={summary.interest_234a || 0} itrVal={itrData.tax.interest_234a ?? null} />
+                <ComputeRow label="Interest u/s 234B (advance-tax default)" folioVal={summary.interest_234b || 0} itrVal={itrData.tax.interest_234b ?? null} />
+                <ComputeRow label="Interest u/s 234C (deferment)" folioVal={summary.interest_234c || 0} itrVal={itrData.tax.interest_234c ?? null} />
+                <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 1 }} />
+                <ComputeRow label="Aggregate Liability (Tax + Interest)" folioVal={summary.aggregate_liability ?? summary.total_tax} itrVal={itrData.tax.total_tax_liability + (itrData.tax.interest_234_total || 0)} bold />
+              </>
+            )}
           </SimpleCard>
 
           {/* ── 3. TAXES PAID & REFUND ─────────────────────────────── */}

@@ -18,7 +18,7 @@ from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownC
 from domains.tax_expert.tax_engine import compute_tax
 from domains.tax_expert.broker_parser import parse_zerodha_tax_pnl
 from domains.tax_expert.reconciliation import reconcile_trades, _normalize
-from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_pan
+from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_pan, update_ais_data
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,19 @@ async def parse_ais(
     raw = await file.read()
 
     try:
-        import os; os.environ["AIS_DEBUG"] = "1"; ais_data = parse_ais_pdf(raw)
+        ais_data = parse_ais_pdf(raw)
     except AISUnknownCodeError as e:
         logger.error(f"AIS Unknown Code: {e.code}")
         raise HTTPException(status_code=422, detail={"type": "AIS_UNKNOWN_CODE", "message": str(e), "code": e.code})
     except AISStructureChangedError as e:
-        import json
-        with open("/tmp/ais_diff.json", "w") as f:
-            json.dump(e.diff, f)
+        # Persist the schema diff to a temp file (cross-platform) to aid debugging.
+        import json, tempfile, os
+        try:
+            diff_path = os.path.join(tempfile.gettempdir(), "ais_diff.json")
+            with open(diff_path, "w") as f:
+                json.dump(e.diff, f)
+        except Exception:
+            pass
         logger.error(f"AIS Structure Changed: {e.diff}")
         raise HTTPException(status_code=422, detail={"type": "AIS_STRUCTURE_CHANGED", "message": str(e), "diff": e.diff})
     except Exception as e:
@@ -227,6 +232,8 @@ async def reconcile_broker(
 
     session["ais_data"] = ais_data
     session["reconciliation_flags"] = reconciliation_flags
+    # Persist the patched cost basis + flags so auto-corrections survive a backend restart.
+    update_ais_data(session_id, ais_data)
 
     return {"status": "success", "corrected": corrected_count, "duplicates_removed": duplicates_removed_count}
 

@@ -19,6 +19,7 @@ import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
 from domains.mutual_funds.sessions import get_session
+from shared.cache import MarketCache
 from shared.config import (
     BENCHMARKS, CATEGORY_COLORS, RISK_LABEL,
     EXP_RATIO_BANDS, classify_er,
@@ -35,7 +36,7 @@ from domains.mutual_funds.finance import (
     compute_consistency_score,
     is_absolute_return,
 )
-from shared.services.market_indices import fetch_benchmark_series
+from shared.services.market_indices import fetch_benchmark_series, benchmark_uses_price_index_blend
 from shared.services.market_data import (
     get_fund_benchmark,
     fetch_nav_series_by_isin,
@@ -246,6 +247,29 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
     }
 
 
+def _get_benchmark_day_chg(ticker: str, bench_data: pd.Series) -> float:
+    """
+    Day-over-day % change for the selected benchmark. Cached — this was
+    previously an uncached yf.Ticker(...).fast_info call on every single
+    /performance request, which is slow and rate-limit-prone under load.
+    """
+    cache_key = f"bench_day_chg_{ticker}"
+    cached = MarketCache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    if ticker.startswith("^") or ".NS" in ticker:
+        fast_info = yf.Ticker(ticker).fast_info
+        last = getattr(fast_info, "last_price", 0)
+        prev = getattr(fast_info, "previous_close", 1)
+        value = round(((last / prev) - 1) * 100, 2) if prev else 0.0
+    else:
+        value = round((bench_data.iloc[-1] / bench_data.iloc[-2] - 1) * 100, 2) if len(bench_data) >= 2 else 0.0
+
+    MarketCache.set(cache_key, value)
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Main Performance Endpoint
 # ---------------------------------------------------------------------------
@@ -299,6 +323,10 @@ def get_performance(
     portfolio_score = round(
         sum(r.get("fund_score", 5.0) * r.get("cur_value", 0) for r in results) / total_val,
     1)
+    # Value-weighted portfolio beta (real, not the old hardcoded ~0.94 the UI used to show)
+    portfolio_beta = round(
+        sum(r.get("beta", 1.0) * r.get("cur_value", 0) for r in results) / total_val,
+    2)
 
     # Calculate exact portfolio and benchmark XIRR to perfectly match Overview tab
     # FIX: XIRR requires full transaction history, not period-limited benchmark data.
@@ -321,15 +349,13 @@ def get_performance(
         "benchmark_label":  benchmark,
         "period":           period,
         "portfolio_score":  portfolio_score,
+        "portfolio_beta":   portfolio_beta,
+        "benchmark_price_index_blend": benchmark_uses_price_index_blend(ticker, perf_days),
         "n_strong":  sum(1 for r in results if r["verdict"] == "Strong"),
         "n_average": sum(1 for r in results if r["verdict"] == "Average"),
         "n_weak":    sum(1 for r in results if r["verdict"] == "Weak"),
         "funds":     results,
-        "benchmark_day_chg": (lambda t: (
-            round(((getattr(yf.Ticker(t).fast_info, "last_price", 0) / getattr(yf.Ticker(t).fast_info, "previous_close", 1)) - 1) * 100, 2)
-            if t.startswith("^") or ".NS" in t else 
-            round((bench_data.iloc[-1] / bench_data.iloc[-2] - 1) * 100, 2) if len(bench_data) >= 2 else 0.0
-        ))(ticker),
+        "benchmark_day_chg": _get_benchmark_day_chg(ticker, bench_data),
         "benchmark_stats": {
             "alpha": 0.0,
             "beta": 1.0,

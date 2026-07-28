@@ -99,6 +99,7 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
 }
 
 function SidebarContent({ location, navigate, isPartial, clearSession, onClose, collapsed, onToggle, onExpand }: any) {
+  const { pan } = useAppStore()
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5 }}>
       {/* Branding */}
@@ -199,8 +200,8 @@ function SidebarContent({ location, navigate, isPartial, clearSession, onClose, 
             </IconButton>
           </Box>
           <Typography sx={{ fontSize: 10, color: 'text.secondary', lineHeight: 1.6, fontWeight: 500 }}>
-            Session Secured via<br />
-            <span style={{ color: '#4EDE93' }}>AES-256 Memory Lock</span>
+            Signed in as<br />
+            <span style={{ color: '#4EDE93' }}>{pan}</span>
           </Typography>
         </Box>
       ) : (

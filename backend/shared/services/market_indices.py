@@ -202,6 +202,21 @@ _MFAPI_TO_YAHOO_MAP = {
     "119596": "LICNETFGSC.NS"   # Liquid Proxy
 }
 
+def benchmark_uses_price_index_blend(ticker: str, period_days: int) -> bool:
+    """
+    True when this benchmark request will (or may) splice pre-launch history
+    from a Yahoo PRICE index onto the modern index-fund NAV series — see
+    _splice_benchmark_series. The primary path (mfapi scheme code) is a real
+    TRI proxy (actual index-fund NAV, dividends already reinvested), but no
+    free TRI history exists for Indian indices before most index funds
+    launched, so long lookbacks (5Y/All-Time) blend in a price-only tail that
+    slightly understates returns for that older stretch (~1-1.5%/yr of
+    foregone dividends). Used purely to disclose the caveat, not to fix it —
+    there's no free TRI data source to fetch instead.
+    """
+    return str(ticker).strip().isdigit() and str(ticker).strip() in _MFAPI_TO_YAHOO_MAP and period_days > 1000
+
+
 def _splice_benchmark_series(mf_series: pd.Series, yf_series: pd.Series) -> pd.Series:
     """
     Mathematically splices a historical Yahoo Index curve onto a modern MFAPI NAV curve.

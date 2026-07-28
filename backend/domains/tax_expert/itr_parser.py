@@ -196,6 +196,19 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     surcharge = _find_value(full_text, r"Surcharge.*?([\d,]{3,}|\b0\b)") or 0.0
     cess = _find_value(full_text, r"(?:Health and Education Cess|Health & Education Cess).*?([\d,]{3,}|\b0\b)") or 0.0
 
+    # Interest u/s 234A/234B/234C and total interest+fee (Part B-TTI item 13). Grab the
+    # number immediately following each label so we don't sweep up an unrelated figure.
+    interest_234a = _find_value(full_text, r"234A[^\n\d]{0,60}?([\d,]{1,})") or 0.0
+    interest_234b = _find_value(full_text, r"234B[^\n\d]{0,60}?([\d,]{1,})") or 0.0
+    interest_234c = _find_value(full_text, r"234C[^\n\d]{0,60}?([\d,]{1,})") or 0.0
+    interest_234_total = _find_value(
+        full_text,
+        r"Total Interest and Fee[^\n\d]{0,40}?([\d,]{1,})",
+        r"Total Interest[^\n\d]{0,40}?([\d,]{1,})",
+    )
+    if interest_234_total is None:
+        interest_234_total = interest_234a + interest_234b + interest_234c
+
     total_tax_liability = _find_value(
         full_text,
         r"Aggregate liability\s*\(12\+13e\).*?([\d,]{3,}|\b0\b)",
@@ -281,6 +294,10 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
             "rebate_87a": rebate_87a,
             "surcharge": surcharge,
             "cess": cess,
+            "interest_234a": interest_234a,
+            "interest_234b": interest_234b,
+            "interest_234c": interest_234c,
+            "interest_234_total": interest_234_total,
             "total_tax_liability": total_tax_liability,
             "tds_paid": tds_tcs_paid,
             "advance_tax": advance_tax,

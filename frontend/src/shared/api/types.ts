@@ -120,6 +120,8 @@ export interface PerformanceData {
   funds: FundResult[]
   is_absolute?: boolean
   portfolio_score?: number
+  portfolio_beta?: number
+  benchmark_price_index_blend?: boolean
 }
 
 export interface AllocationData {

@@ -121,6 +121,16 @@ export default function TaxOverviewTab() {
             <ComputeRow label="Profits & Gains of Business or Profession" valueOld={fmtInr(oldRegime.income_heads.business?.total_profit || 0)} valueNew={fmtInr(newRegime.income_heads.business?.total_profit || 0)} />
             {/* CG: display total capital gains so it mathematically sums to gross total income */}
             <ComputeRow label="Capital Gains" valueOld={fmtInr(oldRegime.income_heads.capital_gains?.total ?? 0)} valueNew={fmtInr(newRegime.income_heads.capital_gains?.total ?? 0)} />
+            {((oldRegime.income_heads.capital_gains?.grandfather_benefit || 0) > 0 || (newRegime.income_heads.capital_gains?.grandfather_benefit || 0) > 0) && (
+              <Typography variant="caption" sx={{ color: 'text.secondary', pl: 4, pr: 2, display: 'block', opacity: 0.8 }}>
+                Incl. Sec 112A grandfathering benefit of {fmtInr(newRegime.income_heads.capital_gains?.grandfather_benefit || 0)} (31-Jan-2018 FMV)
+              </Typography>
+            )}
+            {((oldRegime.income_heads.capital_gains?.slab_taxed_cg || 0) > 0 || (newRegime.income_heads.capital_gains?.slab_taxed_cg || 0) > 0) && (
+              <Typography variant="caption" sx={{ color: 'text.secondary', pl: 4, pr: 2, display: 'block', opacity: 0.8 }}>
+                Incl. {fmtInr(newRegime.income_heads.capital_gains?.slab_taxed_cg || 0)} debt/specified-fund gains taxed at slab (Sec 50AA)
+              </Typography>
+            )}
             <ComputeRow label="Income from Other Sources" valueOld={fmtInr(oldRegime.income_heads.other_sources?.total || 0)} valueNew={fmtInr(newRegime.income_heads.other_sources?.total || 0)} />
             <ComputeRow label="Special Incomes (Crypto, Gaming, Misc)" valueOld={fmtInr((oldRegime.income_heads.crypto?.gains || 0) + (oldRegime.income_heads.gaming?.gains || 0) + (oldRegime.income_heads.misc_income?.total || 0))} valueNew={fmtInr((newRegime.income_heads.crypto?.gains || 0) + (newRegime.income_heads.gaming?.gains || 0) + (newRegime.income_heads.misc_income?.total || 0))} />
           </StepCard>
@@ -198,12 +208,22 @@ export default function TaxOverviewTab() {
               />
             )}
             <ComputeRow label="Add: Surcharge" valueOld={fmtInr(oldRegime.surcharge)} valueNew={fmtInr(newRegime.surcharge)} hideIfZero={false} />
+            {(oldRegime.surcharge > 0 || newRegime.surcharge > 0) && (
+              <Typography variant="caption" sx={{ color: 'text.secondary', pl: 2, pr: 2, display: 'block', opacity: 0.8 }}>
+                Surcharge on capital gains is capped at 15%{newRegime.surcharge_detail?.rate === 0.25 ? '; New Regime surcharge capped at 25%' : ''}
+                {(newRegime.surcharge_detail?.marginal_relief || 0) > 0 || (oldRegime.surcharge_detail?.marginal_relief || 0) > 0 ? '; marginal relief applied' : ''}
+              </Typography>
+            )}
             <ComputeRow label="Add: Health & Education Cess (4%)" valueOld={fmtInr(oldRegime.cess)} valueNew={fmtInr(newRegime.cess)} />
           </StepCard>
 
 
           <StepCard step="5" title="Final Settlement" color="#14B8A6" totalLabel="FINAL SETTLEMENT" totalOld={oldRegime.refund_or_due > 0 ? `REFUND: ${fmtInr(oldRegime.refund_or_due)}` : `DUE: ${fmtInr(Math.abs(oldRegime.refund_or_due))}`} totalNew={newRegime.refund_or_due > 0 ? `REFUND: ${fmtInr(newRegime.refund_or_due)}` : `DUE: ${fmtInr(Math.abs(newRegime.refund_or_due))}`}>
             <ComputeRow label="Total Tax Liability (Step 4)" valueOld={fmtInr(oldRegime.total_tax)} valueNew={fmtInr(newRegime.total_tax)} />
+            <ComputeRow label="Add: Interest u/s 234A/B/C" valueOld={fmtInr(oldRegime.interest_234_total || 0)} valueNew={fmtInr(newRegime.interest_234_total || 0)} color="#F59E0B" />
+            {((oldRegime.interest_234_total || 0) > 0 || (newRegime.interest_234_total || 0) > 0) && (
+              <ComputeRow label="Aggregate Liability (Tax + Interest)" valueOld={fmtInr(oldRegime.aggregate_liability ?? oldRegime.total_tax)} valueNew={fmtInr(newRegime.aggregate_liability ?? newRegime.total_tax)} bold />
+            )}
             <ComputeRow label="Less: TDS Deducted" valueOld={`- ${fmtInr(oldRegime.tds_paid)}`} valueNew={`- ${fmtInr(newRegime.tds_paid)}`} color="#4EDE93" />
             <ComputeRow label="Less: Advance / Self-Assessment Tax Paid" valueOld={`- ${fmtInr(oldRegime.advance_tax)}`} valueNew={`- ${fmtInr(newRegime.advance_tax)}`} color="#4EDE93" />
             <ComputeRow label="Less: Manual Taxes Overridden" valueOld={`- ${fmtInr(oldRegime.manual_tax_paid || 0)}`} valueNew={`- ${fmtInr(newRegime.manual_tax_paid || 0)}`} color="#4EDE93" />

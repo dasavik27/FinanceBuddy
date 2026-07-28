@@ -48,6 +48,11 @@ def get_insights(session_id: str):
         nudges.append({"type":"info","message":f"Holding {num_funds} funds. Consolidation could reduce overlap and improve alpha."})
     if liquid_pct < 5 and total_value > 500000:
         nudges.append({"type":"warn","message":f"Your liquid reserves ({liquid_pct:.1f}%) are below the recommended 5-10% for emergencies."})
+    if liquid_pct > 15:
+        # Cash-drag nudge: excess Liquid holdings above the 5-10% emergency-fund norm may just be
+        # idle "lazy money" losing out on growth-asset returns — but we can't tell from CAS data
+        # alone whether it's earmarked for a near-term goal, so this is a prompt, not a verdict.
+        nudges.append({"type":"info","message":f"₹{liquid_val:,.0f} ({liquid_pct:.1f}%) is in Liquid funds — well above the 5-10% emergency-fund norm. If this isn't earmarked for a near-term goal, the excess may be a cash drag on long-term returns; consider deploying it if it's just sitting idle."})
 
     # 3. Wealth Planning Horizon Timeline
     from shared.config import get_standard_category

@@ -82,6 +82,36 @@ export const apiClient = {
     return data
   },
 
+  getTaxHarvest: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/tax-harvest`)
+    return data
+  },
+
+  getSipProjection: async (sid: string, params: Record<string, any> = {}): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/sip-projection`, { params })
+    return data
+  },
+
+  getXirrByFy: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/xirr-by-fy`)
+    return data
+  },
+
+  getSipAttribution: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/sip-attribution`)
+    return data
+  },
+
+  getWhatIf: async (sid: string, params: Record<string, any>): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/what-if`, { params })
+    return data
+  },
+
+  getMandateOverlap: async (sid: string): Promise<any> => {
+    const { data } = await api.get(`/mutual-funds/planning/${sid}/mandate-overlap`)
+    return data
+  },
+
 
   getInsights: async (sid: string, params: Record<string, any> = {}): Promise<InsightsData> => {
     const { data } = await api.get<InsightsData>(`/mutual-funds/insights/${sid}/insights`, { params })
@@ -207,8 +237,9 @@ export const apiClient = {
     return data
   },
 
-  postTaxOverrides: async (sid: string, overrides: any): Promise<any> => {
-    const { data } = await api.post(`/tax-expert/${sid}/tax/recalculate`, overrides)
+  postTaxOverrides: async (sid: string, overrides: any, regime?: string): Promise<any> => {
+    const url = regime ? `/tax-expert/${sid}/tax/recalculate?regime=${regime}` : `/tax-expert/${sid}/tax/recalculate`
+    const { data } = await api.post(url, overrides)
     return data
   },
 

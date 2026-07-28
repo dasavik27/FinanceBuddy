@@ -222,7 +222,7 @@ export default function DocumentUpload({ title, subtitle, dropText, dropSubText,
 
         <Typography variant="caption" display="block" textAlign="center" sx={{ color: '#64748B', fontWeight: 600 }}>
           <ShieldIcon sx={{ fontSize: 12, verticalAlign: 'middle', mr: 0.5, color: '#4EDE93' }} />
-          Your file is never uploaded to any server. 100% in-memory processing.
+          Processed on your own backend only — never shared with a third party. Sessions are cached temporarily to power your upload history.
         </Typography>
       </Paper>
 

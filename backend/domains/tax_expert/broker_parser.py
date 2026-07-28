@@ -25,22 +25,30 @@ def parse_zerodha_tax_pnl(raw_bytes: bytes) -> list:
             df = df.dropna(how='all')
             
             current_section = None
-            
+            current_slab = False
+
             for index, row in df.iterrows():
                 row_vals = [str(x) for x in row.values if not pd.isna(x)]
                 if not row_vals:
                     continue
-                
+
                 first_val = row_vals[0].strip()
-                
+
                 # Identify section headers
                 if first_val.startswith("Short Term Trades") or first_val.startswith("Long Term Trades"):
                     current_section = "STCG" if "Short" in first_val else "LTCG"
+                    current_slab = False
                     continue
-                elif first_val in ["Non Equity", "Debt - Purchases post 2023-04-01"]:
+                elif first_val.startswith("Debt") and "2023" in first_val:
+                    # Units purchased on/after 2023-04-01 are always slab-taxed (Section 50AA).
+                    current_section = "SLAB"
+                    current_slab = True
+                    continue
+                elif first_val.startswith("Non Equity"):
                     current_section = None
+                    current_slab = False
                     continue
-                    
+
                 # Parse trade rows
                 if current_section and len(row_vals) >= 5 and first_val != "Symbol":
                     try:
@@ -48,7 +56,7 @@ def parse_zerodha_tax_pnl(raw_bytes: bytes) -> list:
                         buy = float(row_vals[2].replace(',', ''))
                         sell = float(row_vals[3].replace(',', ''))
                         pnl = float(row_vals[4].replace(',', ''))
-                        
+
                         trades.append({
                             "security": first_val,
                             "type": current_section,
@@ -56,9 +64,10 @@ def parse_zerodha_tax_pnl(raw_bytes: bytes) -> list:
                             "cost": buy,
                             "consideration": sell,
                             "gain": pnl,
+                            "slab_taxed": current_slab,
                             "source": "Zerodha"
                         })
                     except ValueError:
                         pass
-                        
+
     return trades

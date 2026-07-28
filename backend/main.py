@@ -9,6 +9,8 @@ infrastructure layer (auth, market data, session vault, upload history) used by
 all domains.
 """
 
+import os
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,7 @@ from shared.routers import auth, market, accounts, history
 
 # Domain: Mutual Funds
 from domains.mutual_funds.routers import (
-    portfolio, overview, holdings, performance, compare, insights, rebalance, journey,
+    portfolio, overview, holdings, performance, compare, insights, rebalance, journey, planning,
 )
 
 # Domain: Equity (Indian Stocks) — placeholder, feature not yet built
@@ -41,9 +43,15 @@ app = FastAPI(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Cross-Origin Resource Sharing (CORS) Security Configuration
+# allow_origins=["*"] with allow_credentials=True is an invalid/unsafe combination —
+# browsers reject credentialed requests against a wildcard origin anyway. List explicit
+# dev origins here; override via FINANCEBUDDY_ALLOWED_ORIGINS (comma-separated) in production.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = os.getenv("FINANCEBUDDY_ALLOWED_ORIGINS", _default_origins).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,6 +72,7 @@ app.include_router(compare.router,      prefix="/mutual-funds/compare",       ta
 app.include_router(insights.router,     prefix="/mutual-funds/insights",      tags=["Mutual Funds - Smart Nudges & CIO Advisories"])
 app.include_router(rebalance.router,    prefix="/mutual-funds/rebalance",     tags=["Mutual Funds - Rebalancing & Drift Audit"])
 app.include_router(journey.router,      prefix="/mutual-funds/journey",       tags=["Mutual Funds - Wealth Journey Timeline"])
+app.include_router(planning.router,     prefix="/mutual-funds/planning",      tags=["Mutual Funds - Tax Harvest & Goal Planning"])
 
 # ── Domain: Equity (Indian Stocks) ─────────────────────────────────────────
 # Not yet built — reserved namespace. The UI currently shows "Coming Soon".

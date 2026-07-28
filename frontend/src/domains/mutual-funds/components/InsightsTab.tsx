@@ -12,6 +12,11 @@ import { SectionHeader, ScoreRing, ProgressRow } from '../../../shared/component
 import { fmtInr } from '../../../shared/utils/fmt'
 import { motion, AnimatePresence } from 'framer-motion'
 import RebalanceTab from './RebalanceTab'
+import TaxHarvestPanel from './TaxHarvestPanel'
+import GoalProjectorPanel from './GoalProjectorPanel'
+import YearlyProgressPanel from './YearlyProgressPanel'
+import MandateOverlapPanel from './MandateOverlapPanel'
+import WhatIfPanel from './WhatIfPanel'
 
 const NUDGE_ICON: Record<string, any> = {
   success: <CheckCircleIcon  sx={{ fontSize: 22, color: '#4EDE93', flexShrink: 0 }} />,
@@ -87,6 +92,7 @@ export default function InsightsTab() {
       {activeSubTab === 'rebalance' ? (
         <RebalanceTab isSubTab={true} />
       ) : (
+        <>
         <Grid container spacing={4}>
           {/* ── Left Column: Health Scoring & Vitals ─────────────────────────────── */}
           <Grid item xs={12} md={4}>
@@ -280,6 +286,13 @@ export default function InsightsTab() {
             )}
           </Grid>
         </Grid>
+
+        <TaxHarvestPanel />
+        <GoalProjectorPanel />
+        <YearlyProgressPanel />
+        <MandateOverlapPanel />
+        <WhatIfPanel />
+        </>
       )}
     </Box>
   )

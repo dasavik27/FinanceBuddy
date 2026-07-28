@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Header
 from domains.mutual_funds.parser import parse_cas_file
 from domains.mutual_funds.sessions import create_session, get_session
-from shared.config import BENCHMARKS, TEST_PASSWORD
+from shared.config import BENCHMARKS
 from shared.cache import MarketCache
 from shared.services.market_indices import clear_benchmark_cache
 from shared.services.market_data import resolve_scheme_code_from_isin, clear_market_data_cache
@@ -22,8 +22,12 @@ async def parse_cas(
     x_upload_type: str = Header("mutual_funds")
 ):
     raw = await file.read()
-    # Use hardcoded test password if none provided (as requested by user)
-    actual_pw = password if password and password.strip() else TEST_PASSWORD
+    # CAS statements are conventionally password-protected with the investor's own PAN.
+    # If no password is supplied, fall back to the logged-in profile's PAN (X-User-PAN header)
+    # rather than a hardcoded credential.
+    actual_pw = password if password and password.strip() else x_user_pan
+    if not actual_pw:
+        raise HTTPException(status_code=400, detail="Password is required (or log in with your PAN so it can be used automatically).")
     df_h, df_t, df_s, err, is_partial = parse_cas_file(raw, actual_pw)
 
     if err:

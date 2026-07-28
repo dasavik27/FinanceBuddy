@@ -164,7 +164,7 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
                 elif code.startswith("TDS-192"):
                     if "AMOUNTPAIDCREDITED" not in headers and "TDSDEDUCTED" not in headers: current_info_code = None; continue
                     validate_schema("salary_tds", raw_headers)
-                    _process_salary_tds(df, headers, result)
+                    _process_salary_tds(df, headers, result, current_info_source)
                 elif code.startswith("TDS-ANN.II-SAL") or code.startswith("TDS-ANN"):
                     if "GROSSSALARY" not in headers: current_info_code = None; continue
                     validate_schema("salary_annexure", raw_headers)
@@ -239,17 +239,11 @@ def _extract_personal(text: str) -> dict:
     if fy_match: personal["fy"] = fy_match.group(1)
     return personal
 
-def _process_salary_tds(df, headers, result):
-    # Set employer from current_info_source
-    if "employer" not in result["salary"] or not result["salary"]["employer"]:
-        import inspect
-        frame = inspect.currentframe().f_back
-        while frame:
-            if "current_info_source" in frame.f_locals:
-                result["salary"]["employer"] = frame.f_locals.get("current_info_source", "")
-                break
-            frame = frame.f_back
-            
+def _process_salary_tds(df, headers, result, source=""):
+    # Set employer from the Information Source of the current summary table.
+    if source and (not result["salary"].get("employer")):
+        result["salary"]["employer"] = source
+
     # Map row data to result["salary"]["quarterly"]
     for idx, row in df.iloc[1:].iterrows():
         try:
@@ -266,7 +260,7 @@ def _process_salary_tds(df, headers, result):
                 })
                 result["salary"]["gross"] += amt
                 result["salary"]["tds_deducted"] += tds
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_salary_annexure(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -281,7 +275,7 @@ def _process_salary_annexure(df, headers, result):
                 result["salary_annexure"]["gross_salary"] += gross
                 result["salary_annexure"]["perquisites"] += perq
                 result["salary_annexure"]["profits_lieu"] += prof
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_dividend_sft(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -289,7 +283,7 @@ def _process_dividend_sft(df, headers, result):
             amt = _clean_amount(row[headers.index("DIVIDENDAMOUNT")])
             if amt > 0:
                 result["dividends"].append({"amount": amt, "source": "SFT-015", "type": "SFT-015"})
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_dividend_tds(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -303,7 +297,7 @@ def _process_dividend_tds(df, headers, result):
                     "type": "TDS-194",
                     "tds_deducted": tds
                 })
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_interest(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -315,7 +309,7 @@ def _process_interest(df, headers, result):
                     result["interest_savings"].append({"amount": amt, "type": "savings"})
                 else:
                     result["interest_deposits"].append({"amount": amt, "type": "term_deposit"})
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_cg_equity(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -337,9 +331,13 @@ def _process_cg_equity(df, headers, result):
                     "quantity": _clean_amount(row[headers.index("QUANTITY")]) if "QUANTITY" in headers else 0,
                     "consideration": cons,
                     "cost": cost,
-                    "gain": cons - cost
+                    "gain": cons - cost,
+                    # 31-Jan-2018 grandfathering FMV (Section 112A); the engine only applies it
+                    # when the acquisition date is known to precede the cut-off.
+                    "fmv_31jan2018": _clean_amount(row[headers.index("FAIRMARKETVALUE")]) if "FAIRMARKETVALUE" in headers else 0,
+                    "sale_date": _parse_date(row[headers.index("DATEOFSALETRANSFER")]) if "DATEOFSALETRANSFER" in headers else "",
                 }
-                
+
                 # Dynamic Routing based on Security Class
                 if "unlisted" in sec_class or "foreign" in sec_class:
                     result["cg_unlisted"].append(item)
@@ -351,7 +349,7 @@ def _process_cg_equity(df, headers, result):
                     result["capital_gains_mf_other"].append(item)
                 else:
                     result["capital_gains_equity"].append(item)
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_cg_mf(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -375,15 +373,22 @@ def _process_cg_mf(df, headers, result):
                     "quantity": _clean_amount(row[headers.index("QUANTITY")]),
                     "consideration": cons,
                     "cost": cost,
-                    "gain": cons - cost
+                    "gain": cons - cost,
+                    "fmv_31jan2018": _clean_amount(row[headers.index("FAIRMARKETVALUE")]) if "FAIRMARKETVALUE" in headers else 0,
+                    "sale_date": _parse_date(row[headers.index("DATEOFSALETRANSFER")]) if "DATEOFSALETRANSFER" in headers else "",
                 }
-                
+
                 # Dynamic routing based on Security Class instead of just fund name guessing
-                if "other" in sec_class or "liquid" in fund.lower() or "debt" in fund.lower():
+                is_debt = ("other" in sec_class or "liquid" in fund.lower() or "debt" in fund.lower()
+                           or "gilt" in fund.lower() or "government securities" in fund.lower())
+                if is_debt:
+                    # Flag debt-oriented units so the engine can apply Section 50AA slab
+                    # taxation when the acquisition date is on/after the 01-Apr-2023 cut-off.
+                    item["is_debt"] = True
                     result["capital_gains_mf_other"].append(item)
                 else:
                     result["capital_gains_mf_equity"].append(item)
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _extract_dividends_fallback(text: str) -> list:
     divs = []
@@ -409,7 +414,7 @@ def _process_real_estate(df, headers, result):
                     "gain": amt, 
                     "needs_review": True
                 })
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_tax_payments(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -424,7 +429,7 @@ def _process_tax_payments(df, headers, result):
                     "total": total,
                     "date": _parse_date(row[headers.index("DATEOFDEPOSIT")]) if "DATEOFDEPOSIT" in headers else ""
                 })
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_refunds(df, headers, result):
     for idx, row in df.iloc[1:].iterrows():
@@ -436,5 +441,5 @@ def _process_refunds(df, headers, result):
                     "amount": amt,
                     "date": _parse_date(row[headers.index("DATEOFPAYMENT")]) if "DATEOFPAYMENT" in headers else ""
                 })
-        except Exception: pass
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 

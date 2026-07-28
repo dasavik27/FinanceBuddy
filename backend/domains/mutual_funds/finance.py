@@ -151,6 +151,274 @@ def compute_xirr(df_t: pd.DataFrame, current_value: float) -> float:
         return 0.0
 
 
+def _fy_label(d: date) -> str:
+    """Indian financial year label (Apr–Mar) for a given date, e.g. 31-Mar-2024 -> 'FY23-24'."""
+    start_year = d.year if d.month >= 4 else d.year - 1
+    return f"FY{start_year % 100:02d}-{(start_year + 1) % 100:02d}"
+
+
+def compute_xirr_by_fy(df_t_all: pd.DataFrame, df_h: pd.DataFrame) -> List[Dict]:
+    """
+    Cumulative-to-date XIRR sampled at each Indian financial-year end (31 Mar),
+    plus a final "year-to-date" snapshot for the current partial FY — answers
+    "am I improving?" year over year.
+
+    Deliberately reuses the same FIFO lot reconstruction (tax_lots.compute_fund_lots)
+    and XIRR engine (compute_xirr) used elsewhere in the app, rather than a separate
+    valuation model — so this can never silently drift from the headline XIRR number.
+    Each snapshot's terminal value is units-held-as-of-that-date x that fund's real
+    historical NAV on/before that date (never a fabricated or interpolated value).
+    """
+    from domains.mutual_funds.tax_lots import compute_fund_lots
+    from shared.services.market_data import fetch_nav_series_by_isin, fetch_nav_series_by_code, fetch_nav_series_by_name
+
+    if df_t_all is None or df_t_all.empty:
+        return []
+
+    df_t = df_t_all.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df_t["Date"]):
+        df_t["Date"] = pd.to_datetime(df_t["Date"])
+    df_t = df_t.sort_values("Date")
+
+    first_date = df_t["Date"].min().date()
+    today = datetime.now().date()
+
+    # Fund universe = every fund ever transacted, not just currently-held ones
+    # (df_h only has today's holdings — a fund fully exited last year still needs
+    # to count towards that year's cumulative value).
+    fund_meta = {}
+    if df_h is not None and not df_h.empty:
+        for _, row in df_h.iterrows():
+            f = str(row.get("Fund", ""))
+            if f:
+                fund_meta[f] = (str(row.get("ISIN", "")).strip(), str(row.get("Scheme_Code", "")).strip())
+    for f in df_t["Fund"].dropna().unique():
+        f = str(f)
+        if f not in fund_meta:
+            fund_meta[f] = ("", "")
+
+    fund_navs = {}
+    for fn, (isin, scode) in fund_meta.items():
+        navs = pd.Series(dtype=float)
+        if isin and isin not in ("N/A", "", "nan", "None"):
+            navs = fetch_nav_series_by_isin(isin, 9999)
+        if navs.empty and scode and scode not in ("N/A", "", "nan", "None"):
+            navs = fetch_nav_series_by_code(scode, 9999)
+        if navs.empty:
+            navs = fetch_nav_series_by_name(fn, 9999)
+        if not navs.empty:
+            fund_navs[fn] = navs.sort_index().dropna()
+
+    # Every FY-end (31 Mar) strictly before today, plus today as a final YTD snapshot
+    fy_ends = []
+    start_year = first_date.year if first_date.month >= 4 else first_date.year - 1
+    cursor = date(start_year + 1, 3, 31)
+    while cursor < today:
+        fy_ends.append((cursor, False))
+        cursor = date(cursor.year + 1, 3, 31)
+    if not (today.month == 3 and today.day == 31):
+        fy_ends.append((today, True))
+
+    results = []
+    for snapshot_date, is_partial in fy_ends:
+        df_t_upto = df_t[df_t["Date"] <= pd.Timestamp(snapshot_date)]
+        if df_t_upto.empty:
+            continue
+
+        total_value = 0.0
+        for fn in fund_meta.keys():
+            lots = compute_fund_lots(df_t_upto, fn)
+            units_held = sum(l["units"] for l in lots)
+            if units_held <= 0:
+                continue
+            navs = fund_navs.get(fn)
+            nav_at_date = 0.0
+            if navs is not None and not navs.empty:
+                past = navs[navs.index.date <= snapshot_date]
+                nav_at_date = float(past.iloc[-1]) if not past.empty else float(navs.iloc[0])
+            else:
+                # No NAV history source resolved for this fund — fall back to its
+                # last known transaction NAV as of this date rather than dropping it.
+                fund_txns = df_t_upto[df_t_upto["Fund"] == fn]
+                nav_rows = fund_txns[fund_txns["NAV"].astype(float) > 0].sort_values("Date")
+                nav_at_date = float(nav_rows["NAV"].iloc[-1]) if not nav_rows.empty else 0.0
+            total_value += units_held * nav_at_date
+
+        if total_value <= 0:
+            continue
+
+        results.append({
+            "fy": _fy_label(snapshot_date) + (" (YTD)" if is_partial else ""),
+            "as_of": snapshot_date.isoformat(),
+            "cumulative_value": round(total_value, 0),
+            "cumulative_xirr": compute_xirr(df_t_upto, total_value),
+            "is_partial_fy": is_partial,
+        })
+
+    return results
+
+
+def simulate_historical_sip(nav_series: pd.Series, monthly_amount: float, years: int) -> Dict:
+    """
+    Replays a hypothetical SIP into a CANDIDATE fund (one you don't currently
+    hold) using its real historical NAV series — "if I'd invested Rs.X/month in
+    this fund for the last N years, what would it be worth today?" Every NAV
+    point used is real fetched data (mfapi/Yahoo); nothing here is fabricated
+    or interpolated beyond ordinary forward-fill for non-trading days.
+    """
+    if nav_series is None or nav_series.empty or monthly_amount <= 0 or years <= 0:
+        return {}
+
+    series = nav_series.sort_index().dropna()
+    if len(series) < 2:
+        return {"error": "Not enough NAV history for this fund to simulate."}
+
+    end_date = series.index.max()
+    start_date = end_date - pd.DateOffset(years=years)
+    window = series[series.index >= start_date]
+    if window.empty:
+        return {"error": "Not enough NAV history for this fund to simulate this window."}
+
+    monthly = window.resample("MS").first().dropna()
+    monthly = monthly[monthly > 0]
+    if monthly.empty:
+        return {"error": "Not enough NAV history for this fund to simulate this window."}
+
+    total_units = float((monthly_amount / monthly).sum())
+    total_invested = monthly_amount * len(monthly)
+    current_nav = float(series.iloc[-1])
+    final_value = total_units * current_nav
+    actual_years = (end_date - monthly.index[0]).days / 365.25
+
+    cagr = (((final_value / total_invested) ** (1 / actual_years)) - 1) * 100 if actual_years > 0 and total_invested > 0 else 0.0
+
+    return {
+        "installments": len(monthly),
+        "total_invested": round(total_invested, 0),
+        "final_value": round(final_value, 0),
+        "gain": round(final_value - total_invested, 0),
+        "cagr_pct": round(cagr, 2),
+        "wealth_multiple": round(final_value / total_invested, 2) if total_invested > 0 else 0.0,
+        "actual_start_date": monthly.index[0].date().isoformat(),
+        "actual_end_date": end_date.date().isoformat(),
+        "requested_years": years,
+    }
+
+
+def compute_mandate_overlap(df_h: pd.DataFrame) -> Dict:
+    """
+    Category + Cap-Type "mandate overlap" — a PROXY for true stock-level
+    portfolio overlap, not the real thing.
+
+    Real overlap analysis needs each fund's underlying stock holdings. No
+    reliable source for that exists for Indian mutual funds in this app —
+    Yahoo Finance's per-fund holdings/sector data is sparse/best-effort for
+    Indian ISINs (the reason a deterministic-fallback engine exists elsewhere
+    to paper over its gaps), and there's no AMC portfolio-disclosure feed
+    wired in. Rather than present fabricated stock-level overlap numbers,
+    this groups funds that share the same Category + Cap Type — data already
+    reliably present in every CAS statement — as a directionally useful signal:
+    funds with the same mandate tend to hold similar stocks, but the actual
+    overlap % can only be confirmed against each fund's factsheet.
+    """
+    if df_h is None or df_h.empty:
+        return {"groups": [], "method": "category_cap_type_proxy", "disclaimer": _MANDATE_OVERLAP_DISCLAIMER}
+
+    total_value = float(df_h["Market Value"].sum())
+    if total_value <= 0:
+        return {"groups": [], "method": "category_cap_type_proxy", "disclaimer": _MANDATE_OVERLAP_DISCLAIMER}
+
+    groups = []
+    group_cols = [c for c in ("Category", "Cap Type") if c in df_h.columns]
+    if not group_cols:
+        return {"groups": [], "method": "category_cap_type_proxy", "disclaimer": _MANDATE_OVERLAP_DISCLAIMER}
+
+    for key, g in df_h.groupby(group_cols):
+        if len(g) < 2:
+            continue
+        key_tuple = key if isinstance(key, tuple) else (key,)
+        group_value = float(g["Market Value"].sum())
+        same_amc = g["AMC"].nunique() == 1 if "AMC" in g.columns else False
+        groups.append({
+            "category": key_tuple[0],
+            "cap_type": key_tuple[1] if len(key_tuple) > 1 else None,
+            "fund_count": len(g),
+            "combined_value": round(group_value, 0),
+            "combined_weight_pct": round(group_value / total_value * 100, 1),
+            "same_amc": bool(same_amc),
+            "severity": "high" if same_amc else ("moderate" if len(g) > 2 else "low"),
+            "funds": [
+                {
+                    "fund": r.get("Fund"),
+                    "amc": r.get("AMC"),
+                    "value": round(float(r.get("Market Value", 0) or 0), 0),
+                    "weight_pct": round(float(r.get("Market Value", 0) or 0) / total_value * 100, 1),
+                }
+                for _, r in g.iterrows()
+            ],
+        })
+
+    groups.sort(key=lambda x: -x["combined_weight_pct"])
+    return {"groups": groups, "method": "category_cap_type_proxy", "disclaimer": _MANDATE_OVERLAP_DISCLAIMER}
+
+
+_MANDATE_OVERLAP_DISCLAIMER = (
+    "This groups funds sharing the same Category + Cap Type as a mandate-overlap proxy — "
+    "not true stock-level portfolio overlap. No reliable underlying-holdings data source "
+    "exists for Indian mutual funds in this app; confirm actual overlap against each fund's "
+    "factsheet before consolidating."
+)
+
+
+def compute_sip_lumpsum_attribution(df_t: pd.DataFrame, total_value: float) -> Dict:
+    """
+    Splits invested capital and current value between SIP-sourced and
+    lumpsum-sourced contributions.
+
+    Current-value attribution is an APPROXIMATION: it splits total_value
+    pro-rata by each source's share of invested capital, i.e. it assumes SIP
+    and lumpsum contributions grew at the same rate. Getting an exact split
+    would require tracking which specific lots (SIP vs lumpsum) remain
+    unsold post-redemption — not attempted here; the pro-rata split is
+    disclosed as such rather than presented as an exact figure.
+    """
+    if df_t is None or df_t.empty or total_value <= 0:
+        return {}
+
+    sip_invested = lumpsum_invested = 0.0
+    for _, row in df_t.iterrows():
+        t_type = str(row.get("Type", "")).upper()
+        units = float(row.get("Units", 0) or 0)
+        amt = abs(float(row.get("Amount", 0) or 0))
+        nav = float(row.get("NAV", 0) or 0)
+        if amt == 0 and units != 0 and nav > 0:
+            amt = abs(units * nav)
+
+        is_buy = units > 0 or any(x in t_type for x in ("BUY", "PURCHASE", "SIP", "STP-IN", "SWITCH-IN"))
+        if not is_buy or amt == 0:
+            continue
+
+        if "SIP" in t_type:
+            sip_invested += amt
+        else:
+            lumpsum_invested += amt
+
+    total_invested = sip_invested + lumpsum_invested
+    if total_invested <= 0:
+        return {}
+
+    sip_share = sip_invested / total_invested
+    return {
+        "sip_invested": round(sip_invested, 0),
+        "lumpsum_invested": round(lumpsum_invested, 0),
+        "sip_current_value": round(total_value * sip_share, 0),
+        "lumpsum_current_value": round(total_value * (1 - sip_share), 0),
+        "sip_share_pct": round(sip_share * 100, 1),
+        "is_approximate": True,
+        "note": "Current-value split is approximate — assumes SIP and lumpsum contributions grew at the same rate since each was invested.",
+    }
+
+
 def is_absolute_return(df_t: pd.DataFrame) -> bool:
     """
     Evaluates whether the investment holding period is strictly less than 1 year (365 days).
