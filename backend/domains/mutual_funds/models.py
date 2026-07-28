@@ -7,9 +7,9 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from core.finance import compute_xirr, compute_benchmark_xirr, compute_period_comparison, is_absolute_return
-from services.market_indices import fetch_benchmark_series
-from core.config import BENCHMARKS, PERIOD_MAP, get_standard_category, EXP_RATIO_BANDS, TAX_RATES
+from domains.mutual_funds.finance import compute_xirr, compute_benchmark_xirr, compute_period_comparison, is_absolute_return
+from shared.services.market_indices import fetch_benchmark_series
+from shared.config import BENCHMARKS, PERIOD_MAP, get_standard_category, EXP_RATIO_BANDS, TAX_RATES
 
 class Portfolio:
     def __init__(self, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool = False):
@@ -28,7 +28,7 @@ class Portfolio:
         """Re-fetch live NAVs from AMFI and update all holdings in memory."""
         if self.df_h.empty:
             return
-        from services.market_data import fetch_live_navs_with_date
+        from shared.services.market_data import fetch_live_navs_with_date
         live_map, date_map = fetch_live_navs_with_date(refresh=refresh)
             
         def update_row(row):
@@ -65,13 +65,13 @@ class Portfolio:
                     
             # ── Permanently Embed TER for Expense Drag Calculations ──
             if "TER" not in row or pd.isna(row.get("TER")):
-                from services.market_data import resolve_scheme_code_from_isin, fetch_fund_ter
+                from shared.services.market_data import resolve_scheme_code_from_isin, fetch_fund_ter
                 code = resolve_scheme_code_from_isin(isin) if isin else None
                 ter = fetch_fund_ter(code, row.get("Plan", "Direct")) if code else None
                 if ter is not None and ter > 0:
                     row["TER"] = round(ter, 2)
                 else:
-                    from services.fallbacks.deterministic import DeterministicFallback
+                    from shared.services.fallbacks.deterministic import DeterministicFallback
                     fb = DeterministicFallback().generate_fallbacks(
                         isin=isin or "", 
                         category=row.get("Category", ""), 
@@ -174,40 +174,4 @@ class Portfolio:
             "by_category": df.groupby("Category")["Market Value"].sum().reset_index().rename(
                 columns={"Category": "label", "Market Value": "value"}
             ).to_dict(orient="records")
-        }
-
-    def get_tax_profile(self) -> Dict[str, Any]:
-        """Aggregate FIFO-based tax estimates across all holdings."""
-        from core.finance import compute_fifo_tax
-        from datetime import datetime
-
-        total_stcg = 0.0
-        total_ltcg = 0.0
-        total_stcg_tax = 0.0
-        total_ltcg_tax = 0.0
-
-        for _, row in self.df_h.iterrows():
-            fund = row.get("Fund", "")
-            units = float(row.get("Units", 0) or 0)
-            nav = float(row.get("NAV", 0) or 0)
-            category = row.get("Category", "Equity")
-
-            if units <= 0 or nav <= 0:
-                continue
-
-            # Filter transactions for this fund
-            fund_txs = self.df_t[self.df_t["Fund"] == fund] if "Fund" in self.df_t.columns else pd.DataFrame()
-
-            result = compute_fifo_tax(fund_txs, units, nav, category)
-            total_stcg += result.get("stcg_gain", 0)
-            total_ltcg += result.get("ltcg_gain", 0)
-            total_stcg_tax += result.get("stcg_tax", 0)
-            total_ltcg_tax += result.get("ltcg_tax", 0)
-
-        return {
-            "stcg_gain": round(total_stcg, 2),
-            "ltcg_gain": round(total_ltcg, 2),
-            "stcg_tax": round(total_stcg_tax, 2),
-            "ltcg_tax": round(total_ltcg_tax, 2),
-            "total_tax": round(total_stcg_tax + total_ltcg_tax, 2),
         }

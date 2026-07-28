@@ -143,30 +143,6 @@ export interface AllocationData {
   reg_pct: number
 }
 
-export interface TaxData {
-  elss_value: number
-  elss_invested: number
-  elss_count: number
-  equity_gain: number
-  debt_gain: number
-  ltcg_gain: number
-  stcg_gain: number
-  ltcg_equity_tax: number
-  ltcg_debt_tax: number
-  stcg_equity_tax: number
-  stcg_debt_tax: number
-  total_tax: number
-  equity_ltcg: number
-  debt_ltcg: number
-  equity_stcg: number
-  debt_stcg: number
-  ltcl: number
-  stcl: number
-  total_withdrawals: number
-  fund_breakdown: any[]
-  elss_lockin: any[]
-}
-
 export interface InsightsData {
   nudges: { type: string; message: string }[]
   goal_timeline: any[]
@@ -178,16 +154,6 @@ export interface InsightsData {
   expense_drag: number
   expense_pct: number
   elss_val: number
-}
-
-export interface SipProjection {
-  flat_fv: number
-  flat_inv: number
-  flat_gain: number
-  stepup_fv: number
-  stepup_inv: number
-  stepup_gain: number
-  extra_wealth: number
 }
 
 // ── API calls ────────────────────────────────────────────────────────────────
@@ -262,30 +228,6 @@ export const apiClient = {
     return data
   },
 
-  getTax: async (sid: string, params: Record<string, any> = {}): Promise<TaxData> => {
-    const { data } = await api.get<TaxData>(`/portfolio/${sid}/tax`, { params })
-    return data
-  },
-  
-  getTaxYears: async (sid: string): Promise<{ years: string[] }> => {
-    const { data } = await api.get<{ years: string[] }>(`/portfolio/${sid}/tax/years`)
-    return data
-  },
-
-  getTaxHarvest: async (sid: string): Promise<any> => {
-    const { data } = await api.get(`/portfolio/${sid}/tax/harvest`)
-    return data
-  },
-
-  getTaxOptimize: async (sid: string): Promise<any> => {
-    const { data } = await api.get(`/portfolio/${sid}/tax/optimize`)
-    return data
-  },
-
-  simulateTax: async (sid: string, fund: string, units_to_sell: number): Promise<any> => {
-    const { data } = await api.get(`/portfolio/${sid}/tax/simulate`, { params: { fund, units_to_sell } })
-    return data
-  },
 
   getInsights: async (sid: string, params: Record<string, any> = {}): Promise<InsightsData> => {
     const { data } = await api.get<InsightsData>(`/portfolio/${sid}/insights`, { params })
@@ -307,10 +249,6 @@ export const apiClient = {
     return data
   },
 
-  sipProjection: async (body: any): Promise<SipProjection> => {
-    const { data } = await api.post<SipProjection>('/sip/projection', body)
-    return data
-  },
 
   getCategoryPeers: async (category: string): Promise<{ peers: any[], fallback_triggered?: boolean }> => {
     const { data } = await api.get('/compare/peers', { params: { category } })
@@ -357,13 +295,6 @@ export const apiClient = {
     return data
   },
 
-  parseBrokerFile: async (file: File): Promise<any> => {
-    const fd = new FormData()
-    fd.append('file', file)
-    const res = await api.post('/portfolio/parse-broker', fd)
-    return res.data
-  },
-  
   reconcileBrokerFile: async (sessionId: string, file: File): Promise<any> => {
     const fd = new FormData()
     fd.append('broker_file', file)
@@ -385,13 +316,6 @@ export const apiClient = {
   clearSystemCaches: async (): Promise<any> => {
     const res = await api.post('/accounts/clear_caches')
     return res.data
-  },
-
-  parseForm16: async (sid: string, file: File) => {
-    const fd = new FormData()
-    fd.append('form16_file', file)
-    const { data } = await api.post(`/tax-expert/${sid}/tax/form16`, fd)
-    return data
   },
 
   uploadITR: async (sid: string, file: File) => {
