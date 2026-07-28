@@ -19,7 +19,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
-from services.providers.factory import get_provider
+from shared.services.providers.factory import get_provider
 import logging
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ def fetch_benchmark_series(ticker: str, period_days: int = 365, refresh: bool = 
     Never returns fabricated data.
     """
     # ── Cache check ───────────────────────────────────────────────────────
-    from core import config
+    from shared import config
     if config.CACHE_TTL_MINUTES <= 0 or refresh:
         return _fetch_benchmark_series_uncached(ticker, period_days)
 
@@ -245,12 +245,12 @@ def _fetch_benchmark_series_uncached(ticker: str, period_days: int) -> pd.Series
 
     # ── 2. ISIN (e.g. "INF879O01019") ─────────────────────────────────────
     if len(str(ticker)) == 12 and str(ticker)[:2].isalpha():
-        from services.market_data import fetch_nav_series_by_isin
+        from shared.services.market_data import fetch_nav_series_by_isin
         return fetch_nav_series_by_isin(ticker, period_days)
 
     # ── 3. MF Scheme Code (numeric string, e.g. "122639") ─────────────────
     if str(ticker).strip().isdigit() and len(str(ticker).strip()) >= 5:
-        from services.market_data import fetch_nav_series_by_code
+        from shared.services.market_data import fetch_nav_series_by_code
         series = fetch_nav_series_by_code(ticker, period_days)
         
         # ── HYBRID FALLBACK: If MFAPI series is too short for history, splice with Yahoo
@@ -401,7 +401,7 @@ def get_benchmark_trailing_returns(ticker: str) -> Dict[str, Optional[float]]:
     Fetch benchmark and compute trailing returns for all standard periods.
     Standardized: Reuses the same compute_trailing_returns logic used for funds.
     """
-    from core.finance import compute_trailing_returns
+    from domains.mutual_funds.finance import compute_trailing_returns
     
     # Fetch 5Y history (1825 days + buffer)
     series = fetch_benchmark_series(ticker, period_days=1825 + 90)

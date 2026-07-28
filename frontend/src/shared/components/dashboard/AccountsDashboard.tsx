@@ -5,7 +5,6 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import SecurityIcon from '@mui/icons-material/Security'
 import ShieldIcon from '@mui/icons-material/Shield'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
-import ShowChartIcon from '@mui/icons-material/ShowChart'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import CachedIcon from '@mui/icons-material/Cached'
 
@@ -100,7 +99,6 @@ export default function AccountsDashboard() {
         <Grid container spacing={3}>
           {accounts.map((acc: any) => {
             const hasMF = acc.sessions.some((s: any) => s.module === 'mutual_funds')
-            const hasStocks = acc.sessions.some((s: any) => s.module === 'indian_stocks')
             const hasTax = acc.sessions.some((s: any) => s.module === 'tax_expert')
             
             return (
@@ -129,12 +127,6 @@ export default function AccountsDashboard() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255,255,255,0.03)' }}>
                         <AccountBalanceWalletIcon sx={{ color: '#38BDF8', fontSize: 20 }} />
                         <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 600 }}>Mutual Funds</Typography>
-                      </Box>
-                    )}
-                    {hasStocks && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255,255,255,0.03)' }}>
-                        <ShowChartIcon sx={{ color: '#4EDE93', fontSize: 20 }} />
-                        <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 600 }}>Indian Stocks</Typography>
                       </Box>
                     )}
                     {hasTax && (

@@ -8,12 +8,12 @@ Dedicated REST gateway for the Holdings tab. Orchestrates multi-threaded real-ti
 """
 
 from fastapi import APIRouter
-from core.sessions import get_session, df_to_records
-from core.config import CATEGORY_COLORS
-from services.market_data import (
+from domains.mutual_funds.sessions import get_session, df_to_records
+from shared.config import CATEGORY_COLORS
+from shared.services.market_data import (
     fetch_nav_series_by_isin, fetch_fund_ter, resolve_scheme_code_from_isin, fetch_fund_metadata
 )
-from services.portfolio_discovery import fetch_live_portfolio
+from shared.services.portfolio_discovery import fetch_live_portfolio
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
@@ -129,7 +129,7 @@ def get_holdings(session_id: str, sort_by: str = "Market Value", ascending: str 
             r["TER"] = round(ter, 2)
             r["TER_fallback"] = False
         else:
-            from services.fallbacks.deterministic import DeterministicFallback
+            from shared.services.fallbacks.deterministic import DeterministicFallback
             fb = DeterministicFallback().generate_fallbacks(
                 isin=isin or "", 
                 category=r.get("Category", ""), 

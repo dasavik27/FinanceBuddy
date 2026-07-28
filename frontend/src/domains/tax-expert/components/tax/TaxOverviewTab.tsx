@@ -5,10 +5,10 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import ShieldIcon from '@mui/icons-material/Shield'
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows'
 import GavelIcon from '@mui/icons-material/Gavel'
-import { useTaxExpertSummary, useTaxRegimeComparison, useTaxExpertOverrides } from '../../../hooks/useTaxExpert'
-import { fmtInr } from '../../../api/fmt'
+import { useTaxExpertSummary, useTaxRegimeComparison, useTaxExpertOverrides } from '../../hooks/useTaxExpert'
+import { fmtInr } from '../../../../shared/utils/fmt'
 import TaxAuditorFindings from './TaxAuditorFindings'
-import { InlineEdit } from '../../ui/InlineEdit'
+import { InlineEdit } from '../../../../shared/components/ui/InlineEdit'
 
 const ComputeRow = ({ label, valueOld, valueNew, indent = false, bold = false, color = '#fff', highlight = false, hideIfZero = true }: any) => {
   const isZero = (v: any) => v === '₹0' || v === '- ₹0' || v === '₹ 0' || v === '- ₹ 0';

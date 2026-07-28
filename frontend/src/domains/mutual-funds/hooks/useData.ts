@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiClient } from '../api/client'
-import { useSessionId, useFilters } from '../store/appStore'
+import { apiClient } from '../../../shared/api/client'
+import { useSessionId, useFilters } from '../../../shared/store/appStore'
 
 // ── Build filter params from store ────────────────────────────────────────────
 export function useFilterParams() {
@@ -88,35 +88,6 @@ export function useRebalancePlan(profile: string) {
   })
 }
 
-// ── Tax ───────────────────────────────────────────────────────────────────────
-export function useTax(fy: string = 'Current Portfolio', debt_slab: number = 30.0) {
-  const sid = useSessionId()
-  const p = useFilterParams()
-  return useQuery({
-    queryKey: ['tax', sid, p, fy, debt_slab],
-    queryFn: () => apiClient.getTax(sid!, { ...p, fy, debt_slab }),
-    enabled: !!sid,
-  })
-}
-
-export function useTaxYears() {
-  const sid = useSessionId()
-  return useQuery({
-    queryKey: ['tax-years', sid],
-    queryFn: () => apiClient.getTaxYears(sid!),
-    enabled: !!sid,
-  })
-}
-
-export function useTaxOptimize() {
-  const sid = useSessionId()
-  return useQuery({
-    queryKey: ['tax-optimize', sid],
-    queryFn: () => apiClient.getTaxOptimize(sid!),
-    enabled: !!sid,
-  })
-}
-
 // ── Insights ──────────────────────────────────────────────────────────────────
 export function useInsights() {
   const sid = useSessionId()
@@ -152,20 +123,5 @@ export function useTransactions(fund = '') {
     queryKey: ['transactions', sid, fund],
     queryFn: () => apiClient.getTransactions(sid!, { fund }),
     enabled: !!sid,
-  })
-}
-
-export function useMarketSummary() {
-  return useQuery({
-    queryKey: ['market-summary'],
-    queryFn: () => apiClient.getMarketSummary(),
-    refetchInterval: 60 * 1000, // Poll every minute
-  })
-}
-
-export function useMarketConfig() {
-  return useQuery({
-    queryKey: ['market-config'],
-    queryFn: () => apiClient.getMarketConfig(),
   })
 }

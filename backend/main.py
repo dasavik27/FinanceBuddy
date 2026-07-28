@@ -3,10 +3,10 @@ main.py
 
 Finance Buddy API Service Gateway
 ===========================
-Enterprise-grade REST API backend powered by FastAPI. Features an asynchronous,
-multi-layered routing architecture specifically structured to mirror the Finance Buddy
-cockpit navigation interface. Implements robust GZip payload compression and CORS middleware
-for high-performance institutional data delivery.
+Enterprise-grade REST API backend powered by FastAPI. Routes are organized into three
+independent feature domains (Mutual Funds, Equity, Tax Expert) plus a shared
+infrastructure layer (auth, market data, session vault, upload history) used by
+all domains.
 """
 
 from fastapi import FastAPI, Request, status
@@ -14,10 +14,22 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-# Core System & Market Gateways
-from routers import portfolio, market, auth, accounts, history
-# Specialized Analytical Tab Routers (1:1 Modular Mapping with Frontend Navigation)
-from routers.tabs import overview, holdings, performance, compare, insights, rebalance, tax_strategy, journey
+# Shared Infrastructure Gateways (cross-domain: auth, market data, vault, history)
+from shared.routers import auth, market, accounts, history
+
+# Domain: Mutual Funds
+from domains.mutual_funds.routers import (
+    portfolio, overview, holdings, performance, compare, insights, rebalance, journey,
+)
+
+# Domain: Equity (Indian Stocks) — placeholder, feature not yet built
+from domains.equity import router as equity
+
+# Domain: Tax Expert
+from domains.tax_expert.routers import (
+    session as tax_session, income as tax_income, capital_gains as tax_capital_gains,
+    summary as tax_summary, itr as tax_itr,
+)
 
 app = FastAPI(
     title="Finance Buddy API",
@@ -37,23 +49,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Core Infrastructure Gateways ──────────────────────────────────────────
-app.include_router(portfolio.router, prefix="/portfolio", tags=["Infrastructure - Session Management"])
-app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
+# ── Shared Infrastructure ──────────────────────────────────────────────────
 app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
+app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
 app.include_router(accounts.router,  prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
+app.include_router(history.router,   prefix="/history",   tags=["Infrastructure - History Timeline"])
 
-# ── Specialized Analytical Cockpit Routers (1:1 with UI Navigation) ──────
-app.include_router(overview.router,     prefix="/portfolio", tags=["Analytics - Overview & Allocation"])
-app.include_router(holdings.router,     prefix="/portfolio", tags=["Analytics - Holdings Explorer"])
-app.include_router(performance.router,  prefix="/portfolio", tags=["Analytics - Trailing & Rolling Performance"])
-app.include_router(compare.router,      prefix="/compare",   tags=["Analytics - Peer Comparison Matrix"])
-app.include_router(insights.router,     prefix="/portfolio", tags=["Analytics - Smart Nudges & CIO Advisories"])
-app.include_router(rebalance.router,    prefix="/rebalance", tags=["Analytics - Rebalancing & Drift Audit"])
-app.include_router(tax_strategy.router, prefix="/portfolio", tags=["Analytics - Tax Strategy Lab"])
-app.include_router(tax_strategy.router, prefix="/tax-expert", tags=["Tax Expert - AIS Filing"])
-app.include_router(history.router,      prefix="/history",   tags=["Infrastructure - History Timeline"])
-app.include_router(journey.router,      prefix="/journey",   tags=["Analytics - Wealth Journey Timeline"])
+# ── Domain: Mutual Funds ───────────────────────────────────────────────────
+app.include_router(portfolio.router,    prefix="/mutual-funds/portfolio",     tags=["Mutual Funds - Session Management"])
+app.include_router(overview.router,     prefix="/mutual-funds/overview",      tags=["Mutual Funds - Overview & Allocation"])
+app.include_router(holdings.router,     prefix="/mutual-funds/holdings",      tags=["Mutual Funds - Holdings Explorer"])
+app.include_router(performance.router,  prefix="/mutual-funds/performance",   tags=["Mutual Funds - Trailing & Rolling Performance"])
+app.include_router(compare.router,      prefix="/mutual-funds/compare",       tags=["Mutual Funds - Peer Comparison Matrix"])
+app.include_router(insights.router,     prefix="/mutual-funds/insights",      tags=["Mutual Funds - Smart Nudges & CIO Advisories"])
+app.include_router(rebalance.router,    prefix="/mutual-funds/rebalance",     tags=["Mutual Funds - Rebalancing & Drift Audit"])
+app.include_router(journey.router,      prefix="/mutual-funds/journey",       tags=["Mutual Funds - Wealth Journey Timeline"])
+
+# ── Domain: Equity (Indian Stocks) ─────────────────────────────────────────
+# Not yet built — reserved namespace. The UI currently shows "Coming Soon".
+app.include_router(equity.router, prefix="/equity", tags=["Equity - Indian Stocks (Coming Soon)"])
+
+# ── Domain: Tax Expert ──────────────────────────────────────────────────────
+# Single canonical path: /tax-expert (all tax operations under one logical namespace)
+app.include_router(tax_session.router,        prefix="/tax-expert", tags=["Tax Expert - Session Management"])
+app.include_router(tax_income.router,         prefix="/tax-expert", tags=["Tax Expert - Income Breakdown"])
+app.include_router(tax_capital_gains.router,  prefix="/tax-expert", tags=["Tax Expert - Capital Gains"])
+app.include_router(tax_summary.router,        prefix="/tax-expert", tags=["Tax Expert - Computation & Regime Compare"])
+app.include_router(tax_itr.router,            prefix="/tax-expert", tags=["Tax Expert - ITR Comparison"])
+
 
 @app.get("/health", tags=["Infrastructure - Health"])
 def health():
@@ -62,5 +85,3 @@ def health():
     Validates institutional engine operational readiness, memory availability, and API versioning.
     """
     return {"status": "ok", "version": "8.0.0"}
-
-

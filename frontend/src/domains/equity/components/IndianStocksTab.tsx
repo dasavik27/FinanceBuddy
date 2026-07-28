@@ -1,6 +1,6 @@
 import { Box, Typography, Paper, Alert } from '@mui/material'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
-import { SectionHeader } from '../ui'
+import { SectionHeader } from '../../../shared/components/ui'
 
 export default function IndianStocksTab() {
   return (

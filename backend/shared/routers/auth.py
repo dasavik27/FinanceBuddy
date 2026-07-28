@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import sqlite3
 import re
-from core.storage import DB_PATH
+from shared.storage import DB_PATH
 import logging
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def login_with_pan(req: LoginRequest):
 @router.post("/logout")
 def logout_user(req: LoginRequest):
     pan = req.pan.strip().upper()
-    from core.tax_sessions import get_sessions_by_pan, delete_tax_session
+    from domains.tax_expert.tax_sessions import get_sessions_by_pan, delete_tax_session
     sessions = get_sessions_by_pan(pan)
     for s in sessions:
         delete_tax_session(s["session_id"])

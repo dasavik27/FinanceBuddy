@@ -1,7 +1,7 @@
 import requests
 import yfinance as yf
 from typing import Dict, Optional
-from services.providers.base import BaseMetadataProvider
+from shared.services.providers.base import BaseMetadataProvider
 import logging
 logger = logging.getLogger(__name__)
 

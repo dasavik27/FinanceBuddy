@@ -10,8 +10,8 @@ from typing import Dict, List, Any
 import sqlite3
 import os
 
-import core.tax_sessions
-from core.storage import DB_PATH, delete_all_for_pan
+import domains.tax_expert.tax_sessions
+from shared.storage import DB_PATH, delete_all_for_pan
 
 router = APIRouter()
 
@@ -29,9 +29,9 @@ def get_accounts_summary():
             cas_sessions = [dict(row) for row in cursor.fetchall()]
             
     # 2. Fetch Tax sessions from JSON cache
-    core.tax_sessions._ensure_loaded()
+    domains.tax_expert.tax_sessions._ensure_loaded()
     tax_sessions_list = []
-    for sid, data in core.tax_sessions._tax_sessions.items():
+    for sid, data in domains.tax_expert.tax_sessions._tax_sessions.items():
         pan = data.get("pan")
         if pan:
             tax_sessions_list.append({
@@ -71,7 +71,7 @@ def purge_account_data(pan_id: str):
     cas_deleted = delete_all_for_pan(pan_id)
     
     # 2. Delete all Tax sessions
-    tax_deleted = core.tax_sessions.delete_all_for_pan(pan_id)
+    tax_deleted = domains.tax_expert.tax_sessions.delete_all_for_pan(pan_id)
     
     total_deleted = cas_deleted + tax_deleted
     
@@ -91,9 +91,10 @@ def clear_all_system_caches():
     Clears all in-memory market data caches (NAVs, TERs, mappings) and session DataFrames.
     """
     try:
-        from services.market_data import clear_market_data_cache
-        from core import sessions, tax_sessions
-        
+        from shared.services.market_data import clear_market_data_cache
+        from domains.mutual_funds import sessions
+        from domains.tax_expert import tax_sessions
+
         clear_market_data_cache()
         sessions._SESSIONS.clear()
         tax_sessions._tax_sessions.clear()

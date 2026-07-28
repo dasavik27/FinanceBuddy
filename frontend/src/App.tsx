@@ -1,8 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { usePan } from './store/appStore'
-import Layout    from './components/layout/Layout'
-import Landing   from './components/Landing'
-import Dashboard from './components/layout/Dashboard'
+import { usePan } from './shared/store/appStore'
+import Layout    from './shared/components/layout/Layout'
+import Landing   from './shared/components/Landing'
+import Dashboard from './shared/components/layout/Dashboard'
 
 export default function App() {
   const pan = usePan()

@@ -9,6 +9,10 @@ build/
 *.pyc
 __pycache__/
 .cache/
+.pytest_cache/
+backend/data/
+backend/domains/data/
+test-results/
 
 # Environment & IDE
 .env
@@ -16,8 +20,10 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+.claude/settings.local.json
 
 # Python Virtual Environment
 venv/
 .venv/
 env/
+venv_finance/

@@ -12,10 +12,10 @@ import MoreHorizIcon from '@mui/icons-material/MoreHoriz'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
-import { useTaxExpertIncome, useTaxExpertSummary, useTaxExpertOverrides } from '../../../hooks/useTaxExpert'
-import { useTaxRegime } from '../../../store/appStore'
-import { fmtInr } from '../../../api/fmt'
-import taxRulesData from '../../../../../backend/config/tax_rules.json'
+import { useTaxExpertIncome, useTaxExpertSummary, useTaxExpertOverrides } from '../../hooks/useTaxExpert'
+import { useTaxRegime } from '../../../../shared/store/appStore'
+import { fmtInr } from '../../../../shared/utils/fmt'
+import taxRulesData from '../../tax_rules.json'
 
 const IncomeCard = ({ id, expanded, onToggle, title, infoText, icon: Icon, color, amount, autoFilled, children }: any) => {
   return (

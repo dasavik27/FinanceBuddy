@@ -1,5 +1,5 @@
 import { Box, Tooltip as MuiTooltip } from '@mui/material'
-import { verdictBg, verdictColor, verdictBorder } from '../../api/fmt'
+import { verdictBg, verdictColor, verdictBorder } from '../../utils/fmt'
 
 export function VerdictChip({ verdict, reason, score }: { verdict: string; reason?: string; score?: number }) {
   const chip = (

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiClient } from '../api/client'
-import { useTaxSessionId } from '../store/appStore'
+import { apiClient } from '../../../shared/api/client'
+import { useTaxSessionId } from '../../../shared/store/appStore'
 
 export function useTaxExpertOverrides() {
   const sid = useTaxSessionId()
@@ -10,18 +10,6 @@ export function useTaxExpertOverrides() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tax-expert-summary'] })
       queryClient.invalidateQueries({ queryKey: ['tax-expert-capital-gains'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-expert-compare'] })
-    }
-  })
-}
-
-export function useParseForm16() {
-  const sid = useTaxSessionId()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (file: File) => apiClient.parseForm16(sid!, file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tax-expert-summary'] })
       queryClient.invalidateQueries({ queryKey: ['tax-expert-compare'] })
     }
   })

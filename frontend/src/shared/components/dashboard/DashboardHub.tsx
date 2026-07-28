@@ -9,10 +9,10 @@ const pillars = [
   {
     icon: <TimelineIcon sx={{ fontSize: 32, color: '#3B82F6' }} />,
     title: 'Indian Stocks',
-    desc: 'Track your equity portfolio, analyze individual stocks in depth, and access real-time market data instantly.',
+    desc: 'Coming soon — direct equity tracking and analysis for individual stock holdings.',
     color: '#3B82F6',
     glow: 'rgba(59, 130, 246, 0.15)',
-    path: '/dashboard/indian-stocks'
+    path: '/dashboard/equity'
   },
   {
     icon: <AccountBalanceIcon sx={{ fontSize: 32, color: '#10B981' }} />,

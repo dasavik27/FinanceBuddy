@@ -1,4 +1,4 @@
-import { fmtInr } from '../../../api/fmt'
+import { fmtInr } from '../../../../shared/utils/fmt'
 import React from 'react'
 import { Box, Typography, Paper, Stack, alpha } from '@mui/material'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'

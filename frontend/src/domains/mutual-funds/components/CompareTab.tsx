@@ -1,4 +1,4 @@
-import { fmtInr } from '../../api/fmt'
+import { fmtInr } from '../../../shared/utils/fmt'
 import { useState, useMemo, useEffect } from 'react'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -24,14 +24,14 @@ import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { useHoldings, usePerformance } from '../../hooks/useData'
-import { useSessionId, useAppStore } from '../../store/appStore'
-import { apiClient } from '../../api/client'
-import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../ui'
-import { ChartTooltip } from '../charts/ChartTooltip'
-import { gainColor } from '../../api/fmt'
+import { useHoldings, usePerformance } from '../hooks/useData'
+import { useSessionId, useAppStore } from '../../../shared/store/appStore'
+import { apiClient } from '../../../shared/api/client'
+import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../../../shared/components/ui'
+import { ChartTooltip } from '../../../shared/components/charts/ChartTooltip'
+import { gainColor } from '../../../shared/utils/fmt'
 
-import { COLORS, calculateDrawdown } from '../../rules/tabCommon'
+import { COLORS, calculateDrawdown } from '../rules/tabCommon'
 
 // ── Motion Variants ──────────────────────────────────────────────────────────
 const containerVar = {

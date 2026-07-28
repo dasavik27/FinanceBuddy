@@ -3,10 +3,10 @@ import {
   Box, Grid, Typography, Stack, Paper, alpha, Avatar, Skeleton, Tooltip as MuiTooltip, Chip
 } from '@mui/material'
 
-import { useSummary, useOverview, useBenchmarkOverlay, useHoldings, useAllocation } from '../../hooks/useData'
-import { MetricCard, SectionHeader } from '../ui'
-import PortfolioChart from '../charts/PortfolioChart'
-import { fmtInr, fmtPct } from '../../api/fmt'
+import { useSummary, useOverview, useBenchmarkOverlay, useHoldings, useAllocation } from '../hooks/useData'
+import { MetricCard, SectionHeader } from '../../../shared/components/ui'
+import PortfolioChart from '../../../shared/components/charts/PortfolioChart'
+import { fmtInr, fmtPct } from '../../../shared/utils/fmt'
 
 import ShieldIcon from '@mui/icons-material/Shield'
 import SpeedIcon from '@mui/icons-material/Speed'

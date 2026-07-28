@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header
-from core import storage
+from shared import storage
 import pandas as pd
 from typing import Dict, Any
 
@@ -120,7 +120,7 @@ def compare_sessions(session_id_a: str, session_id_b: str):
     inv_a = float(df_h_a["Invested"].sum()) if not df_h_a.empty and "Invested" in df_h_a.columns else 0.0
     inv_b = float(df_h_b["Invested"].sum()) if not df_h_b.empty and "Invested" in df_h_b.columns else 0.0
     
-    from core.finance import compute_xirr
+    from domains.mutual_funds.finance import compute_xirr
     xirr_a = float(compute_xirr(df_t_a, val_a)) if val_a > 0 else 0.0
     xirr_b = float(compute_xirr(df_t_b, val_b)) if val_b > 0 else 0.0
 

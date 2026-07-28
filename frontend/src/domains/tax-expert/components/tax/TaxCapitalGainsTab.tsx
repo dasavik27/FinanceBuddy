@@ -16,11 +16,11 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import InfoIcon from '@mui/icons-material/Info'
 import { useDropzone } from 'react-dropzone'
 import { useQueryClient } from '@tanstack/react-query'
-import { useTaxExpertCapitalGains, useTaxExpertOverrides, useTaxExpertSummary, useTaxExpertTransactionCost } from '../../../hooks/useTaxExpert'
-import { useTaxRegime, useAppStore } from '../../../store/appStore'
-import { apiClient } from '../../../api/client'
-import { fmtInr } from '../../../api/fmt'
-import { InlineEdit } from '../../ui/InlineEdit'
+import { useTaxExpertCapitalGains, useTaxExpertOverrides, useTaxExpertSummary, useTaxExpertTransactionCost } from '../../hooks/useTaxExpert'
+import { useTaxRegime, useAppStore } from '../../../../shared/store/appStore'
+import { apiClient } from '../../../../shared/api/client'
+import { fmtInr } from '../../../../shared/utils/fmt'
+import { InlineEdit } from '../../../../shared/components/ui/InlineEdit'
 
 const TransactionTable = ({ title, data, count, color, onSaveCost, category }: any) => {
   let grandTotalSale = 0;

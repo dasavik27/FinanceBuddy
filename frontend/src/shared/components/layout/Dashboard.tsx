@@ -1,8 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Box } from '@mui/material'
-import MutualFundsDashboard from '../dashboard/MutualFundsDashboard'
-import IndianStocksDashboard  from '../dashboard/IndianStocksDashboard'
-import TaxExpertDashboard     from '../dashboard/TaxExpertDashboard'
+import MutualFundsDashboard from '../../../domains/mutual-funds/components/MutualFundsDashboard'
+import IndianStocksDashboard  from '../../../domains/equity/components/IndianStocksDashboard'
+import TaxExpertDashboard     from '../../../domains/tax-expert/components/TaxExpertDashboard'
 import AccountsDashboard      from '../dashboard/AccountsDashboard'
 import DashboardHub         from '../dashboard/DashboardHub'
 import { ErrorBoundary }    from '../ui'
@@ -13,7 +13,7 @@ export default function Dashboard() {
       <Routes>
         <Route index element={<ErrorBoundary fallbackMessage="Hub encountered an error."><DashboardHub /></ErrorBoundary>} />
         <Route path="mutual-funds/*" element={<ErrorBoundary fallbackMessage="Mutual Funds section encountered an error."><MutualFundsDashboard /></ErrorBoundary>} />
-        <Route path="indian-stocks/*"  element={<ErrorBoundary fallbackMessage="Indian Stocks section encountered an error."><IndianStocksDashboard /></ErrorBoundary>} />
+        <Route path="equity/*"        element={<ErrorBoundary fallbackMessage="Indian Stocks section encountered an error."><IndianStocksDashboard /></ErrorBoundary>} />
         <Route path="tax-expert/*"     element={<ErrorBoundary fallbackMessage="Tax Expert section encountered an error."><TaxExpertDashboard /></ErrorBoundary>} />
         <Route path="accounts"         element={<ErrorBoundary fallbackMessage="Accounts Vault encountered an error."><AccountsDashboard /></ErrorBoundary>} />
         

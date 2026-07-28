@@ -7,10 +7,10 @@ import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import ShieldIcon from '@mui/icons-material/Shield'
 import DescriptionIcon from '@mui/icons-material/Description'
-import { useTaxSessionId, useAppStore } from '../../store/appStore'
-import { apiClient } from '../../api/client'
-import TaxStrategyTab from '../tabs/TaxStrategyTab'
-import { ErrorBoundary } from '../ui'
+import { useTaxSessionId, useAppStore } from '../../../shared/store/appStore'
+import { apiClient } from '../../../shared/api/client'
+import TaxStrategyTab from './TaxStrategyTab'
+import { ErrorBoundary } from '../../../shared/components/ui'
 
 export default function TaxExpertDashboard() {
   const sid = useTaxSessionId()

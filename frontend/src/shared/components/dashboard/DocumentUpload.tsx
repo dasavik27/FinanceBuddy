@@ -17,7 +17,7 @@ interface DocumentUploadProps {
   subtitle: string
   dropText: string
   dropSubText: string
-  uploadType: 'mutual_funds' | 'indian_stocks' | 'tax_expert'
+  uploadType: 'mutual_funds' | 'tax_expert'
 }
 
 export default function DocumentUpload({ title, subtitle, dropText, dropSubText, uploadType }: DocumentUploadProps) {

@@ -15,16 +15,14 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import MedicalServicesIcon from '@mui/icons-material/MedicalServices'
 import VolunteerActivismIcon from '@mui/icons-material/VolunteerActivism'
 import RequestQuoteIcon from '@mui/icons-material/RequestQuote'
-import UploadFileIcon from '@mui/icons-material/UploadFile'
-import { useTaxExpertSummary, useTaxExpertOverrides, useParseForm16 } from '../../../hooks/useTaxExpert'
-import { fmtInr } from '../../../api/fmt'
-import { InlineEdit } from '../../ui/InlineEdit'
+import { useTaxExpertSummary, useTaxExpertOverrides } from '../../hooks/useTaxExpert'
+import { fmtInr } from '../../../../shared/utils/fmt'
+import { InlineEdit } from '../../../../shared/components/ui/InlineEdit'
 
 export default function TaxSavingsTab() {
   const { data: newData } = useTaxExpertSummary('new')
   const { data: oldData } = useTaxExpertSummary('old')
   const mutation = useTaxExpertOverrides()
-  const form16Mutation = useParseForm16()
 
   const tdsData = newData // TDS is same for both regimes
 
@@ -128,12 +126,6 @@ export default function TaxSavingsTab() {
   }
 
 
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      form16Mutation.mutate(e.target.files[0])
-    }
-  }
 
   return (
     <Box sx={{ pb: 8 }}>

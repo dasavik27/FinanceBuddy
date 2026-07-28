@@ -2,7 +2,7 @@ import json
 import os
 import time
 from typing import Any, Optional
-from core.config import CACHE_DIR, CACHE_TTL_MINUTES
+from shared.config import CACHE_DIR, CACHE_TTL_MINUTES
 import logging
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
-from services.fallbacks.base import InsightFallbackStrategy
-from services.fallbacks.deterministic import DeterministicFallback
+from shared.services.fallbacks.base import InsightFallbackStrategy
+from shared.services.fallbacks.deterministic import DeterministicFallback
 
 def get_fallback_engine() -> InsightFallbackStrategy:
     """

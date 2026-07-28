@@ -20,7 +20,7 @@ const DRAWER_W = 280
 
 const NAV = [
   { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/dashboard/mutual-funds' },
-  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/dashboard/indian-stocks' },
+  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/dashboard/equity' },
   { label: 'Tax Expert',            icon: <ReceiptIcon />,       path: '/dashboard/tax-expert' },
 ]
 

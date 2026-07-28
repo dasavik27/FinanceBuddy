@@ -7,7 +7,7 @@ Implements robust categorical heuristic fallbacks if upstream APIs fail, ensurin
 
 from typing import Dict, List, Optional
 
-from core.cache import MarketCache
+from shared.cache import MarketCache
 
 def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh: bool = False) -> Dict:
     """
@@ -34,11 +34,11 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
         cached = MarketCache.get(cache_key)
         if cached: return cached
 
-    from services.providers.yahoo import YahooMetadataProvider
+    from shared.services.providers.yahoo import YahooMetadataProvider
     provider = YahooMetadataProvider()
     result = provider.fetch_insights(isin, fund_name, category)
 
-    from services.fallbacks.factory import get_fallback_engine
+    from shared.services.fallbacks.factory import get_fallback_engine
     fallback_engine = get_fallback_engine()
     
     # If missing, pass through the Extensible Fallback Strategy Engine

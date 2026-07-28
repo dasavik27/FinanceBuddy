@@ -9,15 +9,15 @@ and head-to-head consistency scoring for institutional peer selection.
 """
 
 from fastapi import APIRouter
-from core.config import (
+from shared.config import (
     BENCHMARKS, PE_ESTIMATES, GOAL_TIMELINE, EXP_RATIO_BANDS,
     FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
 )
-from services.market_indices import fetch_benchmark_series
-from services.market_data import (
+from shared.services.market_indices import fetch_benchmark_series
+from shared.services.market_data import (
     search_mutual_funds, get_nse_indices, fetch_fund_ter, fetch_nav_series_by_code
 )
-from core.finance import (
+from domains.mutual_funds.finance import (
     compute_consistency_score, compute_risk_metrics, compute_trailing_returns
 )
 import pandas as pd
@@ -52,7 +52,7 @@ def get_history(ticker: str, days: int = 365):
 
 @router.get("/peers")
 def get_category_peers(category: str = "Large Cap"):
-    from core.tab_common import get_diverse_category_peers
+    from domains.mutual_funds.tab_common import get_diverse_category_peers
     diverse_peers, fallback_triggered = get_diverse_category_peers(category)
 
     return {
@@ -66,9 +66,9 @@ def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
     Head-to-head metrics comparison between two funds/indices.
     Scoring: Fund A beats Fund B on specific metric = 1 Win.
     """
-    from services.market_data import fetch_nav_series_by_code
-    from services.market_indices import fetch_benchmark_series
-    from core.finance import compute_trailing_returns, compute_risk_metrics, compute_consistency_score
+    from shared.services.market_data import fetch_nav_series_by_code
+    from shared.services.market_indices import fetch_benchmark_series
+    from domains.mutual_funds.finance import compute_trailing_returns, compute_risk_metrics, compute_consistency_score
 
     # Fetch Data
     # 'fund' is always a scheme code
@@ -97,7 +97,7 @@ def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
     c1 = compute_consistency_score(s1, nifty)
     c2 = compute_consistency_score(s2, nifty)
     
-    from core.tab_common import compare_metric
+    from domains.mutual_funds.tab_common import compare_metric
     metrics = []
     wins_a = 0
     wins_b = 0

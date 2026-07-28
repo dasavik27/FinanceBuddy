@@ -17,17 +17,17 @@ import SpeedIcon from '@mui/icons-material/Speed'
 import TimelineIcon from '@mui/icons-material/Timeline'
 
 import { useQueryClient } from '@tanstack/react-query'
-import { usePerformance } from '../../hooks/useData'
-import { useSessionId } from '../../store/appStore'
-import { apiClient } from '../../api/client'
+import { usePerformance } from '../hooks/useData'
+import { useSessionId } from '../../../shared/store/appStore'
+import { apiClient } from '../../../shared/api/client'
 import { 
   VerdictChip, CategoryBadge,
   PeriodSelector, SectionHeader, MetricCard,
   GlassTableContainer, GlassHeader, InfoTooltip
-} from '../ui'
-import { fmtInr, fmtPct } from '../../api/fmt'
+} from '../../../shared/components/ui'
+import { fmtInr, fmtPct } from '../../../shared/utils/fmt'
 
-import { CATEGORY_INSIGHTS } from '../../rules/tabCommon'
+import { CATEGORY_INSIGHTS } from '../rules/tabCommon'
 
 // ── Peer Comparison Component (Zerodha Coin style) ──────────────────────────
 function FundPeers({ fund }: { fund: any }) {

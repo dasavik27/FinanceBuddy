@@ -18,6 +18,7 @@ pypdf
 openpyxl
 xlrd
 pytest>=9.0.0
+httpx>=0.28.1
 pyarrow==25.0.0
 fastparquet==2026.5.0
 camelot-py

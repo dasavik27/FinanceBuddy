@@ -1,5 +1,5 @@
 import { Box, Typography, Paper } from '@mui/material'
-import { fmtInr, fmtPct } from '../../api/fmt'
+import { fmtInr, fmtPct } from '../../utils/fmt'
 
 export function ChartTooltip({ active, payload, label, isPct = false }: any) {
   if (!active || !payload?.length) return null

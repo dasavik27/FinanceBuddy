@@ -6,9 +6,9 @@ import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import BalanceIcon from '@mui/icons-material/Balance'
 
-import { useITRData, useUploadITR, useTaxExpertSummary } from '../../../hooks/useTaxExpert'
-import { useTaxRegime, useAppStore } from '../../../store/appStore'
-import { fmtInr } from '../../../api/fmt'
+import { useITRData, useUploadITR, useTaxExpertSummary } from '../../hooks/useTaxExpert'
+import { useTaxRegime, useAppStore } from '../../../../shared/store/appStore'
+import { fmtInr } from '../../../../shared/utils/fmt'
 
 // ─── Compute Row ─────────────────────────────────────────────────────────────
 const ComputeRow = ({ label, folioVal, itrVal, bold = false, highlight = false, color = '#fff' }: any) => {

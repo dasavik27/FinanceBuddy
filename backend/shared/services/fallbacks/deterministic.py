@@ -1,6 +1,6 @@
 import random
 from typing import Dict
-from services.fallbacks.base import InsightFallbackStrategy
+from shared.services.fallbacks.base import InsightFallbackStrategy
 
 class DeterministicFallback(InsightFallbackStrategy):
     """

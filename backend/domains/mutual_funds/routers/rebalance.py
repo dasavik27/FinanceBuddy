@@ -9,8 +9,8 @@ and intra-equity volatility management switches for institutional advisory parit
 """
 
 from fastapi import APIRouter
-from core.sessions import get_session
-from core.config import get_standard_category
+from domains.mutual_funds.sessions import get_session
+from shared.config import get_standard_category
 import pandas as pd
 import numpy as np
 
@@ -38,7 +38,7 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
         return {"status": "Empty", "orders": [], "drift_score": 0.0}
 
     df_h = df_h.copy()
-    from core.tab_common import rebalance_roll_up
+    from domains.mutual_funds.tab_common import rebalance_roll_up
     
     df_h["SimpleCat"] = df_h["Category"].apply(rebalance_roll_up)
     

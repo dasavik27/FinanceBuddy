@@ -8,7 +8,7 @@ import pandas as pd
 import os
 import tempfile
 from typing import Tuple, Optional
-from services.market_data import fetch_live_navs
+from shared.services.market_data import fetch_live_navs
 
 def _get(obj, key, default=None):
     """Robust helper to get attributes from dicts or objects."""
@@ -95,7 +95,7 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
                 if is_stale:
                     logger.info(f"[YAHOO ADAPTER] AMFI feed failed or is stale for {isin}. Attempting to fetch live NAV from Yahoo Finance...")
                     try:
-                        from services.providers.yahoo import YahooMetadataProvider
+                        from shared.services.providers.yahoo import YahooMetadataProvider
                         yahoo_provider = YahooMetadataProvider()
                         yahoo_nav = yahoo_provider.fetch_live_nav(isin, name)
                         if yahoo_nav and yahoo_nav > 0:
@@ -188,7 +188,7 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e), False
 
-from core.logic import CategorizationEngine
+from domains.mutual_funds.logic import CategorizationEngine
 import logging
 logger = logging.getLogger(__name__)
 

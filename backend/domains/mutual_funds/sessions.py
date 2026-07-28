@@ -17,8 +17,8 @@ from datetime import datetime
 from fastapi import HTTPException
 from typing import Dict, Any
 
-from core.models import Portfolio
-from core import storage
+from domains.mutual_funds.models import Portfolio
+from shared import storage
 import logging
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     # the richer CAS metadata (e.g., "Banking & PSU" debt → misclassified as Thematic).
     # We only re-classify funds with empty/missing categories.
     if not df_h.empty and "Category" in df_h.columns:
-        from core.logic import CategorizationEngine as CE
+        from domains.mutual_funds.logic import CategorizationEngine as CE
         mask = df_h["Category"].isna() | (df_h["Category"].str.strip() == "")
         if mask.any():
             df_h.loc[mask, "Category"] = df_h.loc[mask, "Fund"].apply(
@@ -85,7 +85,7 @@ def _session_purge_worker():
                 if sid in _SESSIONS: del _SESSIONS[sid]
                 
             # 2. Disk-Level Purge (24 hours) for CAS
-            from core.storage import DB_PATH, delete_session
+            from shared.storage import DB_PATH, delete_session
             import sqlite3
             if storage.os.path.exists(DB_PATH):
                 with sqlite3.connect(DB_PATH) as conn:

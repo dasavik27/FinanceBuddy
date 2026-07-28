@@ -4,7 +4,7 @@ Live market indices and global clock.
 """
 
 from fastapi import APIRouter
-from services.market_indices import fetch_live_market_summary
+from shared.services.market_indices import fetch_live_market_summary
 from datetime import datetime
 
 router = APIRouter()
@@ -21,20 +21,20 @@ def get_market_summary():
 @router.get("/nav/{isin}")
 def get_live_nav(isin: str):
     """Fetch live NAV for a specific fund by ISIN."""
-    from services.market_data import fetch_live_navs
+    from shared.services.market_data import fetch_live_navs
     live_map = fetch_live_navs()
     nav = live_map.get(isin.upper())
     return {"isin": isin, "nav": nav}
 
 @router.get("/config")
 def get_market_config():
-    from core import config
+    from shared import config
     return {"cache_ttl": config.CACHE_TTL_MINUTES}
 
 @router.post("/config")
 def update_market_config(ttl: int):
-    from core import config
-    from core.storage import DB_PATH
+    from shared import config
+    from shared.storage import DB_PATH
     import sqlite3
     
     config.CACHE_TTL_MINUTES = ttl

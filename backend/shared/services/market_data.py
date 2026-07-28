@@ -21,10 +21,10 @@ import time
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, Any, List
-from core import config
-from core.cache import MarketCache
-from services.providers.factory import get_provider
-from core.config import BENCHMARKS, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
+from shared import config
+from shared.cache import MarketCache
+from shared.services.providers.factory import get_provider
+from shared.config import BENCHMARKS, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
 
 # ── Thread-safe Cache Locks ──────────────────────────────────────────────
 _CACHE_LOCK = threading.Lock()
@@ -129,7 +129,7 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]
         
     return live_map, isin_map, date_map
 
-from core.cache import MarketCache
+from shared.cache import MarketCache
 import logging
 logger = logging.getLogger(__name__)
 

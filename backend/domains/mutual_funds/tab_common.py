@@ -8,13 +8,13 @@ and formatting standard metrics to enforce DRY principles across Tab Routers.
 """
 
 from typing import List, Dict, Optional, Tuple
-from core.config import PE_ESTIMATES, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
-from services.market_data import search_mutual_funds, fetch_fund_ter, fetch_nav_series_by_code
-from services.market_indices import fetch_benchmark_series
-from core.finance import compute_trailing_returns, compute_consistency_score, compute_risk_metrics
+from shared.config import PE_ESTIMATES, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
+from shared.services.market_data import search_mutual_funds, fetch_fund_ter, fetch_nav_series_by_code
+from shared.services.market_indices import fetch_benchmark_series
+from domains.mutual_funds.finance import compute_trailing_returns, compute_consistency_score, compute_risk_metrics
 
 def _extract_amc(fund_name: str) -> str:
-    from core.logic import CategorizationEngine
+    from domains.mutual_funds.logic import CategorizationEngine
     return CategorizationEngine.extract_amc_brand(fund_name)
 
 def get_diverse_category_peers(category: str, base_fund_name: str = "", max_peers: int = 5) -> Tuple[List[Dict], bool]:
@@ -188,7 +188,7 @@ def series_to_list(ser) -> list:
     return [{"date": str(idx.date()), "value": float(val)} for idx, val in ser.items() if not np.isnan(val)]
 
 def get_goal_value(df_h, c: str) -> float:
-    from core.config import get_standard_category
+    from shared.config import get_standard_category
     if c == "ELSS": return float(df_h[df_h["Category"] == "ELSS"]["Market Value"].sum())
     if c == "Liquid": 
         mask = (df_h["Category"].str.contains("Liquid", case=False, na=False)) | (df_h["Fund"].str.upper().str.contains("LIQUID", na=False))
@@ -211,7 +211,7 @@ def get_goal_value(df_h, c: str) -> float:
     return 0.0
 
 def rebalance_roll_up(cat: str) -> str:
-    from core.config import get_standard_category
+    from shared.config import get_standard_category
     c = get_standard_category(cat)
     if c in ["Equity", "Debt", "Hybrid"]: return c
     return "Other"

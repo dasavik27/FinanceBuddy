@@ -11,10 +11,20 @@ import os
 import re
 import logging
 import tempfile
-import pdfplumber
-import camelot
 import pandas as pd
 from datetime import datetime
+
+# Optional imports for PDF processing
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
+try:
+    import camelot
+except ImportError:
+    camelot = None
+
 from .ais_schemas import validate_schema, AISStructureChangedError, AISUnknownCodeError, clean_header
 
 logger = logging.getLogger(__name__)
@@ -46,6 +56,9 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
     """
     Parse an AIS PDF and return structured financial data using Camelot for tables.
     """
+    if not camelot:
+        return {"error": "AIS PDF parsing not available - install camelot-py and pdfplumber"}
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(raw_bytes)
         tmp_path = tmp.name
@@ -57,7 +70,7 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
             reader = pypdf.PdfReader(f)
             for page in reader.pages:
                 full_text += (page.extract_text() or "") + "\n"
-        
+
         personal = _extract_personal(full_text)
 
         # Extract all tables using Camelot Lattice mode

@@ -15,10 +15,10 @@ import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, Tooltip,
 } from 'recharts'
-import { ChartTooltip } from '../charts/ChartTooltip'
-import { fmtInr, gainColor } from '../../api/fmt'
+import { ChartTooltip } from '../../../shared/components/charts/ChartTooltip'
+import { fmtInr, gainColor } from '../../../shared/utils/fmt'
 import { useQuery } from '@tanstack/react-query'
-import { useSessionId } from '../../store/appStore'
+import { useSessionId } from '../../../shared/store/appStore'
 
 // ── Heuristic sector / credit profile ────────────────────────────────────────
 function getProfile(category: string, fundName: string) {
@@ -103,8 +103,8 @@ function getProfile(category: string, fundName: string) {
   }
 }
 
-import { useFundInsights } from '../../hooks/useData'
-import { getTaxProfile } from '../../rules/taxRules'
+import { useFundInsights } from '../hooks/useData'
+import { getTaxProfile } from '../../tax-expert/rules/taxRules'
 
 // ── Stat chip ─────────────────────────────────────────────────────────────────
 function StatChip({ label, value, tip, valueColor, isLive }: { label: string; value: string; tip?: string; valueColor?: string; isLive?: boolean }) {
@@ -150,11 +150,9 @@ const THEME_COLORS = ['#6366F1', '#4EDE93', '#FCD34D', '#FF516A', '#8B5CF6', '#9
 export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProps) {
   const open = !!fund
   const sid = useSessionId()
-  const [sellUnits, setSellUnits] = useState<number>(0)
   const [liveNav, setLiveNav] = useState<number | null>(null)
 
   useEffect(() => {
-    setSellUnits(0)
     setLiveNav(null)
   }, [fund?.Fund])
 
@@ -177,15 +175,6 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
   const { data: insights, isFetching: insightsLoading } = useFundInsights(fund?.ISIN ?? '', fund?.Fund ?? '')
 
   const effectiveNav = liveNav ?? fund?.NAV ?? 1
-  const { data: fifo, isFetching: fifoLoading } = useQuery({
-    queryKey: ['fifo-mini', sid, fund?.Fund, sellUnits, effectiveNav],
-    queryFn: async () => {
-      const res = await fetch(`/api/portfolio/${sid}/tax/simulate?fund=${encodeURIComponent(fund.Fund)}&units_to_sell=${sellUnits}&nav=${effectiveNav}`)
-      return res.json()
-    },
-    enabled: !!sid && !!fund && sellUnits > 0.0001,
-  })
-
   const currentVal = (fund?.Units ?? 0) * effectiveNav
   const totalGain  = currentVal - (fund?.Invested ?? 0)
   const weight  = fund?.['Weight%'] ?? 0
@@ -431,65 +420,6 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
               )
             })()}
 
-            <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', my: 4 }} />
-
-            {/* ── Exit Tax Simulator ──────────────────────────────────── */}
-            <Box sx={{ p: 3, borderRadius: '32px', bgcolor: alpha('#6366F1', 0.05), border: '1px solid rgba(99, 102, 241, 0.1)' }}>
-               <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 900, mb: 3, display: 'block' }}>EXIT TAX SIMULATOR</Typography>
-               <Box sx={{ mb: 4 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                    <Typography variant="caption" sx={{ fontWeight: 800, color: 'text.secondary' }}>UNITS TO SELL</Typography>
-                    <Typography className="num" sx={{ color: 'primary.main', fontWeight: 900 }}>{sellUnits.toFixed(2)} / {Number(fund.Units ?? 0).toFixed(2)}</Typography>
-                  </Box>
-                  <input
-                    type="range" min={0} max={Number(fund.Units ?? 0)} step={0.01} value={sellUnits}
-                    onChange={(e) => setSellUnits(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: '#6366F1', cursor: 'pointer' }}
-                  />
-               </Box>
-
-               {sellUnits <= 0.0001 ? (
-                 <Box sx={{ p: 3, textAlign: 'center', bgcolor: 'rgba(0,0,0,0.1)', borderRadius: '20px', border: '1px dashed rgba(255,255,255,0.1)' }}>
-                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: '0.05em' }}>
-                     SLIDE TO SIMULATE REDEMPTION AUDIT
-                   </Typography>
-                 </Box>
-               ) : fifoLoading ? (
-                 <Box sx={{ py: 4, display: 'flex', justifyContent: 'center' }}><CircularProgress size={24} /></Box>
-               ) : fifo && (
-                 <Stack spacing={2}>
-                    <Box sx={{ p: 2, borderRadius: '20px', bgcolor: 'rgba(0,0,0,0.2)', display: 'flex', justifyContent: 'space-between' }}>
-                       <Box>
-                          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800 }}>PROCEEDS</Typography>
-                          <Typography className="num" sx={{ fontWeight: 900, fontSize: 18 }}>{fmtInr(fifo.net_proceeds)}</Typography>
-                       </Box>
-                       <Box sx={{ textAlign: 'right' }}>
-                          <Typography variant="caption" sx={{ color: '#FF516A', fontWeight: 800 }}>EST. TAX</Typography>
-                          <Typography className="num" sx={{ fontWeight: 900, fontSize: 18, color: '#FF516A' }}>{fmtInr(fifo.total_tax)}</Typography>
-                       </Box>
-                    </Box>
-                     {fifo.lock_in_warning && (
-                       <Stack spacing={1}>
-                         <Alert severity="error" sx={{ bgcolor: alpha('#FF516A', 0.1), color: '#FF516A', border: '1px solid rgba(255, 81, 106, 0.2)', borderRadius: '12px', '& .MuiAlert-icon': { color: '#FF516A' } }}>
-                           {fifo.lock_in_warning}
-                         </Alert>
-                         {fifo.details?.filter((d: any) => d.Type === "LOCK-IN").map((d: any, i: number) => (
-                           <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255, 81, 106, 0.05)', border: '1px solid rgba(255, 81, 106, 0.1)' }}>
-                             <Box>
-                               <Typography variant="caption" sx={{ color: '#FF516A', fontWeight: 700, display: 'block' }}>SIP: {d["Acquisition Date"]}</Typography>
-                               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 800, fontSize: 13 }}>{d["Units Sold"].toFixed(2)} Units</Typography>
-                             </Box>
-                             <Box sx={{ textAlign: 'right' }}>
-                               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, display: 'block' }}>REDEEMABLE ON</Typography>
-                               <Typography variant="body2" sx={{ color: '#4EDE93', fontWeight: 800, fontSize: 13 }}>{d.lock_in_end}</Typography>
-                             </Box>
-                           </Box>
-                         ))}
-                       </Stack>
-                     )}
-                 </Stack>
-               )}
-            </Box>
           </Box>
         </Box>
       )}

@@ -19,7 +19,7 @@ from typing import Optional
 from datetime import datetime
 
 # Load Tax Rules Configuration
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "tax_rules.json")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "tax_rules.json")
 with open(CONFIG_PATH, "r") as f:
     TAX_RULES = json.load(f)
 

@@ -10,8 +10,8 @@ and synthesizes an institutional Portfolio Health Score and SIP Habit Rating.
 
 from fastapi import APIRouter
 import pandas as pd
-from core.sessions import get_session
-from core.config import GOAL_TIMELINE, EXP_RATIO_BANDS, PE_ESTIMATES
+from domains.mutual_funds.sessions import get_session
+from shared.config import GOAL_TIMELINE, EXP_RATIO_BANDS, PE_ESTIMATES
 
 router = APIRouter()
 
@@ -50,10 +50,10 @@ def get_insights(session_id: str):
         nudges.append({"type":"warn","message":f"Your liquid reserves ({liquid_pct:.1f}%) are below the recommended 5-10% for emergencies."})
 
     # 3. Wealth Planning Horizon Timeline
-    from core.config import get_standard_category
+    from shared.config import get_standard_category
     goal_data = []
     
-    from core.tab_common import get_goal_value
+    from domains.mutual_funds.tab_common import get_goal_value
     for cat, (goal_label, color, timeline) in GOAL_TIMELINE.items():
         val = get_goal_value(df_h, cat)
         if val > 0:
@@ -63,8 +63,8 @@ def get_insights(session_id: str):
                 "timeline": timeline
             })
 
-    from services.market_data import fetch_fund_ter, resolve_scheme_code_from_isin
-    from services.fallbacks.deterministic import DeterministicFallback
+    from shared.services.market_data import fetch_fund_ter, resolve_scheme_code_from_isin
+    from shared.services.fallbacks.deterministic import DeterministicFallback
 
     # Calculate dynamic weighted expense ratio drag
     total_expense = 0.0

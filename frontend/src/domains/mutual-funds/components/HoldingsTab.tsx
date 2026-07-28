@@ -11,11 +11,11 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import FilterListIcon from '@mui/icons-material/FilterList'
 
-import { useHoldings } from '../../hooks/useData'
-import { VerdictChip, SectionHeader, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../ui'
-import { fmtInr, gainColor } from '../../api/fmt'
-import { getHealthSignal } from '../../rules/tabCommon'
-import FundDetailDrawer from '../holdings/FundDetailDrawer'
+import { useHoldings } from '../hooks/useData'
+import { VerdictChip, SectionHeader, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../../../shared/components/ui'
+import { fmtInr, gainColor } from '../../../shared/utils/fmt'
+import { getHealthSignal } from '../rules/tabCommon'
+import FundDetailDrawer from './FundDetailDrawer'
 
 /**
  * Institutional Health Signaling Engine

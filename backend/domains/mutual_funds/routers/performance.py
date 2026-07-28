@@ -18,13 +18,13 @@ import numpy as np
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
-from core.sessions import get_session
-from core.config import (
+from domains.mutual_funds.sessions import get_session
+from shared.config import (
     BENCHMARKS, CATEGORY_COLORS, RISK_LABEL,
     EXP_RATIO_BANDS, classify_er,
     PE_ESTIMATES, PB_ESTIMATES, DEBT_METRICS_MAP,
 )
-from core.finance import (
+from domains.mutual_funds.finance import (
     compute_xirr,
     compute_benchmark_xirr,
     compute_period_comparison,
@@ -35,8 +35,8 @@ from core.finance import (
     compute_consistency_score,
     is_absolute_return,
 )
-from services.market_indices import fetch_benchmark_series
-from services.market_data import (
+from shared.services.market_indices import fetch_benchmark_series
+from shared.services.market_data import (
     get_fund_benchmark,
     fetch_nav_series_by_isin,
     fetch_nav_series_by_code,
@@ -149,7 +149,7 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
 
     er_is_estimate = er is None
     if er is None:
-        from services.fallbacks.deterministic import DeterministicFallback
+        from shared.services.fallbacks.deterministic import DeterministicFallback
         fb = DeterministicFallback().generate_fallbacks(isin, cat, fn, {})
         er = fb.get("expense_ratio", 0.50)
         logger.info(f"[TER] Deterministic fallback={er:.2f}% used for '{fn[:30]}' ({cat}).")
@@ -303,7 +303,7 @@ def get_performance(
     # Calculate exact portfolio and benchmark XIRR to perfectly match Overview tab
     # FIX: XIRR requires full transaction history, not period-limited benchmark data.
     # The bench_data above is sliced for chart rendering, but XIRR needs all-time data.
-    from core.finance import compute_xirr, compute_benchmark_xirr
+    from domains.mutual_funds.finance import compute_xirr, compute_benchmark_xirr
     port_xirr_val = compute_xirr(df_t, portfolio.total_value)
     bench_full = fetch_benchmark_series(ticker, 9999)  # Full history for XIRR
     bench_xirr_val, _ = compute_benchmark_xirr(df_t, bench_full)
@@ -342,64 +342,12 @@ def get_performance(
     }
 
 
-# ---------------------------------------------------------------------------
-# Peer Comparison Endpoint
-# ---------------------------------------------------------------------------
-
-@router.get("/{session_id}/peer/{fund_name}")
-async def peer_comparison(session_id: str, fund_name: str):
-    s    = get_session(session_id)
-    df_h = s.df_h
-    fund_row = df_h[df_h["Fund"].str.contains(fund_name[:30], case=False, na=False)]
-    if fund_row.empty:
-        return {"peers": [], "fund_name": fund_name, "cat_rank": None}
-
-    row      = fund_row.iloc[0]
-    category = str(row.get("Category", "Equity"))
-    cap_type = str(row.get("Cap Type", ""))
-    isin     = str(row.get("ISIN", row.get("Isin", "")))
-
-    fund_nav = fetch_nav_series_by_isin(isin, days=1825) if isin else pd.Series(dtype=float)
-    fund_trailing = compute_trailing_returns(fund_nav)
-    fund_1y = fund_trailing.get("1Y") or 0.0
-
-    bench_ticker, bench_display = get_fund_benchmark(category, cap_type, fund_name)
-    bench_series = fetch_benchmark_series(bench_ticker, 1825 + 30)
-    bench_trailing = compute_trailing_returns(bench_series)
-
-    clean_cat = (cap_type if cap_type and "cap" in cap_type.lower() else category).replace("Fund", "").strip()
-    from core.tab_common import get_diverse_category_peers
-    diverse_peers, _ = get_diverse_category_peers(category, base_fund_name=fund_name)
-    
-    peer_1y_returns = [p["ret1y"] for p in diverse_peers if "ret1y" in p and p["ret1y"] is not None]
-    cat_rank, cat_total = None, None
-    if fund_1y and peer_1y_returns:
-        all_returns  = sorted(peer_1y_returns + [fund_1y], reverse=True)
-        cat_rank     = all_returns.index(fund_1y) + 1
-        cat_total    = len(all_returns)
-        
-    for p in diverse_peers:
-        p["er_label"] = classify_er(p["er"], category)
-        p["category"] = category
-
-    return {
-        "fund_name":       fund_name,
-        "category":        category,
-        "bench_display":   bench_display,
-        "fund_trailing":   fund_trailing,
-        "bench_trailing":  bench_trailing,
-        "cat_rank":        cat_rank,
-        "cat_total":       cat_total,
-        "peers":           diverse_peers[:5],
-    }
-
-
 @router.get("/{session_id}/rolling/{fund_isin}")
 async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 3):
     s    = get_session(session_id)
     df_h = s.df_h
     
-    from core.tab_common import series_to_list
+    from domains.mutual_funds.tab_common import series_to_list
 
     fund_row = pd.DataFrame()
     if "ISIN" in df_h.columns:
@@ -531,7 +479,7 @@ def get_sip_performance(session_id: str):
     total_sip_invested = 0
     total_sip_value = 0
     
-    from core.finance import compute_xirr
+    from domains.mutual_funds.finance import compute_xirr
     
     for fn in sip_txns["Fund"].unique():
         f_sips = sip_txns[sip_txns["Fund"] == fn]

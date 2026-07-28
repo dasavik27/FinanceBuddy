@@ -8,10 +8,10 @@ Executes multi-threaded historical performance curve synthesis and asset allocat
 """
 
 from fastapi import APIRouter
-from core.sessions import get_session
-from core.config import BENCHMARKS, PERIOD_MAP
-from services.market_indices import fetch_benchmark_series
-from core.finance import compute_period_comparison
+from domains.mutual_funds.sessions import get_session
+from shared.config import BENCHMARKS, PERIOD_MAP
+from shared.services.market_indices import fetch_benchmark_series
+from domains.mutual_funds.finance import compute_period_comparison
 
 router = APIRouter()
 
