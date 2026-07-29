@@ -5,7 +5,7 @@ import type {
   PerformanceData, AllocationData, InsightsData,
 } from './types'
 
-const api = axios.create({ baseURL: '/api' })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 api.interceptors.request.use((config) => {
   const pan = useAppStore.getState().pan
