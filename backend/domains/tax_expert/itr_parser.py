@@ -64,21 +64,22 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     import pdfplumber
     import os
 
-    # Monkey-patch pdfplumber.utils.decimalize to prevent crashes on None or PDFColorSpace
+    # Monkey-patch pdfplumber.utils.decimalize to prevent crashes on None or PDFColorSpace (legacy versions only)
     import pdfplumber.utils
-    original_decimalize = pdfplumber.utils.decimalize
+    if hasattr(pdfplumber.utils, 'decimalize'):
+        original_decimalize = pdfplumber.utils.decimalize
 
-    def safe_decimalize(v, q=None):
-        if v is None:
-            return None
-        if "PDFColorSpace" in str(type(v)):
-            return None
-        try:
-            return original_decimalize(v, q)
-        except Exception:
-            return None
+        def safe_decimalize(v, q=None):
+            if v is None:
+                return None
+            if "PDFColorSpace" in str(type(v)):
+                return None
+            try:
+                return original_decimalize(v, q)
+            except Exception:
+                return None
 
-    pdfplumber.utils.decimalize = safe_decimalize
+        pdfplumber.utils.decimalize = safe_decimalize
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file_bytes)
