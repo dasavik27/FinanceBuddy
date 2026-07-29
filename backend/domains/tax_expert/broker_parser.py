@@ -5,7 +5,6 @@ Parses Broker Tax P&L files (e.g. Zerodha Excel) to extract structured
 capital gains trade data for reconciliation against the government AIS.
 """
 
-import pandas as pd
 import io
 
 def parse_zerodha_tax_pnl(raw_bytes: bytes) -> list:
@@ -13,6 +12,11 @@ def parse_zerodha_tax_pnl(raw_bytes: bytes) -> list:
     Parses a Zerodha Tax P&L Excel file from raw bytes.
     Returns a flat list of trade dictionaries.
     """
+    # Lazy import: broker reconciliation is optional, so pandas should not be a
+    # cost of importing the tax domain. (It is still loaded eagerly by the
+    # mutual-funds domain today; this keeps the tax path independent of that.)
+    import pandas as pd
+
     xls = pd.ExcelFile(io.BytesIO(raw_bytes))
     trades = []
     

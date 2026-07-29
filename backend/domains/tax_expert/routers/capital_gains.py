@@ -9,15 +9,29 @@ Per-transaction capital gains breakdown and manual cost-basis correction.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from domains.tax_expert.tax_engine import LTCG_EQUITY_EXEMPTION
+from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.tax_sessions import get_tax_session, update_ais_data
 
 router = APIRouter()
 
 
 @router.get("/{session_id}/tax/capital-gains")
-def get_capital_gains(session_id: str):
-    """Get detailed capital gains breakdown with per-transaction data."""
+def get_capital_gains(session_id: str, regime: str = "new"):
+    """Get detailed capital gains breakdown with per-transaction data.
+
+    The `summary` block comes straight from the tax engine rather than being
+    recomputed here. This endpoint previously reimplemented the aggregation with
+    plain `sum(t["gain"])` passes, which silently omitted:
+
+      - Section 112A grandfathering (FMV as on 31-Jan-2018)
+      - the Section 50AA specified-fund exclusion from 12.5% LTCG treatment
+      - brought-forward STCL/LTCL offsets
+      - manual `capital_gains` overrides
+
+    so /tax/capital-gains and /tax/summary reported *different* ltcg_equity for
+    the same session. Projecting from the single engine result fixes that
+    divergence and removes the duplicate arithmetic.
+    """
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
@@ -32,27 +46,12 @@ def get_capital_gains(session_id: str):
     cg_unlisted = ais.get("cg_unlisted", [])
     cg_bonds_gold = ais.get("cg_bonds_gold", [])
 
-    # Compute summaries
-    ltcg_equity = sum(t.get("gain", 0) for t in cg_equity if t.get("type") == "LTCG")
-    ltcg_equity += sum(t.get("gain", 0) for t in cg_mf_equity if t.get("type") == "LTCG")
-
-    stcg_equity = sum(t.get("gain", 0) for t in cg_equity if t.get("type") == "STCG")
-    stcg_equity += sum(t.get("gain", 0) for t in cg_mf_equity if t.get("type") == "STCG")
-
-    other_assets = cg_mf_other + cg_real_estate + cg_unlisted + cg_bonds_gold
-    ltcg_other = sum(t.get("gain", 0) for t in other_assets if t.get("type") == "LTCG")
-    stcg_other = sum(t.get("gain", 0) for t in other_assets if t.get("type") == "STCG")
+    # Memoized — normally a cache hit, since the dashboard also requests
+    # /tax/summary for this session and regime.
+    computed = get_computation(session_id, session, regime)
 
     return {
-        "summary": {
-            "ltcg_equity": round(ltcg_equity, 0),
-            "stcg_equity": round(stcg_equity, 0),
-            "ltcg_other": round(ltcg_other, 0),
-            "stcg_other": round(stcg_other, 0),
-            "total": round(ltcg_equity + stcg_equity + ltcg_other + stcg_other, 0),
-            "ltcg_equity_exemption": LTCG_EQUITY_EXEMPTION,
-            "ltcg_equity_taxable": round(max(0, ltcg_equity - LTCG_EQUITY_EXEMPTION), 0),
-        },
+        "summary": dict(computed["income_heads"]["capital_gains"]),
         "equity_shares": cg_equity,
         "equity_mf": cg_mf_equity,
         "other_mf": cg_mf_other,

@@ -1,5 +1,5 @@
 import { Box, Typography, Paper, Grid, Stack, Skeleton, alpha, Chip, LinearProgress, Divider, IconButton, Collapse, CircularProgress } from '@mui/material'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import EditIcon from '@mui/icons-material/Edit'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import ShowChartIcon from '@mui/icons-material/ShowChart'
@@ -22,7 +22,12 @@ import { apiClient } from '../../../../shared/api/client'
 import { fmtInr } from '../../../../shared/utils/fmt'
 import { InlineEdit } from '../../../../shared/components/ui/InlineEdit'
 
-const TransactionTable = ({ title, data, count, color, onSaveCost, category }: any) => {
+// React.memo pays off here specifically: this table is instantiated up to six
+// times and each instance renders every transaction row (~12 MUI components
+// apiece). All of its props are now stable when the data is unchanged —
+// onSaveCost is wrapped in useCallback by the parent — so an accordion toggle or
+// B/F-loss keystroke no longer re-renders every row of every table.
+const TransactionTable = React.memo(({ title, data, count, color, onSaveCost, category }: any) => {
   let grandTotalSale = 0;
   let grandTotalCost = 0;
   let grandTotalGain = 0;
@@ -226,7 +231,7 @@ const TransactionTable = ({ title, data, count, color, onSaveCost, category }: a
     </Box>
   </Box>
 )
-}
+})
 
 export default function TaxCapitalGainsTab() {
   const regime = useTaxRegime()
@@ -245,9 +250,10 @@ export default function TaxCapitalGainsTab() {
     setUploadingBroker(true)
     try {
       await apiClient.reconcileBrokerFile(sid, accepted[0])
-      // Trigger a re-fetch of the data
-      queryClient.invalidateQueries({ queryKey: ['tax-expert-capital-gains'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-expert-summary'] })
+      // Scoped to this session, so other sessions' cached queries are untouched.
+      queryClient.invalidateQueries({ queryKey: ['tax-expert-capital-gains', sid] })
+      queryClient.invalidateQueries({ queryKey: ['tax-expert-summary', sid] })
+      queryClient.invalidateQueries({ queryKey: ['tax-expert-compare', sid] })
     } catch (e) {
       console.error(e)
       alert("Failed to process broker file.")
@@ -275,13 +281,50 @@ export default function TaxCapitalGainsTab() {
     mutation.mutate({ bf_losses: newLosses })
   }
   
-  const handleSaveCost = (tx: any, category: string, newCost: number) => {
+  // useCallback so memoized children below keep stable prop identity across
+  // re-renders; these were redefined on every render.
+  const handleSaveCost = useCallback((tx: any, category: string, newCost: number) => {
     costMutation.mutate({ category, sr: tx.sr, new_cost: newCost })
-  }
+  }, [costMutation])
 
-  const toggleCat = (cat: string) => {
+  const toggleCat = useCallback((cat: string) => {
     setExpandedCat(prev => prev === cat ? null : cat)
-  }
+  }, [])
+
+  // Per-transaction aggregation, memoized and placed above the loading guard
+  // because hooks must not run after a conditional return.
+  //
+  // This was ~15 separate .reduce()/.filter()/spread passes sitting directly in
+  // the render body, so every accordion toggle, B/F-loss keystroke or upload
+  // state change re-walked the entire transaction set. Now it is a single pass
+  // that only re-runs when the data actually changes.
+  const totals = useMemo(() => {
+    const equityShares = data?.equity_shares || []
+    const equityMf = data?.equity_mf || []
+    const otherMf = data?.other_mf || []
+    const realEstate = data?.real_estate || []
+    const unlisted = data?.unlisted || []
+    const bondsGold = data?.bonds_gold || []
+
+    let equityCost = 0, equitySale = 0
+    for (const g of [equityShares, equityMf]) {
+      for (const tx of g) { equityCost += tx.cost || 0; equitySale += tx.consideration || 0 }
+    }
+
+    let otherCost = 0, otherSale = 0
+    for (const g of [realEstate, bondsGold, unlisted, otherMf]) {
+      for (const tx of g) { otherCost += tx.cost || 0; otherSale += tx.consideration || 0 }
+    }
+
+    const allTrades = [...equityShares, ...equityMf, ...otherMf, ...realEstate, ...unlisted, ...bondsGold]
+    let zeroCostCount = 0, patchedCount = 0
+    for (const tx of allTrades) {
+      if (tx.cost === 0 && tx.consideration > 0) zeroCostCount++
+      if (tx.patched) patchedCount++
+    }
+
+    return { equityCost, equitySale, otherCost, otherSale, allTrades, zeroCostCount, patchedCount }
+  }, [data])
 
   if (isLoading || isSummaryLoading || !data || !summaryData) {
     return (
@@ -297,29 +340,16 @@ export default function TaxCapitalGainsTab() {
     )
   }
 
-  const exemptionUsed = Math.min(Math.max(0, summaryData.income_heads.capital_gains.ltcg_equity), 125000)
-  const exemptionPct = (exemptionUsed / 125000) * 100
+  // The engine already reports the statutory exemption, so this no longer
+  // hardcodes 125000 in the UI (which would silently drift after a Budget change).
+  const ltcgExemption = summaryData.income_heads.capital_gains.ltcg_equity_exemption ?? 0
+  const exemptionUsed = Math.min(Math.max(0, summaryData.income_heads.capital_gains.ltcg_equity), ltcgExemption)
+  const exemptionPct = ltcgExemption > 0 ? (exemptionUsed / ltcgExemption) * 100 : 0
   
   const equityTotal = summaryData.tax_on_capital_gains.ltcg_equity + summaryData.tax_on_capital_gains.stcg_equity
   
-  const equityCost = (data?.equity_shares || []).reduce((acc: any, tx: any) => acc + tx.cost, 0) + (data?.equity_mf || []).reduce((acc: any, tx: any) => acc + tx.cost, 0)
-  const equitySale = (data?.equity_shares || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0) + (data?.equity_mf || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0)
+  const { equityCost, equitySale, otherCost, otherSale, allTrades, zeroCostCount, patchedCount } = totals
   const otherTotal = summaryData.tax_on_capital_gains.ltcg_other || 0
-  
-  const otherCost = (data?.real_estate || []).reduce((acc: any, tx: any) => acc + tx.cost, 0) + (data?.bonds_gold || []).reduce((acc: any, tx: any) => acc + tx.cost, 0) + (data?.unlisted || []).reduce((acc: any, tx: any) => acc + tx.cost, 0) + (data?.other_mf || []).reduce((acc: any, tx: any) => acc + tx.cost, 0)
-  const otherSale = (data?.real_estate || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0) + (data?.bonds_gold || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0) + (data?.unlisted || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0) + (data?.other_mf || []).reduce((acc: any, tx: any) => acc + tx.consideration, 0)
-  
-  const allTrades = [
-    ...(data?.equity_shares || []), 
-    ...(data?.equity_mf || []), 
-    ...(data?.other_mf || []), 
-    ...(data?.real_estate || []), 
-    ...(data?.unlisted || []), 
-    ...(data?.bonds_gold || [])
-  ]
-  
-  const zeroCostCount = allTrades.filter((tx: any) => tx.cost === 0 && tx.consideration > 0).length
-  const patchedCount = allTrades.filter((tx: any) => tx.patched).length
   
   // Note: we can't reliably detect cost mismatches on the frontend BEFORE the broker file is uploaded, 
   // because we don't have the broker's FMV data to compare against. 
@@ -440,7 +470,7 @@ export default function TaxCapitalGainsTab() {
                       </Box>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Typography variant="body2" sx={{ color: '#EAB308', fontWeight: 600 }}>Less: Sec 112A Exemption</Typography>
-                        <Typography variant="body2" className="num" sx={{ fontWeight: 800, color: '#EAB308' }}>- {fmtInr(Math.min(summaryData.income_heads.capital_gains.ltcg_equity, 125000))}</Typography>
+                        <Typography variant="body2" className="num" sx={{ fontWeight: 800, color: '#EAB308' }}>- {fmtInr(Math.min(summaryData.income_heads.capital_gains.ltcg_equity, ltcgExemption))}</Typography>
                       </Box>
                       <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', borderStyle: 'dashed' }} />
                       <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>

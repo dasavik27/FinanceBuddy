@@ -11,27 +11,53 @@ import os
 import re
 import logging
 import tempfile
-import pandas as pd
 from datetime import datetime
-
-# Optional imports for PDF processing
-try:
-    import pdfplumber
-except ImportError:
-    pdfplumber = None
-
-try:
-    import camelot
-except ImportError:
-    camelot = None
 
 from .ais_schemas import validate_schema, AISStructureChangedError, AISUnknownCodeError, clean_header
 
 logger = logging.getLogger(__name__)
 
+# camelot is imported lazily inside parse_ais_pdf rather than at module scope.
+# It pulls in OpenCV (cv2), and the pair costs ~1.8s of import time and ~60 MB
+# RSS — unaffordable at boot on a 512 MB Render instance where the vast majority
+# of requests never touch a PDF. Deferring it to the first AIS upload keeps the
+# idle footprint low and cuts cold-start latency.
+
+
+def _is_blank(val) -> bool:
+    """True for None, NaN, or whitespace-only values.
+
+    Replaces the former pd.isna() call. Camelot yields str cells (occasionally
+    float NaN for empty ones), so this covers every case reachable here without
+    importing pandas — which module-level cost ~8.7s and ~70 MB purely for this
+    null check. NaN is detected via the self-inequality identity.
+    """
+    if val is None:
+        return True
+    if isinstance(val, float) and val != val:
+        return True
+    return not str(val).strip()
+
+
+def _col_map(headers) -> dict:
+    """Map header name -> column position, resolved once per table.
+
+    The row loops below used `headers.index("X")` for every column of every row —
+    a linear scan of the header list per cell, so O(rows x cols) list scans on
+    tables that can run to thousands of rows.
+
+    First occurrence wins, matching list.index() semantics, which matters because
+    PDF-extracted headers can legitimately contain duplicates.
+    """
+    col = {}
+    for i, name in enumerate(headers):
+        if name not in col:
+            col[name] = i
+    return col
+
 
 def _clean_amount(val) -> float:
-    if pd.isna(val) or not str(val).strip():
+    if _is_blank(val):
         return 0.0
     val_str = str(val).strip().replace(',', '').replace('₹', '').replace(' ', '')
     try:
@@ -41,7 +67,7 @@ def _clean_amount(val) -> float:
 
 
 def _parse_date(val) -> str:
-    if pd.isna(val) or not str(val).strip():
+    if _is_blank(val):
         return ""
     val_str = str(val).strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
@@ -56,8 +82,10 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
     """
     Parse an AIS PDF and return structured financial data using Camelot for tables.
     """
-    if not camelot:
-        return {"error": "AIS PDF parsing not available - install camelot-py and pdfplumber"}
+    try:
+        import camelot  # lazy — see module header
+    except ImportError:
+        return {"error": "AIS PDF parsing not available - install camelot-py"}
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(raw_bytes)
@@ -245,18 +273,19 @@ def _process_salary_tds(df, headers, result, source=""):
         result["salary"]["employer"] = source
 
     # Map row data to result["salary"]["quarterly"]
+    col = _col_map(headers)
     for idx, row in df.iloc[1:].iterrows():
         try:
-            amt = _clean_amount(row[headers.index("AMOUNTPAIDCREDITED")])
-            tds = _clean_amount(row[headers.index("TDSDEDUCTED")])
+            amt = _clean_amount(row[col["AMOUNTPAIDCREDITED"]])
+            tds = _clean_amount(row[col["TDSDEDUCTED"]])
             if amt > 0 or tds > 0:
                 result["salary"]["quarterly"].append({
-                    "sr": _clean_amount(row[headers.index("SRNO")]) if "SRNO" in headers else len(result["salary"]["quarterly"]) + 1,
-                    "quarter": str(row[headers.index("QUARTER")]).strip() if "QUARTER" in headers else "",
-                    "date": _parse_date(row[headers.index("DATEOFPAYMENTCREDIT")]) if "DATEOFPAYMENTCREDIT" in headers else "",
+                    "sr": _clean_amount(row[col["SRNO"]]) if "SRNO" in col else len(result["salary"]["quarterly"]) + 1,
+                    "quarter": str(row[col["QUARTER"]]).strip() if "QUARTER" in col else "",
+                    "date": _parse_date(row[col["DATEOFPAYMENTCREDIT"]]) if "DATEOFPAYMENTCREDIT" in col else "",
                     "amount_paid": amt,
                     "tds_deducted": tds,
-                    "tds_deposited": _clean_amount(row[headers.index("TDSDEPOSITED")]) if "TDSDEPOSITED" in headers else 0,
+                    "tds_deposited": _clean_amount(row[col["TDSDEPOSITED"]]) if "TDSDEPOSITED" in col else 0,
                 })
                 result["salary"]["gross"] += amt
                 result["salary"]["tds_deducted"] += tds
@@ -312,30 +341,31 @@ def _process_interest(df, headers, result):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_cg_equity(df, headers, result):
+    col = _col_map(headers)
     for idx, row in df.iloc[1:].iterrows():
         try:
-            if "STATUS" in headers and "inactive" in str(row[headers.index("STATUS")]).lower():
+            if "STATUS" in col and "inactive" in str(row[col["STATUS"]]).lower():
                 continue
-            term = str(row[headers.index("ASSETTYPE")]).lower() if "ASSETTYPE" in headers else ""
+            term = str(row[col["ASSETTYPE"]]).lower() if "ASSETTYPE" in col else ""
             term_type = "LTCG" if "long" in term else "STCG"
-            cons = _clean_amount(row[headers.index("SALESCONSIDERATION")])
-            cost = _clean_amount(row[headers.index("COSTOFACQUISITION")]) if "COSTOFACQUISITION" in headers else 0
+            cons = _clean_amount(row[col["SALESCONSIDERATION"]])
+            cost = _clean_amount(row[col["COSTOFACQUISITION"]]) if "COSTOFACQUISITION" in col else 0
             if cons > 0:
-                sec_name = str(row[headers.index("SECURITYNAMESECURITYCODE")]).replace('\n', ' ')
-                sec_class = str(row[headers.index("SECURITYCLASS")]).lower() if "SECURITYCLASS" in headers else ""
-                
+                sec_name = str(row[col["SECURITYNAMESECURITYCODE"]]).replace('\n', ' ')
+                sec_class = str(row[col["SECURITYCLASS"]]).lower() if "SECURITYCLASS" in col else ""
+
                 item = {
                     "security": sec_name,
                     "type": term_type,
-                    "sale_price": _clean_amount(row[headers.index("SALEPRICEPERUNIT")]) if "SALEPRICEPERUNIT" in headers else 0,
-                    "quantity": _clean_amount(row[headers.index("QUANTITY")]) if "QUANTITY" in headers else 0,
+                    "sale_price": _clean_amount(row[col["SALEPRICEPERUNIT"]]) if "SALEPRICEPERUNIT" in col else 0,
+                    "quantity": _clean_amount(row[col["QUANTITY"]]) if "QUANTITY" in col else 0,
                     "consideration": cons,
                     "cost": cost,
                     "gain": cons - cost,
                     # 31-Jan-2018 grandfathering FMV (Section 112A); the engine only applies it
                     # when the acquisition date is known to precede the cut-off.
-                    "fmv_31jan2018": _clean_amount(row[headers.index("FAIRMARKETVALUE")]) if "FAIRMARKETVALUE" in headers else 0,
-                    "sale_date": _parse_date(row[headers.index("DATEOFSALETRANSFER")]) if "DATEOFSALETRANSFER" in headers else "",
+                    "fmv_31jan2018": _clean_amount(row[col["FAIRMARKETVALUE"]]) if "FAIRMARKETVALUE" in col else 0,
+                    "sale_date": _parse_date(row[col["DATEOFSALETRANSFER"]]) if "DATEOFSALETRANSFER" in col else "",
                 }
 
                 # Dynamic Routing based on Security Class
@@ -352,30 +382,31 @@ def _process_cg_equity(df, headers, result):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_cg_mf(df, headers, result):
+    col = _col_map(headers)
     for idx, row in df.iloc[1:].iterrows():
         try:
-            if "STATUS" in headers and "inactive" in str(row[headers.index("STATUS")]).lower():
+            if "STATUS" in col and "inactive" in str(row[col["STATUS"]]).lower():
                 continue
-            term = str(row[headers.index("ASSETTYPE")]).lower()
+            term = str(row[col["ASSETTYPE"]]).lower()
             term_type = "LTCG" if "long" in term else "STCG"
-            cons = _clean_amount(row[headers.index("SALESCONSIDERATION")])
-            cost = _clean_amount(row[headers.index("COSTOFACQUISITION")])
+            cons = _clean_amount(row[col["SALESCONSIDERATION"]])
+            cost = _clean_amount(row[col["COSTOFACQUISITION"]])
             if cons > 0:
-                amc = str(row[headers.index("AMCNAMECODE")]).replace('\n', ' ')
-                fund = str(row[headers.index("SECURITYNAMESECURITYCODE")]).replace('\n', ' ')
-                sec_class = str(row[headers.index("SECURITYCLASS")]).lower() if "SECURITYCLASS" in headers else ""
+                amc = str(row[col["AMCNAMECODE"]]).replace('\n', ' ')
+                fund = str(row[col["SECURITYNAMESECURITYCODE"]]).replace('\n', ' ')
+                sec_class = str(row[col["SECURITYCLASS"]]).lower() if "SECURITYCLASS" in col else ""
                 item = {
                     "amc": amc,
                     "fund": fund,
                     "security": fund,
                     "type": term_type,
-                    "sale_price": _clean_amount(row[headers.index("SALEPRICEPERUNIT")]) if "SALEPRICEPERUNIT" in headers else 0,
-                    "quantity": _clean_amount(row[headers.index("QUANTITY")]),
+                    "sale_price": _clean_amount(row[col["SALEPRICEPERUNIT"]]) if "SALEPRICEPERUNIT" in col else 0,
+                    "quantity": _clean_amount(row[col["QUANTITY"]]),
                     "consideration": cons,
                     "cost": cost,
                     "gain": cons - cost,
-                    "fmv_31jan2018": _clean_amount(row[headers.index("FAIRMARKETVALUE")]) if "FAIRMARKETVALUE" in headers else 0,
-                    "sale_date": _parse_date(row[headers.index("DATEOFSALETRANSFER")]) if "DATEOFSALETRANSFER" in headers else "",
+                    "fmv_31jan2018": _clean_amount(row[col["FAIRMARKETVALUE"]]) if "FAIRMARKETVALUE" in col else 0,
+                    "sale_date": _parse_date(row[col["DATEOFSALETRANSFER"]]) if "DATEOFSALETRANSFER" in col else "",
                 }
 
                 # Dynamic routing based on Security Class instead of just fund name guessing

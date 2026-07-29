@@ -9,6 +9,7 @@ import ShieldIcon from '@mui/icons-material/Shield'
 import DescriptionIcon from '@mui/icons-material/Description'
 import { useTaxSessionId, useAppStore } from '../../../shared/store/appStore'
 import { apiClient } from '../../../shared/api/client'
+import { useTaxExpertSummary } from '../hooks/useTaxExpert'
 import TaxStrategyTab from './TaxStrategyTab'
 import { ErrorBoundary } from '../../../shared/components/ui'
 
@@ -17,30 +18,29 @@ export default function TaxExpertDashboard() {
   const setActiveModule = useAppStore((s) => s.setActiveModule)
   const { setSession, clearSession } = useAppStore()
   const [sessionExpired, setSessionExpired] = useState(false)
-  const [validating, setValidating] = useState(!!sid)
 
   useEffect(() => {
     setActiveModule('tax_expert')
   }, [setActiveModule])
 
-  // Validate that the stored session ID still exists on the backend
+  // Session validation piggybacks on the cached summary query instead of firing
+  // its own raw axios call. The previous version requested the identical URL
+  // (/tax/summary?regime=new) outside react-query, so it neither deduped against
+  // nor populated the cache — TaxOverviewTab then re-requested the same data
+  // moments later. On Render's free tier that doubled an already slow round trip
+  // and gated first paint behind it. Sharing this query key means the request
+  // TaxOverviewTab needs is the same one that validates the session: one fetch.
+  const { isLoading, error } = useTaxExpertSummary('new')
+  const validating = !!sid && isLoading
+
+  // A 404 means the backend no longer knows this session (Render's free tier has
+  // an ephemeral disk, so sessions do not survive a redeploy or spin-down).
   useEffect(() => {
-    if (!sid) {
-      setValidating(false)
-      return
+    if ((error as any)?.response?.status === 404) {
+      clearSession('tax_expert')
+      setSessionExpired(true)
     }
-    setValidating(true)
-    apiClient.getTaxExpertSummary(sid, 'new')
-      .then(() => setValidating(false))
-      .catch((err: any) => {
-        if (err?.response?.status === 404) {
-          // Session is gone from backend — clear the stale session ID
-          clearSession('tax_expert')
-          setSessionExpired(true)
-        }
-        setValidating(false)
-      })
-  }, [sid]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [error, clearSession])
 
   if (validating) {
     return (

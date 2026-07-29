@@ -183,6 +183,14 @@ def _parse_iso(val) -> Optional[datetime]:
     return None
 
 
+# Module-level constants parsed once at import. These were previously re-parsed
+# with datetime.strptime on every single trade — _parse_iso(GRANDFATHER_DATE) once
+# per LTCG trade and _parse_iso(DEBT_REGIME_CUTOFF) once per "other asset" trade —
+# even though the inputs are fixed strings from tax_rules.json.
+_GRANDFATHER_CUTOFF = _parse_iso(GRANDFATHER_DATE)
+_DEBT_REGIME_CUTOFF_DT = _parse_iso(DEBT_REGIME_CUTOFF)
+
+
 def _months_ceil(start: datetime, end: datetime) -> int:
     """Whole months between two dates, counting any part-month as a full month (Sec 234 convention)."""
     if end <= start:
@@ -210,7 +218,7 @@ def _grandfathered_gain(trade: dict) -> float:
 
     fmv = _safe_float(trade.get("fmv_31jan2018", trade.get("fair_market_value", 0)))
     acq = _parse_iso(trade.get("acquired_date") or trade.get("purchase_date"))
-    cutoff = _parse_iso(GRANDFATHER_DATE)
+    cutoff = _GRANDFATHER_CUTOFF
 
     if fmv > 0 and acq is not None and cutoff is not None and acq <= cutoff:
         sale = _safe_float(trade.get("consideration", 0))
@@ -435,11 +443,14 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
         if t.get("slab_taxed"):
             return True
         acq = _parse_iso(t.get("acquired_date") or t.get("purchase_date"))
-        cutoff = _parse_iso(DEBT_REGIME_CUTOFF)
+        cutoff = _DEBT_REGIME_CUTOFF_DT
         return bool(t.get("is_debt") and acq is not None and cutoff is not None and acq >= cutoff)
 
-    slab_fund_assets = [t for t in other_assets if _is_slab_fund(t)]
-    non_slab_assets = [t for t in other_assets if not _is_slab_fund(t)]
+    # Single partition pass. This was two comprehensions over `other_assets`, so
+    # _is_slab_fund (which parses a date) ran twice per trade.
+    slab_fund_assets, non_slab_assets = [], []
+    for t in other_assets:
+        (slab_fund_assets if _is_slab_fund(t) else non_slab_assets).append(t)
 
     ltcg_other = sum(t.get("gain", 0) for t in non_slab_assets if t.get("type") == "LTCG")
     stcg_other = sum(t.get("gain", 0) for t in non_slab_assets if t.get("type") == "STCG")

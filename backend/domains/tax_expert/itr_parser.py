@@ -14,12 +14,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-try:
-    import pdfplumber
-    _PDFPLUMBER_AVAILABLE = True
-except ImportError:
-    _PDFPLUMBER_AVAILABLE = False
-    logger.warning("pdfplumber not installed. ITR parsing will not be available.")
+# pdfplumber is imported lazily inside parse_itr_pdf, not here. The former
+# module-level probe cost ~2.2s of import time at every cold start and only set
+# a _PDFPLUMBER_AVAILABLE flag that nothing ever read.
 
 
 def _clean_num(s: str) -> float:
@@ -59,27 +56,18 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     Parse a filed ITR PDF and extract detailed summary figures.
     """
     import io
-
     import tempfile
-    import pdfplumber
     import os
 
-    # Monkey-patch pdfplumber.utils.decimalize to prevent crashes on None or PDFColorSpace (legacy versions only)
-    import pdfplumber.utils
-    if hasattr(pdfplumber.utils, 'decimalize'):
-        original_decimalize = pdfplumber.utils.decimalize
+    import pdfplumber
 
-        def safe_decimalize(v, q=None):
-            if v is None:
-                return None
-            if "PDFColorSpace" in str(type(v)):
-                return None
-            try:
-                return original_decimalize(v, q)
-            except Exception:
-                return None
-
-        pdfplumber.utils.decimalize = safe_decimalize
+    # The decimalize() monkey-patch that used to live here has been removed.
+    # pdfplumber is pinned to 0.11.10, which no longer exposes utils.decimalize,
+    # so the hasattr() guard never fired and the whole block was dead code.
+    # It was also a latent leak: original_decimalize was read from the
+    # already-patched module, so each call wrapped the previous wrapper on
+    # pdfplumber's hottest per-character function, permanently slowing every
+    # subsequent upload in the process.
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file_bytes)

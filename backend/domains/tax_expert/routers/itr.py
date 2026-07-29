@@ -19,13 +19,17 @@ router = APIRouter()
 
 
 @router.post("/{session_id}/tax/itr")
-async def upload_itr(session_id: str, file: UploadFile = File(...)):
-    """Upload a filed ITR PDF and extract summary figures for comparison."""
+def upload_itr(session_id: str, file: UploadFile = File(...)):
+    """Upload a filed ITR PDF and extract summary figures for comparison.
+
+    Sync `def` on purpose: pdfplumber layout extraction plus ~50 full-document
+    regex passes are blocking CPU work that must not run on the event loop.
+    """
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
 
-    raw = await file.read()
+    raw = file.file.read()
     try:
         itr_data = parse_itr_pdf(raw)
         update_itr_data(session_id, itr_data)

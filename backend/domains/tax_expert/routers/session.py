@@ -15,7 +15,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, Header
 
 from domains.tax_expert.ais_parser import parse_ais_pdf
 from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownCodeError
-from domains.tax_expert.tax_engine import compute_tax
+from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.broker_parser import parse_zerodha_tax_pnl
 from domains.tax_expert.reconciliation import reconcile_trades, _normalize
 from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_pan, update_ais_data
@@ -26,13 +26,21 @@ router = APIRouter()
 
 
 @router.post("/parse-ais")
-async def parse_ais(
+def parse_ais(
     file: UploadFile = File(...),
     broker_file: Optional[UploadFile] = File(None),
     x_user_pan: str = Header(None),
 ):
-    """Parse an AIS PDF and create a tax computation session."""
-    raw = await file.read()
+    """Parse an AIS PDF and create a tax computation session.
+
+    Deliberately a sync `def`, not `async def`: every call below (camelot table
+    extraction, broker parsing, reconciliation, the SQLite write) is blocking
+    CPU-bound work taking seconds. Under `async def` it ran directly on the
+    event loop and froze the entire single-worker API — including /health, which
+    could fail Render's health check mid-upload. As a sync def, FastAPI runs it
+    in a threadpool and the loop stays responsive.
+    """
+    raw = file.file.read()
 
     try:
         ais_data = parse_ais_pdf(raw)
@@ -70,7 +78,7 @@ async def parse_ais(
 
     reconciliation_flags = {}
     if broker_file:
-        broker_raw = await broker_file.read()
+        broker_raw = broker_file.file.read()
         try:
             broker_trades = parse_zerodha_tax_pnl(broker_raw)
             reconciliation_flags = reconcile_trades(ais_data, broker_trades)
@@ -81,8 +89,10 @@ async def parse_ais(
 
     session_id = create_tax_session(ais_data, pan_id=x_user_pan, flags=reconciliation_flags)
 
-    # Compute initial tax (New Regime by default)
-    tax_result = compute_tax(ais_data, regime="new")
+    # Compute initial tax (New Regime by default). Routed through the cache so the
+    # dashboard's immediate follow-up GET /tax/summary?regime=new is a hit rather
+    # than a second full engine run.
+    tax_result = get_computation(session_id, get_tax_session(session_id), "new")
 
     return {
         "session_id": session_id,
@@ -97,16 +107,20 @@ async def parse_ais(
 
 
 @router.post("/{session_id}/tax/reconcile-broker")
-async def reconcile_broker(
+def reconcile_broker(
     session_id: str,
     broker_file: UploadFile = File(...)
 ):
-    """Parse a broker file, reconcile against AIS, auto-correct missing costs, and update the session."""
+    """Parse a broker file, reconcile against AIS, auto-correct missing costs, and update the session.
+
+    Sync `def` on purpose — see parse_ais above. Excel parsing plus the
+    O(A x B) difflib reconciliation are blocking and must not run on the loop.
+    """
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
 
-    broker_raw = await broker_file.read()
+    broker_raw = broker_file.file.read()
     try:
         broker_trades = parse_zerodha_tax_pnl(broker_raw)
         logger.info(f"Parsed {len(broker_trades)} trades from broker file.")
@@ -206,20 +220,32 @@ async def reconcile_broker(
             sig = f"{t.get('date', '')}_{t.get('consideration', 0)}_{t.get('cost', 0)}"
             trade_sigs[sig].append((cat, t))
 
-        for sig, matching_trades in trade_sigs.items():
-            if len(matching_trades) >= 2:
-                ais_total_cons = sum(float(x[1].get("consideration", 0)) for x in trades)
-                n_sec = _normalize(sec)
+        # The broker best-match below depends only on the security name and the
+        # security's total AIS consideration — both constant across signature
+        # groups — yet it used to be recomputed inside the signature loop, running
+        # a difflib.SequenceMatcher pass over every broker security per group.
+        # Computed at most once per security now, and lazily, so securities with no
+        # duplicate signatures pay nothing.
+        _match_cache = {}
 
-                best_b_cons = 0
-                best_score = 0
+        def _broker_match():
+            if "v" not in _match_cache:
+                ais_total = sum(float(x[1].get("consideration", 0)) for x in trades)
+                n_sec = _normalize(sec)
+                best_cons, best_score = 0, 0
                 for b_sec, b_cons in broker_cons_by_sec.items():
                     score = difflib.SequenceMatcher(None, n_sec, b_sec).ratio()
-                    is_sale_exact = abs(ais_total_cons - b_cons) <= max(10, ais_total_cons * 0.005)
+                    is_sale_exact = abs(ais_total - b_cons) <= max(10, ais_total * 0.005)
                     is_match = score > 0.5 or (b_sec in n_sec) or (n_sec in b_sec) or (is_sale_exact and score > 0.15)
                     if is_match and score > best_score:
                         best_score = score
-                        best_b_cons = b_cons
+                        best_cons = b_cons
+                _match_cache["v"] = (ais_total, best_cons)
+            return _match_cache["v"]
+
+        for sig, matching_trades in trade_sigs.items():
+            if len(matching_trades) >= 2:
+                ais_total_cons, best_b_cons = _broker_match()
 
                 if best_b_cons > 0 and ais_total_cons > (best_b_cons * 1.5):
                     # Remove the duplicate

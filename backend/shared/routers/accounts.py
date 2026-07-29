@@ -28,17 +28,17 @@ def get_accounts_summary():
             cursor = conn.execute("SELECT session_id, pan_id, upload_type, created_at FROM sessions WHERE pan_id IS NOT NULL AND pan_id != ''")
             cas_sessions = [dict(row) for row in cursor.fetchall()]
             
-    # 2. Fetch Tax sessions from JSON cache
-    domains.tax_expert.tax_sessions._ensure_loaded()
+    # 2. Fetch Tax sessions via the store's public accessor rather than reaching
+    # into its private _tax_sessions global (which also skipped LRU bookkeeping).
     tax_sessions_list = []
-    for sid, data in domains.tax_expert.tax_sessions._tax_sessions.items():
+    for sid, data in domains.tax_expert.tax_sessions.list_sessions():
         pan = data.get("pan")
         if pan:
             tax_sessions_list.append({
                 "session_id": sid,
                 "pan_id": pan,
                 "upload_type": "tax_expert",
-                "created_at": None # We don't track creation time in JSON currently, but that's fine
+                "created_at": None  # not surfaced here; the store tracks it in SQLite
             })
             
     # 3. Aggregate by PAN
@@ -94,10 +94,14 @@ def clear_all_system_caches():
         from shared.services.market_data import clear_market_data_cache
         from domains.mutual_funds import sessions
         from domains.tax_expert import tax_sessions
+        from domains.tax_expert import computation_cache
 
         clear_market_data_cache()
         sessions._SESSIONS.clear()
-        tax_sessions._tax_sessions.clear()
+        tax_sessions.clear_all()
+        # Memoized tax computations reference the sessions just dropped; without
+        # this they would sit in memory until LRU eviction pushed them out.
+        computation_cache.clear_all()
         
         return {"status": "ok", "message": "Global market and session caches cleared successfully."}
     except Exception as e:

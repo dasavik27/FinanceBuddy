@@ -1,6 +1,5 @@
 from typing import List, Dict
 import re
-import pandas as pd
 
 class AISStructureChangedError(Exception):
     """Raised when the AIS PDF table structure does not match expected Golden Schemas."""
@@ -78,7 +77,9 @@ GOLDEN_SCHEMAS = {
 
 def clean_header(header: str) -> str:
     """Normalize headers by stripping all non-alphanumeric chars to handle PDF wrapping artifacts."""
-    if pd.isna(header) or not str(header):
+    # Previously pd.isna() — pandas was imported module-level for this one call.
+    # NaN is detected via self-inequality; see ais_parser._is_blank.
+    if header is None or (isinstance(header, float) and header != header) or not str(header):
         return ""
     return re.sub(r'[^A-Z0-9]', '', str(header).upper())
 

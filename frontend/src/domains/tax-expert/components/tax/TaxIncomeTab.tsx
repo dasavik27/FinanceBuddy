@@ -12,10 +12,9 @@ import MoreHorizIcon from '@mui/icons-material/MoreHoriz'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
-import { useTaxExpertIncome, useTaxExpertSummary, useTaxExpertOverrides } from '../../hooks/useTaxExpert'
+import { useTaxExpertIncome, useTaxExpertSummary, useTaxExpertOverrides, useTaxRules } from '../../hooks/useTaxExpert'
 import { useTaxRegime } from '../../../../shared/store/appStore'
 import { fmtInr } from '../../../../shared/utils/fmt'
-import taxRulesData from '../../tax_rules.json'
 
 const IncomeCard = ({ id, expanded, onToggle, title, infoText, icon: Icon, color, amount, autoFilled, children }: any) => {
   return (
@@ -75,6 +74,8 @@ const IncomeCard = ({ id, expanded, onToggle, title, infoText, icon: Icon, color
 export default function TaxIncomeTab() {
   const regime = useTaxRegime()
   const { data, isLoading } = useTaxExpertIncome()
+  // Served by GET /tax-expert/rules — was a bundled copy of tax_rules.json.
+  const { data: taxRules } = useTaxRules()
   
   const [expandedCat, setExpandedCat] = useState<string | null>('core')
   const [expandedCard, setExpandedCard] = useState<string | null>('salary_income')
@@ -116,7 +117,7 @@ export default function TaxIncomeTab() {
 
 
   const isSenior = (data?.personal?.dob) ? (new Date().getFullYear() - parseInt(data.personal.dob.split('/')[2])) >= 60 : false;
-  const savingsExempt = regime === 'new' ? 0 : isSenior ? Math.min((data?.total_savings_interest || 0) + (data?.total_fd_interest || 0), 50000) : Math.min(data?.total_savings_interest || 0, taxRulesData.deductions.limit_80tta);
+  const savingsExempt = regime === 'new' ? 0 : isSenior ? Math.min((data?.total_savings_interest || 0) + (data?.total_fd_interest || 0), 50000) : Math.min(data?.total_savings_interest || 0, (taxRules?.deductions?.limit_80tta ?? 0));
   const netSavings = Math.max(0, (data?.total_savings_interest || 0) - savingsExempt);
 
   const handleSaveForeignInterest = () => {
@@ -132,7 +133,7 @@ export default function TaxIncomeTab() {
     mutation.mutate({ gaming_income: gamingIncome })
   }
 
-  if (isLoading || !data) {
+  if (isLoading || !data || !taxRules) {
     return (
       <Box sx={{ pb: 8 }}>
         <Grid container spacing={3}>
@@ -181,7 +182,7 @@ export default function TaxIncomeTab() {
             <Grid container spacing={3}>
 
         <Grid item xs={12}>
-          <IncomeCard id="salary_income" expanded={expandedCard === "salary_income"} onToggle={() => setExpandedCard(prev => prev === "salary_income" ? null : "salary_income")} title="Salary Income" infoText={taxRulesData.ui_tooltips.section_16_ia.text}  icon={WorkIcon} color="#6366F1" amount={data.salary.gross} autoFilled>
+          <IncomeCard id="salary_income" expanded={expandedCard === "salary_income"} onToggle={() => setExpandedCard(prev => prev === "salary_income" ? null : "salary_income")} title="Salary Income" infoText={taxRules.ui_tooltips.section_16_ia.text}  icon={WorkIcon} color="#6366F1" amount={data.salary.gross} autoFilled>
             <Stack spacing={1.5} sx={{ mt: 2 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255,255,255,0.02)' }}>
                 <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>Employer</Typography>
@@ -206,7 +207,7 @@ export default function TaxIncomeTab() {
         </Grid>
         
         <Grid item xs={12}>
-          <IncomeCard id="professional_income_44ada" expanded={expandedCard === "professional_income_44ada"} onToggle={() => setExpandedCard(prev => prev === "professional_income_44ada" ? null : "professional_income_44ada")} title="Professional Income (44ADA)" infoText={taxRulesData.ui_tooltips.section_44ada.text} icon={WorkIcon} color="#3B82F6" amount={businessIncome.revenue_44ada || 0} autoFilled={false}>
+          <IncomeCard id="professional_income_44ada" expanded={expandedCard === "professional_income_44ada"} onToggle={() => setExpandedCard(prev => prev === "professional_income_44ada" ? null : "professional_income_44ada")} title="Professional Income (44ADA)" infoText={taxRules.ui_tooltips.section_44ada.text} icon={WorkIcon} color="#3B82F6" amount={businessIncome.revenue_44ada || 0} autoFilled={false}>
             <Box sx={{ mt: 2, p: 2, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, mb: 0.5 }}>Presumptive Income</Typography>
 
@@ -224,7 +225,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="business_income_44ad" expanded={expandedCard === "business_income_44ad"} onToggle={() => setExpandedCard(prev => prev === "business_income_44ad" ? null : "business_income_44ad")} title="Business Income (44AD)" infoText={taxRulesData.ui_tooltips.section_44ad.text} icon={StorefrontIcon} color="#06B6D4" amount={businessIncome.revenue_44ad || 0} autoFilled={false}>
+          <IncomeCard id="business_income_44ad" expanded={expandedCard === "business_income_44ad"} onToggle={() => setExpandedCard(prev => prev === "business_income_44ad" ? null : "business_income_44ad")} title="Business Income (44AD)" infoText={taxRules.ui_tooltips.section_44ad.text} icon={StorefrontIcon} color="#06B6D4" amount={businessIncome.revenue_44ad || 0} autoFilled={false}>
             <Box sx={{ mt: 2, p: 2, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, mb: 0.5 }}>Presumptive Income</Typography>
 
@@ -242,7 +243,7 @@ export default function TaxIncomeTab() {
         </Grid>
         
         <Grid item xs={12}>
-          <IncomeCard id="misc_income_freelance_rent_etc" expanded={expandedCard === "misc_income_freelance_rent_etc"} onToggle={() => setExpandedCard(prev => prev === "misc_income_freelance_rent_etc" ? null : "misc_income_freelance_rent_etc")} title="Misc. Income (Freelance, Rent, etc.)" infoText={taxRulesData.ui_tooltips.misc_income.text} icon={MoreHorizIcon} color="#EC4899" amount={data.total_misc_income || 0} autoFilled>
+          <IncomeCard id="misc_income_freelance_rent_etc" expanded={expandedCard === "misc_income_freelance_rent_etc"} onToggle={() => setExpandedCard(prev => prev === "misc_income_freelance_rent_etc" ? null : "misc_income_freelance_rent_etc")} title="Misc. Income (Freelance, Rent, etc.)" infoText={taxRules.ui_tooltips.misc_income.text} icon={MoreHorizIcon} color="#EC4899" amount={data.total_misc_income || 0} autoFilled>
             <Stack spacing={1} sx={{ mt: 2, maxHeight: 180, overflowY: 'auto' }}>
               {data.misc_income?.map((m: any, idx: number) => (
                 <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.02)' }}>
@@ -291,7 +292,7 @@ export default function TaxIncomeTab() {
             <Grid container spacing={3}>
             
         <Grid item xs={12}>
-          <IncomeCard id="savings_bank_interest" expanded={expandedCard === "savings_bank_interest"} onToggle={() => setExpandedCard(prev => prev === "savings_bank_interest" ? null : "savings_bank_interest")} title="Savings Bank Interest" infoText={taxRulesData.ui_tooltips.section_80tta.text}  icon={SavingsIcon} color="#38BDF8" amount={data.total_savings_interest} autoFilled>
+          <IncomeCard id="savings_bank_interest" expanded={expandedCard === "savings_bank_interest"} onToggle={() => setExpandedCard(prev => prev === "savings_bank_interest" ? null : "savings_bank_interest")} title="Savings Bank Interest" infoText={taxRules.ui_tooltips.section_80tta.text}  icon={SavingsIcon} color="#38BDF8" amount={data.total_savings_interest} autoFilled>
             <Stack spacing={1}>
               {data.interest_savings.map((i: any, idx: number) => (
                 <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.02)' }}>
@@ -324,7 +325,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="term_deposit_interest" expanded={expandedCard === "term_deposit_interest"} onToggle={() => setExpandedCard(prev => prev === "term_deposit_interest" ? null : "term_deposit_interest")} title="Term Deposit Interest" infoText={taxRulesData.ui_tooltips.section_80ttb.text}  icon={AccountBalanceIcon} color="#A855F7" amount={data.total_fd_interest} autoFilled>
+          <IncomeCard id="term_deposit_interest" expanded={expandedCard === "term_deposit_interest"} onToggle={() => setExpandedCard(prev => prev === "term_deposit_interest" ? null : "term_deposit_interest")} title="Term Deposit Interest" infoText={taxRules.ui_tooltips.section_80ttb.text}  icon={AccountBalanceIcon} color="#A855F7" amount={data.total_fd_interest} autoFilled>
             <Stack spacing={1}>
               {data.interest_deposits?.map((i: any, idx: number) => (
                 <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.02)' }}>
@@ -359,7 +360,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="other_interest_income" expanded={expandedCard === "other_interest_income"} onToggle={() => setExpandedCard(prev => prev === "other_interest_income" ? null : "other_interest_income")} title="Other Interest Income" infoText={taxRulesData.ui_tooltips.other_interest.text} icon={MoreHorizIcon} color="#F43F5E" amount={data.total_other_interest || 0} autoFilled>
+          <IncomeCard id="other_interest_income" expanded={expandedCard === "other_interest_income"} onToggle={() => setExpandedCard(prev => prev === "other_interest_income" ? null : "other_interest_income")} title="Other Interest Income" infoText={taxRules.ui_tooltips.other_interest.text} icon={MoreHorizIcon} color="#F43F5E" amount={data.total_other_interest || 0} autoFilled>
             <Stack spacing={1}>
               {data.interest_others?.map((i: any, idx: number) => (
                 <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.02)' }}>
@@ -380,7 +381,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="dividend_income" expanded={expandedCard === "dividend_income"} onToggle={() => setExpandedCard(prev => prev === "dividend_income" ? null : "dividend_income")} title="Dividend Income" infoText={taxRulesData.ui_tooltips.dividend.text} icon={CurrencyRupeeIcon} color="#EAB308" amount={data.total_dividends} autoFilled>
+          <IncomeCard id="dividend_income" expanded={expandedCard === "dividend_income"} onToggle={() => setExpandedCard(prev => prev === "dividend_income" ? null : "dividend_income")} title="Dividend Income" infoText={taxRules.ui_tooltips.dividend.text} icon={CurrencyRupeeIcon} color="#EAB308" amount={data.total_dividends} autoFilled>
             <Stack spacing={1} sx={{ mt: 2, maxHeight: 180, overflowY: 'auto', pr: 0.5, '&::-webkit-scrollbar': { width: 3 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 2 } }}>
               {data.dividends.map((d: any, i: number) => (
                 <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', p: 1.5, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.02)' }}>
@@ -398,7 +399,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="foreign_interest__dividends" expanded={expandedCard === "foreign_interest__dividends"} onToggle={() => setExpandedCard(prev => prev === "foreign_interest__dividends" ? null : "foreign_interest__dividends")} title="Foreign Interest / Dividends" infoText={taxRulesData.ui_tooltips.foreign_interest.text} icon={LanguageIcon} color="#10B981" amount={foreignInterest} autoFilled={false}>
+          <IncomeCard id="foreign_interest__dividends" expanded={expandedCard === "foreign_interest__dividends"} onToggle={() => setExpandedCard(prev => prev === "foreign_interest__dividends" ? null : "foreign_interest__dividends")} title="Foreign Interest / Dividends" infoText={taxRules.ui_tooltips.foreign_interest.text} icon={LanguageIcon} color="#10B981" amount={foreignInterest} autoFilled={false}>
             <Box sx={{ mt: 2, p: 2, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, mb: 1.5 }}>RSUs / ESOPs / ESPPs (Fidelity, Schwab, E*Trade)</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -443,7 +444,7 @@ export default function TaxIncomeTab() {
             <Grid container spacing={3}>
             
         <Grid item xs={12}>
-          <IncomeCard id="crypto_income_vda" expanded={expandedCard === "crypto_income_vda"} onToggle={() => setExpandedCard(prev => prev === "crypto_income_vda" ? null : "crypto_income_vda")} title="Crypto Income (VDA)" infoText={taxRulesData.ui_tooltips.crypto_vda.text} icon={CurrencyRupeeIcon} color="#F59E0B" amount={cryptoIncome} autoFilled={false}>
+          <IncomeCard id="crypto_income_vda" expanded={expandedCard === "crypto_income_vda"} onToggle={() => setExpandedCard(prev => prev === "crypto_income_vda" ? null : "crypto_income_vda")} title="Crypto Income (VDA)" infoText={taxRules.ui_tooltips.crypto_vda.text} icon={CurrencyRupeeIcon} color="#F59E0B" amount={cryptoIncome} autoFilled={false}>
             <Box sx={{ mt: 2, p: 2, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, mb: 0.5 }}>Import from Crypto Exchanges</Typography>
 
@@ -461,7 +462,7 @@ export default function TaxIncomeTab() {
         </Grid>
 
         <Grid item xs={12}>
-          <IncomeCard id="gaming__lottery_115bb" expanded={expandedCard === "gaming__lottery_115bb"} onToggle={() => setExpandedCard(prev => prev === "gaming__lottery_115bb" ? null : "gaming__lottery_115bb")} title="Gaming & Lottery (115BB)" infoText={taxRulesData.ui_tooltips.gaming_lottery.text} icon={CurrencyRupeeIcon} color="#EAB308" amount={gamingIncome} autoFilled={false}>
+          <IncomeCard id="gaming__lottery_115bb" expanded={expandedCard === "gaming__lottery_115bb"} onToggle={() => setExpandedCard(prev => prev === "gaming__lottery_115bb" ? null : "gaming__lottery_115bb")} title="Gaming & Lottery (115BB)" infoText={taxRules.ui_tooltips.gaming_lottery.text} icon={CurrencyRupeeIcon} color="#EAB308" amount={gamingIncome} autoFilled={false}>
             <Box sx={{ mt: 2, p: 2, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, mb: 1.5 }}>Dream11, MPL, Lottery Winnings</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

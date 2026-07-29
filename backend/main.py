@@ -30,7 +30,7 @@ from domains.equity import router as equity
 # Domain: Tax Expert
 from domains.tax_expert.routers import (
     session as tax_session, income as tax_income, capital_gains as tax_capital_gains,
-    summary as tax_summary, itr as tax_itr,
+    summary as tax_summary, itr as tax_itr, rules as tax_rules,
 )
 
 app = FastAPI(
@@ -85,6 +85,7 @@ app.include_router(tax_income.router,         prefix="/tax-expert", tags=["Tax E
 app.include_router(tax_capital_gains.router,  prefix="/tax-expert", tags=["Tax Expert - Capital Gains"])
 app.include_router(tax_summary.router,        prefix="/tax-expert", tags=["Tax Expert - Computation & Regime Compare"])
 app.include_router(tax_itr.router,            prefix="/tax-expert", tags=["Tax Expert - ITR Comparison"])
+app.include_router(tax_rules.router,          prefix="/tax-expert", tags=["Tax Expert - Client Rules Feed"])
 
 
 @app.get("/health", tags=["Infrastructure - Health"])

@@ -248,6 +248,26 @@ export const apiClient = {
     const { data } = await api.get(`/tax-expert/${sid}/tax/compare-regimes`)
     return data
   },
+
+  /**
+   * Display-only tax rules and tooltip copy.
+   *
+   * Replaces the frontend's own copy of tax_rules.json, which was byte-identical
+   * to the backend's with no sync mechanism. Session-independent and static per
+   * deployment, so it is cached indefinitely.
+   */
+  getTaxRules: async (): Promise<any> => {
+    const { data } = await api.get('/tax-expert/rules')
+    return data
+  },
+
+  /** Paginated access to a detail list no longer inlined in /tax/summary. */
+  getTaxDetails: async (sid: string, bucket: string, offset = 0, limit = 200): Promise<any> => {
+    const { data } = await api.get(`/tax-expert/${sid}/tax/details/${bucket}`, {
+      params: { offset, limit },
+    })
+    return data
+  },
 }
 
 export default api

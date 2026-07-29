@@ -8,20 +8,30 @@ Detailed income breakdown (salary, dividends, interest, misc) from parsed AIS da
 
 from fastapi import APIRouter, HTTPException
 
+from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.tax_sessions import get_tax_session
 
 router = APIRouter()
 
 
 @router.get("/{session_id}/tax/income")
-def get_tax_income(session_id: str):
-    """Get detailed income breakdown from AIS data."""
+def get_tax_income(session_id: str, regime: str = "new"):
+    """Get detailed income breakdown from AIS data.
+
+    Totals are projected from the tax engine's `other_sources` block rather than
+    re-summed here. The five sums below duplicated tax_engine.py:372-388 exactly,
+    so every dashboard load computed them twice over the same lists.
+    """
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
 
     ais = session["ais_data"]
     salary = ais.get("salary", {})
+
+    # Memoized — a cache hit alongside the dashboard's /tax/summary request.
+    other = get_computation(session_id, session, regime)["income_heads"]["other_sources"]
+    misc = get_computation(session_id, session, regime)["income_heads"]["misc_income"]
 
     return {
         "personal": ais.get("personal", {}),
@@ -36,9 +46,9 @@ def get_tax_income(session_id: str):
         "interest_deposits": ais.get("interest_deposits", []),
         "interest_others": ais.get("interest_others", []),
         "misc_income": ais.get("misc_income", []),
-        "total_dividends": sum(d.get("amount", 0) for d in ais.get("dividends", [])),
-        "total_savings_interest": sum(i.get("amount", 0) for i in ais.get("interest_savings", [])),
-        "total_fd_interest": sum(i.get("amount", 0) for i in ais.get("interest_deposits", [])),
-        "total_other_interest": sum(i.get("amount", 0) for i in ais.get("interest_others", [])),
-        "total_misc_income": sum(i.get("amount", 0) for i in ais.get("misc_income", [])),
+        "total_dividends": other["dividends"],
+        "total_savings_interest": other["savings_interest"],
+        "total_fd_interest": other["fd_interest"],
+        "total_other_interest": other["other_interest"],
+        "total_misc_income": misc["total"],
     }
