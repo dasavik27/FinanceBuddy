@@ -1,5 +1,6 @@
 import requests
-import yfinance as yf
+# yfinance is imported lazily in the methods that use it: this provider is only
+# reached on the Yahoo fallback path, so most requests never need it loaded.
 from typing import Dict, Optional
 from shared.services.providers.base import BaseMetadataProvider
 import logging
@@ -45,8 +46,10 @@ class YahooMetadataProvider(BaseMetadataProvider):
             return None
             
         try:
+            import yfinance as yf  # lazy: see note at top of module
+
             ticker = yf.Ticker(symbol)
-            
+
             # Fast path: try to get it from info
             info = ticker.info
             price = info.get("regularMarketPrice") or info.get("previousClose") or info.get("navPrice")
@@ -69,9 +72,11 @@ class YahooMetadataProvider(BaseMetadataProvider):
             return result
 
         try:
+            import yfinance as yf  # lazy: see note at top of module
+
             ticker = yf.Ticker(symbol)
             info = ticker.info
-            
+
             # Sectors
             raw_sectors = info.get("sectorWeightings", [])
             if raw_sectors:

@@ -32,10 +32,17 @@ def _get_ttl_from_db():
 
 CACHE_TTL_MINUTES = _get_ttl_from_db()
 
-# Absolute directory path for disk-backed JSON cache storage
-CACHE_DIR = os.path.join(os.getcwd(), ".cache")
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
+# Absolute directory path for disk-backed JSON cache storage.
+#
+# Anchored to this file rather than os.getcwd(): a CWD-relative path meant the cache
+# location depended on where the process was launched from, so running from the repo
+# root and from backend/ produced two independent caches that never shared a hit.
+# Override with FINANCEBUDDY_CACHE_DIR when the app directory is read-only.
+CACHE_DIR = os.getenv(
+    "FINANCEBUDDY_CACHE_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".cache")),
+)
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 # ── Macroeconomic & Market Index Definitions ──────────────────────────────
 BENCHMARKS = {
