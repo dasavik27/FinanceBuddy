@@ -11,7 +11,7 @@ and synthesizes an institutional Portfolio Health Score and SIP Habit Rating.
 from fastapi import APIRouter
 import pandas as pd
 from domains.mutual_funds.sessions import get_session
-from shared.config import GOAL_TIMELINE, EXP_RATIO_BANDS, PE_ESTIMATES
+from shared.config import GOAL_TIMELINE, PE_ESTIMATES
 
 router = APIRouter()
 
@@ -68,33 +68,21 @@ def get_insights(session_id: str):
                 "timeline": timeline
             })
 
-    from shared.services.market_data import fetch_fund_ter, resolve_scheme_code_from_isin
-    from shared.services.fallbacks.deterministic import DeterministicFallback
-
-    # Calculate dynamic weighted expense ratio drag
-    total_expense = 0.0
-    for _, row in df_h.iterrows():
-        val = row.get("Market Value", 0)
-        
-        # Pull the exact TER resolved by the deterministic engine in holdings.py
-        # which guarantees 100% sync with the UI and removes the ₹1,266 gap.
-        ter = row.get("TER", 0.0)
-        if pd.isna(ter) or ter == 0:
-            # Fallback only if missing (should not happen with deterministic engine)
-            cat = row.get("Category", "Equity")
-            lo, hi = EXP_RATIO_BANDS.get(cat, (0.50, 1.00))
-            ter = lo if "direct" in str(row.get("Plan", "")).lower() else lo + 0.80
-            
-        total_expense += val * (ter / 100.0)
-
-    expense_pct = (total_expense / total_value * 100) if total_value > 0 else 0.85
-
-    # Institutional Portfolio Health Scoring Matrix
+    # Institutional Portfolio Health Scoring Matrix.
+    #
+    # One get_summary() call supplies both figures below. This endpoint used to run its
+    # own copy of the TER loop and then call get_summary(), which runs the identical
+    # loop internally - so the same number was computed twice per request, with the
+    # two copies free to drift apart.
     try:
         summary = portfolio.get_summary()
         real_alpha = summary.get("alpha", 0.0)
+        total_expense = summary.get("expense_drag", 0.0)
     except Exception:
         real_alpha = 0.0
+        total_expense = portfolio.compute_expense_drag()
+
+    expense_pct = (total_expense / total_value * 100) if total_value > 0 else 0.85
 
     if real_alpha > 5:
         score_alpha = 30

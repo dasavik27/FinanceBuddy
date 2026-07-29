@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from domains.mutual_funds.sessions import get_session
 import pandas as pd
 from typing import Dict, Any
-from domains.mutual_funds.finance import compute_period_comparison
+from domains.mutual_funds.derived import cached_period_comparison
 from shared.services.market_indices import fetch_benchmark_series
 import logging
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def get_journey_data(session_id: str) -> Dict[str, Any]:
     # but we will only extract the portfolio's absolute market value.
     try:
         bench_data = fetch_benchmark_series("^NSEI", 9999)
-        comp = compute_period_comparison(df_t, df_h, portfolio.total_value, bench_data, 9999)
+        comp = cached_period_comparison(df_t, df_h, portfolio.total_value, bench_data, 9999)
         
         market_dates = comp.get("dates", [])
         market_values = comp.get("market_value", [])
