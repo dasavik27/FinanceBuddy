@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 from typing import Optional
 import pandas as pd
 import numpy as np
-import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
 from domains.mutual_funds.sessions import get_session
@@ -25,14 +24,14 @@ from shared.config import (
     EXP_RATIO_BANDS, classify_er,
     PE_ESTIMATES, PB_ESTIMATES, DEBT_METRICS_MAP,
 )
+from domains.mutual_funds.derived import cached_period_comparison
 from domains.mutual_funds.finance import (
     compute_xirr,
     compute_benchmark_xirr,
-    compute_period_comparison,
     compute_risk_metrics,
     compute_trailing_returns,
-    compute_rolling_return_avg,
     compute_rolling_return_series,
+    compute_rolling_returns,
     compute_consistency_score,
     is_absolute_return,
 )
@@ -259,6 +258,8 @@ def _get_benchmark_day_chg(ticker: str, bench_data: pd.Series) -> float:
         return cached
 
     if ticker.startswith("^") or ".NS" in ticker:
+        import yfinance as yf  # lazy: heavy import, only the index path needs it
+
         fast_info = yf.Ticker(ticker).fast_info
         last = getattr(fast_info, "last_price", 0)
         prev = getattr(fast_info, "previous_close", 1)
@@ -305,7 +306,7 @@ def get_performance(
     total_value = float(df_h["Market Value"].sum())
 
     # FIX #F-11: Full simulation using exact transaction history
-    comp = compute_period_comparison(df_t, portfolio.df_h, total_value, bench_data, perf_days)
+    comp = cached_period_comparison(df_t, portfolio.df_h, total_value, bench_data, perf_days)
 
     results = []
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -407,8 +408,11 @@ async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 
     bench_ticker, bench_display = get_fund_benchmark(cat, cap_type, fn)
     bench_series = fetch_benchmark_series(bench_ticker, 9999)
 
-    fund_roll_series  = compute_rolling_return_series(nav_series, window)
-    bench_roll_series = compute_rolling_return_series(bench_series, window)
+    # One traversal per series instead of two: compute_rolling_returns() returns the
+    # average and the chart series from the same walk (the _avg/_series helpers each
+    # re-did the whole resample + window scan).
+    fund_avg,  fund_roll_series  = compute_rolling_returns(nav_series, window)
+    bench_avg, bench_roll_series = compute_rolling_returns(bench_series, window)
 
     return {
         "fund_isin":      fund_isin,
@@ -417,8 +421,8 @@ async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 
         "window_years":   window,
         "fund_series":    series_to_list(fund_roll_series),
         "bench_series":   series_to_list(bench_roll_series),
-        "fund_avg":       compute_rolling_return_avg(nav_series, window),
-        "bench_avg":      compute_rolling_return_avg(bench_series, window),
+        "fund_avg":       fund_avg,
+        "bench_avg":      bench_avg,
     }
 
 # ---------------------------------------------------------------------------
@@ -444,7 +448,7 @@ def get_portfolio_drawdown(session_id: str, period: str = "All Time"):
     # since compute_period_comparison evaluates on the benchmark's index
     nifty = fetch_benchmark_series("^NSEI", perf_days + 30)
     
-    comp = compute_period_comparison(df_t, df_h, total_value, nifty, perf_days)
+    comp = cached_period_comparison(df_t, df_h, total_value, nifty, perf_days)
     dates = comp.get("dates", [])
     port_vals = comp.get("portfolio", [])  # FIX: The key is "portfolio", not "port_vals"
     

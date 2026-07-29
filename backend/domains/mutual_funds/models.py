@@ -109,19 +109,8 @@ class Portfolio:
         is_abs = is_absolute_return(self.df_t)
 
         gain_pct = (self.total_value / self.total_invested - 1) * 100 if self.total_invested > 0 else 0
-        
-        # Expense drag estimation
-        total_expense = 0.0
-        for _, row in self.df_h.iterrows():
-            val = row.get("Market Value", 0)
-            ter = row.get("TER", 0.0)
-            
-            if pd.isna(ter) or ter == 0:
-                cat = row.get("Category", "Equity")
-                lo, hi = EXP_RATIO_BANDS.get(cat, (0.50, 1.00))
-                ter = lo if "direct" in str(row.get("Plan", "")).lower() else lo + 0.80
-                
-            total_expense += val * (ter / 100.0)
+
+        total_expense = self.compute_expense_drag()
 
         return {
             "total_value":     round(self.total_value, 2),
@@ -136,6 +125,31 @@ class Portfolio:
             "is_absolute":     is_abs,
             "is_partial":      self.is_partial
         }
+
+    def compute_expense_drag(self) -> float:
+        """
+        Annual rupee cost of holding the portfolio, from each fund's TER.
+
+        Single source of truth: /insights previously carried a byte-identical copy of
+        this loop AND called get_summary() (which runs it too), so the same figure was
+        computed twice per request and could drift if only one copy were edited.
+        """
+        if self.df_h.empty:
+            return 0.0
+
+        total_expense = 0.0
+        for _, row in self.df_h.iterrows():
+            val = row.get("Market Value", 0)
+            ter = row.get("TER", 0.0)
+
+            if pd.isna(ter) or ter == 0:
+                cat = row.get("Category", "Equity")
+                lo, hi = EXP_RATIO_BANDS.get(cat, (0.50, 1.00))
+                ter = lo if "direct" in str(row.get("Plan", "")).lower() else lo + 0.80
+
+            total_expense += val * (ter / 100.0)
+
+        return total_expense
 
     def get_allocation_data(self) -> Dict[str, Any]:
         if self.df_h.empty: return {}

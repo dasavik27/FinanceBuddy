@@ -55,8 +55,40 @@ def _init_db():
             conn.execute("ALTER TABLE sessions ADD COLUMN upload_type TEXT DEFAULT 'mutual_funds'")
         except sqlite3.OperationalError:
             pass
-            
+
+        # The GC sweep scans for sessions older than 24h on every pass.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
+
+        _ensure_mf_indexes(conn)
+
         conn.commit()
+
+
+# The mf_* tables are created implicitly by DataFrame.to_sql, so they may not exist
+# when _init_db runs on a fresh database. Indexes are therefore ensured in two places:
+# here (for databases where the tables already exist) and again after to_sql in
+# save_session (for the first upload). CREATE INDEX IF NOT EXISTS makes both idempotent.
+_MF_INDEXED_TABLES = ("mf_holdings", "mf_transactions", "mf_sips")
+
+
+def _ensure_mf_indexes(conn: sqlite3.Connection) -> None:
+    """
+    Index the mf_* tables on session_id.
+
+    Every load_session() runs `SELECT * FROM mf_* WHERE session_id=?`, and these tables
+    hold *every* session's rows until the 24h purge - so without an index each
+    rehydration is three full table scans over unrelated sessions' data. This became a
+    hot path when the in-memory session store gained a resident cap, which makes
+    rehydration routine rather than exceptional.
+    """
+    for table in _MF_INDEXED_TABLES:
+        try:
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_session_id ON {table}(session_id)"
+            )
+        except sqlite3.OperationalError:
+            pass  # table not created yet - save_session will index it after to_sql
+
 
 _init_db()
 
@@ -115,7 +147,12 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
             df_s_copy = df_s.copy()
             df_s_copy['session_id'] = session_id
             df_s_copy.to_sql("mf_sips", conn, if_exists="append", index=False)
-    
+
+        # to_sql has just created any missing tables, so this is where a fresh
+        # database actually gets its session_id indexes.
+        _ensure_mf_indexes(conn)
+        conn.commit()
+
     # 2. Extract quick metrics for the registry
     total_value = float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0
     total_invested = float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0

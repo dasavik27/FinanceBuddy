@@ -11,7 +11,11 @@ To guarantee 100% uptime for index proxy benchmarking (e.g., Nifty Smallcap 250)
 4. NSELib (Fallback 3): If Yahoo completely delists the index, fetches direct from the NSE API.
 """
 
-import yfinance as yf
+# yfinance is imported lazily inside the two functions that need it. It is a heavy
+# import (it pulls its own pandas/lxml/requests machinery) and this module is loaded
+# at startup by every mutual-fund router, so paying for it eagerly costs resident
+# memory on a 512 MB box even when no Yahoo-backed benchmark is ever requested.
+# Same rationale as the camelot/opencv deferral noted in requirements.txt.
 import pandas as pd
 import numpy as np
 import requests
@@ -20,24 +24,27 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from shared.services.providers.factory import get_provider
+from shared.services.cache import MARKET_CACHE
 import logging
 logger = logging.getLogger(__name__)
-
-
-# ── Thread-safe Cache Lock ──────────────────────────────────────────────
-_BENCH_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
 # Module-level cache
 # ---------------------------------------------------------------------------
-_BENCH_CACHE: Dict[str, Tuple[float, pd.Series]] = {}   # ticker → (timestamp, series)
-_BENCH_CACHE_TTL = 3600   # 1 hour for index data
+# Benchmark series live in the shared L1 tier (bounded by bytes, single-flighted,
+# and reported by /health/cache) rather than in a module-level dict here. The prefix
+# lets a refresh clear just this family of entries.
+_BENCH_L1_PREFIX = "bench_full|"
+
+# Benchmarks are always fetched at full history and sliced on return, so the
+# requested window never fragments the cache.
+_FULL_HORIZON_DAYS = 9999
+
 
 def clear_benchmark_cache():
-    """Invalidate all in-memory benchmark series."""
-    with _BENCH_LOCK:
-        _BENCH_CACHE.clear()
+    """Invalidate all cached benchmark series."""
+    MARKET_CACHE.delete_prefix(_BENCH_L1_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +57,8 @@ def fetch_live_market_summary() -> Dict:
     Returns a safe fallback dict on any failure — never raises.
     """
     try:
+        import yfinance as yf  # lazy: see note at top of module
+
         ticker = yf.Ticker("^NSEI")
         info   = ticker.fast_info
         price  = getattr(info, "last_price", None)
@@ -105,27 +114,45 @@ def fetch_benchmark_series(ticker: str, period_days: int = 365, refresh: bool = 
     EMPTY SERIES on failure — caller must handle gracefully.
     Never returns fabricated data.
     """
-    # ── Cache check ───────────────────────────────────────────────────────
     from shared import config
-    if config.CACHE_TTL_MINUTES <= 0 or refresh:
+    ttl_sec = config.CACHE_TTL_MINUTES * 60
+    if ttl_sec <= 0 or refresh:
         return _fetch_benchmark_series_uncached(ticker, period_days)
 
-    cache_key = f"{ticker}_{period_days}"
-    now       = time.time()
-    ttl_sec   = config.CACHE_TTL_MINUTES * 60
-    with _BENCH_LOCK:
-        if cache_key in _BENCH_CACHE:
-            ts, series = _BENCH_CACHE[cache_key]
-            if now - ts < ttl_sec:
-                return series.copy() # Fix #9: Prevent cache reference leaks
+    # Cache ONE full-history series per ticker and slice locally.
+    #
+    # The cache used to key on f"{ticker}_{period_days}", which fragmented badly:
+    # a single dashboard load asks for the same index at 1855, 9999 and
+    # max(perf_days+30, 365) days, so the same series was downloaded three times and
+    # stored three times. Keying on the ticker alone collapses that to one fetch.
+    # Slicing a full series is equivalent because the trim is measured from the last
+    # observation, exactly as _fetch_yahoo_series does it.
+    full = MARKET_CACHE.get_or_compute(
+        f"{_BENCH_L1_PREFIX}{ticker}",
+        lambda: _fetch_benchmark_series_uncached(ticker, _FULL_HORIZON_DAYS),
+        ttl_sec,
+    )
 
-    series = _fetch_benchmark_series_uncached(ticker, period_days)
+    if full is None or full.empty:
+        # A few tickers only respond to a bounded window (Yahoo is inconsistent about
+        # very long ranges), so fall back to honouring exactly what the caller asked.
+        return _fetch_benchmark_series_uncached(ticker, period_days)
 
-    if not series.empty:
-        with _BENCH_LOCK:
-            _BENCH_CACHE[cache_key] = (now, series.copy()) # Fix #9: Store deep copy
+    return _slice_trailing_days(full, period_days)
 
-    return series
+
+def _slice_trailing_days(series: pd.Series, period_days: int) -> pd.Series:
+    """
+    Trim to the trailing window, measured from the final observation.
+
+    Mirrors the trimming in _fetch_yahoo_series so a sliced full-history series is
+    interchangeable with one fetched at that period directly.
+    """
+    if series.empty or period_days >= _FULL_HORIZON_DAYS:
+        return series.copy()
+
+    cutoff = series.index[-1] - timedelta(days=period_days)
+    return series[series.index >= cutoff].copy()
 
 
 _NSELIB_MAP = {
@@ -320,6 +347,8 @@ def _fetch_benchmark_series_uncached(ticker: str, period_days: int) -> pd.Series
 def _fetch_yahoo_series(ticker: str, period_days: int) -> pd.Series:
     """Fetch index/ETF history from Yahoo Finance."""
     try:
+        import yfinance as yf  # lazy: see note at top of module
+
         end   = datetime.now()
         # Request extra buffer for weekends/holidays
         start = end - timedelta(days=period_days + 60) if period_days < 9999 else datetime(2000, 1, 1)

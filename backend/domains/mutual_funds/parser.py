@@ -3,7 +3,10 @@ core/parser.py
 Mutual Fund CAS parsing and metadata detection.
 """
 
-import casparser
+# casparser is imported lazily inside parse_cas_file. It pulls a PDF-parsing stack
+# that is only needed while an upload is actually being processed, and this module is
+# imported at startup by the portfolio router — so an eager import would hold that
+# memory for the entire life of the process on a 512 MB instance.
 import pandas as pd
 import os
 import tempfile
@@ -19,9 +22,9 @@ def _get(obj, key, default=None):
     return val if val is not None else default
 
 def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[str], bool]:
-    """Parse CAMS/KFintech CAS PDF. Zero disk retention after parsing."""
-    import tempfile
-    
+    """Parse CAMS/KFintech CAS PDF. The uploaded PDF is not retained after parsing."""
+    import casparser  # lazy: see note at top of module
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(file_bytes)
         temp_path = tmp.name

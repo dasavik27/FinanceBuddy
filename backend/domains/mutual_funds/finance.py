@@ -40,14 +40,34 @@ def _get_standard_ledger(df_t: pd.DataFrame) -> List[Dict]:
     if df_t is None or df_t.empty:
         return ledger
 
-    for _, row in df_t.iterrows():
-        raw_amt = row.get("Amount", 0)
+    # PERF: one columnar extraction instead of df.iterrows(), which allocates a
+    # fresh (dtype-upcast) Series per row and dominated the cost of this helper.
+    # Series.tolist() surfaces exactly the same Python objects iterrows would put
+    # in row[...] for the dtypes we handle (datetime64 -> Timestamp, str -> str,
+    # float64 -> float, object -> the original object incl. None), so the per-row
+    # arithmetic below is unchanged and stays bit-identical.
+    #
+    # One knowing deviation: iterrows re-infers a dtype per row, so a row whose
+    # ONLY non-null value was the Date became a datetime64 Series and turned every
+    # other field into NaT, making float(NaT) raise TypeError. Such a row is now
+    # simply skipped. It needs a transaction with no Fund AND no Type AND no
+    # Amount/Units/NAV to trigger, i.e. an entirely empty row.
+    n_rows = len(df_t)
+    _cols  = df_t.columns
+    _amt   = df_t["Amount"].tolist() if "Amount" in _cols else [0] * n_rows
+    _type  = df_t["Type"].tolist()   if "Type"   in _cols else [""] * n_rows
+    _units = df_t["Units"].tolist()  if "Units"  in _cols else [0] * n_rows
+    _nav   = df_t["NAV"].tolist()    if "NAV"    in _cols else [0] * n_rows
+    _date  = df_t["Date"].tolist()   # KeyError if absent, as row["Date"] was
+
+    for _i in range(n_rows):
+        raw_amt = _amt[_i]
         amt     = abs(float(raw_amt)) if raw_amt is not None else 0.0
-        
-        t_type = str(row.get("Type", "")).upper().strip()
-        units  = float(row.get("Units", 0) or 0)
-        nav    = float(row.get("NAV", 0) or 0)
-        d      = _to_date(row["Date"])
+
+        t_type = str(_type[_i]).upper().strip()
+        units  = float(_units[_i] or 0)
+        nav    = float(_nav[_i] or 0)
+        d      = _to_date(_date[_i])
 
         # Impute amount for SWITCH or non-monetary transactions using Unit*NAV basis
         # This ensures accurate cost tracking for CAS records with zero-amount entries.
@@ -464,17 +484,21 @@ def compute_benchmark_xirr(
         total_bench_units = 0.0
         cashflows: List[Dict] = []
 
-        for l in ledger:
-            txn_date = pd.Timestamp(l["date"])
-            amt      = abs(l["amount"])
+        # PERF: the price lookup used to be a full boolean scan of the benchmark
+        # per ledger entry (O(txns x bench_len)). One vectorized searchsorted
+        # resolves every entry at once: side="right" yields the count of index
+        # entries <= txn_date, so pos-1 is "last price on or before", and
+        # clamping at 0 reproduces the "no history yet -> earliest price"
+        # fallback. Kept inside the try: a tz-aware benchmark index still raises
+        # TypeError here and still degrades to (0.0, 0.0).
+        bench_prices = bench_sorted.to_numpy(dtype=float)
+        txn_dates    = pd.DatetimeIndex([pd.Timestamp(l["date"]) for l in ledger])
+        _pos         = bench_sorted.index.searchsorted(txn_dates, side="right")
+        _prices      = bench_prices[np.maximum(_pos - 1, 0)]
 
-            # Find benchmark price on or before transaction date
-            past = bench_sorted[bench_sorted.index <= txn_date]
-            if past.empty:
-                # Use earliest available price
-                bench_price = float(bench_sorted.iloc[0])
-            else:
-                bench_price = float(past.iloc[-1])
+        for l, txn_date, bench_price in zip(ledger, txn_dates, _prices):
+            amt = abs(l["amount"])
+            bench_price = float(bench_price)
 
             if bench_price <= 0:
                 continue
@@ -607,6 +631,98 @@ def compute_trailing_returns(nav_series: pd.Series) -> Dict[str, Optional[float]
 # High-fidelity rolling average matching institutional portal standards.
 # ---------------------------------------------------------------------------
 
+def _rolling_cagr_points(
+    nav_series: pd.Series,
+    window_years: int,
+    step_days: int,
+) -> Optional[List[Tuple[pd.Timestamp, float]]]:
+    """
+    Shared traversal behind compute_rolling_return_avg / _series.
+
+    Returns None when the history is shorter than the window (each caller then
+    takes its own "insufficient data" early return), otherwise the list of
+    (actual_end_date, raw_cagr_pct) pairs in traversal order.
+
+    PERF: the two `nav_sorted[nav_sorted.index >= ...]` masks that used to run
+    per iteration (a full-length scan + Series allocation each, ~470 iterations
+    for 10y of daily data at step_days=7) are replaced by two vectorized
+    searchsorted passes computed once for every possible start position. The
+    per-iteration float arithmetic is left byte-for-byte as it was.
+    """
+    nav_sorted  = nav_series.sort_index().dropna().resample('D').ffill()
+    window_days = int(window_years * 365.25)
+
+    # NOTE: an all-NaN input leaves nav_sorted empty and index[-1] raises
+    # IndexError here — preserved deliberately, callers propagate it.
+    if (nav_sorted.index[-1] - nav_sorted.index[0]).days < window_days:
+        return None
+
+    idx  = nav_sorted.index
+    n    = len(idx)
+    vals = nav_sorted.to_numpy(dtype=float)
+
+    # end_pos[i]  == searchsorted(idx, idx[i] + window_days, "left")  -> `future`
+    # next_pos[i] == searchsorted(idx, idx[i] + step_days,   "left")  -> `next_candidates`
+    # A position of n means the corresponding slice was empty (loop breaks).
+    # resample('D') guarantees a unique index, so the reference's
+    # `idx.searchsorted(next_candidates.index[0])` is exactly next_pos[i].
+    end_pos  = idx.searchsorted(idx + timedelta(days=window_days), side="left").tolist()
+    next_pos = idx.searchsorted(idx + timedelta(days=step_days), side="left").tolist()
+
+    points: List[Tuple[pd.Timestamp, float]] = []
+    i = 0
+    while i < n:
+        e = end_pos[i]
+        if e >= n:                       # `future` empty
+            break
+
+        end_nav         = float(vals[e])
+        start_nav       = float(vals[i])
+        start_date      = idx[i]
+        actual_end_date = idx[e]
+
+        if start_nav > 0 and end_nav > 0:
+            # FIX P2-4: Use actual elapsed days / 365.25 instead of integer window_years
+            actual_years = (actual_end_date - start_date).days / 365.25
+            if actual_years > 0:
+                cagr = ((end_nav / start_nav) ** (1.0 / actual_years) - 1) * 100
+                points.append((actual_end_date, cagr))
+
+        nxt = next_pos[i]
+        if nxt >= n:                     # `next_candidates` empty
+            break
+        # FIX H-4: Guard against infinite loop if searchsorted returns same index
+        i = max(nxt, i + 1)
+
+    return points
+
+
+def compute_rolling_returns(
+    nav_series: pd.Series,
+    window_years: int,
+    step_days: int = 7,
+) -> Tuple[Optional[float], pd.Series]:
+    """
+    Both rolling-return outputs from a single traversal.
+
+    Callers that need the average *and* the chart series (the /rolling-returns
+    endpoint does) should use this instead of calling the two helpers below back
+    to back — it halves the work per (nav, bench) pair. Results are identical to
+    compute_rolling_return_avg() / compute_rolling_return_series().
+    """
+    if nav_series is None or nav_series.empty:
+        return None, pd.Series(dtype=float)
+
+    points = _rolling_cagr_points(nav_series, window_years, step_days)
+    if points is None:
+        return None, pd.Series(dtype=float)
+
+    dates  = [d for d, _ in points]
+    values = [round(c, 2) for _, c in points]
+    avg    = round(float(np.mean([c for _, c in points])), 2) if points else None
+    return avg, pd.Series(values, index=dates)
+
+
 def compute_rolling_return_avg(
     nav_series: pd.Series,
     window_years: int,
@@ -629,48 +745,13 @@ def compute_rolling_return_avg(
     if nav_series is None or nav_series.empty:
         return None
 
-    # Morningstar Standard (Fix #F-8): Resample to daily ffill to align calendar days
-    nav_sorted  = nav_series.sort_index().dropna().resample('D').ffill()
-    window_days = int(window_years * 365.25)
-
-    if (nav_sorted.index[-1] - nav_sorted.index[0]).days < window_days:
+    # Morningstar Standard (Fix #F-8): the traversal (resample to daily ffill,
+    # window/step advance) lives in _rolling_cagr_points().
+    points = _rolling_cagr_points(nav_series, window_years, step_days)
+    if points is None:
         return None
 
-    rolling_cagrs = []
-    idx = nav_sorted.index
-
-    # Iterate over start dates with step_days cadence
-    i = 0
-    while i < len(idx):
-        start_date      = idx[i]
-        end_date_target = start_date + timedelta(days=window_days)
-
-        # Find nearest available NAV on or after target end date
-        future = nav_sorted[nav_sorted.index >= end_date_target]
-        if future.empty:
-            break
-
-        end_nav   = float(future.iloc[0])
-        start_nav = float(nav_sorted.iloc[i])
-        actual_end_date = future.index[0]
-
-        if start_nav > 0 and end_nav > 0:
-            # FIX P2-4: Use actual elapsed days / 365.25 instead of integer window_years
-            actual_years = (actual_end_date - start_date).days / 365.25
-            if actual_years > 0:
-                cagr = ((end_nav / start_nav) ** (1.0 / actual_years) - 1) * 100
-                rolling_cagrs.append(cagr)
-
-        # Advance by step_days trading days (approximate)
-        next_date = start_date + timedelta(days=step_days)
-        next_candidates = nav_sorted[nav_sorted.index >= next_date]
-        if next_candidates.empty:
-            break
-        # Fix #8: Use searchsorted for robustness against duplicate timestamps
-        new_i = idx.searchsorted(next_candidates.index[0]) if not next_candidates.empty else i + 1
-        # FIX H-4: Guard against infinite loop if searchsorted returns same index
-        i = max(new_i, i + 1)
-
+    rolling_cagrs = [c for _, c in points]
     if not rolling_cagrs:
         return None
 
@@ -693,44 +774,16 @@ def compute_rolling_return_series(
     if nav_series is None or nav_series.empty:
         return pd.Series(dtype=float)
 
-    # Morningstar Standard (Fix #F-8): Resample to daily ffill
-    nav_sorted  = nav_series.sort_index().dropna().resample('D').ffill()
-    window_days = int(window_years * 365.25)
-
-    if (nav_sorted.index[-1] - nav_sorted.index[0]).days < window_days:
+    # Morningstar Standard (Fix #F-8): traversal shared with the _avg variant.
+    points = _rolling_cagr_points(nav_series, window_years, step_days)
+    if points is None:
         return pd.Series(dtype=float)
 
-    dates, values = [], []
-    idx = nav_sorted.index
-    i   = 0
+    dates  = [d for d, _ in points]
+    values = [round(c, 2) for _, c in points]
 
-    while i < len(idx):
-        start_date      = idx[i]
-        end_date_target = start_date + timedelta(days=window_days)
-        future          = nav_sorted[nav_sorted.index >= end_date_target]
-        if future.empty:
-            break
-
-        end_nav   = float(future.iloc[0])
-        start_nav = float(nav_sorted.iloc[i])
-        actual_end_date = future.index[0]
-
-        if start_nav > 0 and end_nav > 0:
-            # FIX P2-4: Use actual elapsed days / 365.25 for each window's CAGR
-            actual_years = (actual_end_date - start_date).days / 365.25
-            if actual_years > 0:
-                cagr = ((end_nav / start_nav) ** (1.0 / actual_years) - 1) * 100
-                dates.append(actual_end_date)
-                values.append(round(cagr, 2))
-
-        next_date       = start_date + timedelta(days=step_days)
-        next_candidates = nav_sorted[nav_sorted.index >= next_date]
-        if next_candidates.empty:
-            break
-        new_i = nav_sorted.index.searchsorted(next_candidates.index[0])
-        # FIX H-4: Guard against infinite loop if searchsorted returns same index
-        i = max(new_i, i + 1)
-
+    # NOTE: index is a plain list, so an empty result stays object-dtype here
+    # while the early returns above are float64 — preserved.
     return pd.Series(values, index=dates)
 
 
@@ -937,38 +990,53 @@ def compute_consistency_score(
     nav_sorted   = nav_series.sort_index().dropna().resample('D').ffill()
     bench_sorted = bench_series.sort_index().dropna().resample('D').ffill()
 
+    nav_idx    = nav_sorted.index
+    bench_idx  = bench_sorted.index
+    n, n_bench = len(nav_idx), len(bench_idx)
+    nav_vals   = nav_sorted.to_numpy(dtype=float)
+    bench_vals = bench_sorted.to_numpy(dtype=float)
+
+    # PERF: the loop below used FOUR full-length boolean slices per iteration
+    # (~110 iterations over 10y of daily data). Precompute every position once
+    # with vectorized searchsorted instead — positions are needed for *all* start
+    # indices because the `start_bench.empty` branch advances by raw positions.
+    #   fut_nav/fut_bench == "first entry >= start + window"  (== len -> empty)
+    #   start_bench_pos   == "count of bench entries <= start" (== 0 -> empty)
+    #   next_pos          == "first entry >= start + step"     (== len -> empty)
+    # NOTE: a tz-aware nav index against a naive benchmark still raises TypeError
+    # here, exactly as `bench_sorted.index >= end_date_target` did.
+    end_targets     = nav_idx + timedelta(days=window_days)
+    fut_nav_pos     = nav_idx.searchsorted(end_targets, side="left").tolist()
+    fut_bench_pos   = bench_idx.searchsorted(end_targets, side="left").tolist()
+    start_bench_pos = bench_idx.searchsorted(nav_idx, side="right").tolist()
+    next_pos        = nav_idx.searchsorted(nav_idx + timedelta(days=step_days),
+                                           side="left").tolist()
+
     beat_count, total = 0, 0
-    idx = nav_sorted.index
-    i   = 0
+    i = 0
 
-    while i < len(idx):
-        start_date      = idx[i]
-        end_date_target = start_date + timedelta(days=window_days)
-
-        future_nav   = nav_sorted[nav_sorted.index >= end_date_target]
-        future_bench = bench_sorted[bench_sorted.index >= end_date_target]
-
-        if future_nav.empty or future_bench.empty:
+    while i < n:
+        if fut_nav_pos[i] >= n or fut_bench_pos[i] >= n_bench:
             break
 
-        start_bench = bench_sorted[bench_sorted.index <= start_date]
-        if start_bench.empty:
+        sb = start_bench_pos[i]
+        if sb == 0:
+            # NOTE: advances by step_days *positions*, not days — only equivalent
+            # to the date-based advance below because of the daily resample.
             i += step_days
             continue
 
-        fund_ret  = float(future_nav.iloc[0]) / float(nav_sorted.iloc[i]) - 1
-        bench_ret = float(future_bench.iloc[0]) / float(start_bench.iloc[-1]) - 1
+        fund_ret  = float(nav_vals[fut_nav_pos[i]]) / float(nav_vals[i]) - 1
+        bench_ret = float(bench_vals[fut_bench_pos[i]]) / float(bench_vals[sb - 1]) - 1
 
         if fund_ret > bench_ret:
             beat_count += 1
         total += 1
 
-        # Advance step_days
-        next_date       = start_date + timedelta(days=step_days)
-        next_candidates = nav_sorted[nav_sorted.index >= next_date]
-        if next_candidates.empty:
+        # Advance step_days (no max(new_i, i + 1) guard here — as before)
+        if next_pos[i] >= n:
             break
-        i = nav_sorted.index.searchsorted(next_candidates.index[0])
+        i = next_pos[i]
 
     if total == 0:
         return 5.0
@@ -1049,11 +1117,17 @@ def compute_period_comparison(
         f = str(row.get("Fund", ""))
         if f: fund_metadata[f] = (str(row.get("ISIN", row.get("Isin", ""))).strip(), str(row.get("Scheme_Code", row.get("scheme_code", ""))).strip())
     
-    for _, row in df_t_all.iterrows():
+    # PERF: only the FIRST row per fund can add anything here (the `not in` guard),
+    # so collapse df_t_all to one row per fund before touching iterrows at all.
+    # drop_duplicates keeps original order, so the resulting insertion order —
+    # and therefore the NAV fetch order — is unchanged.
+    _t_first = df_t_all.drop_duplicates(subset=["Fund"], keep="first") \
+        if "Fund" in df_t_all.columns else df_t_all.iloc[0:0]
+    for _, row in _t_first.iterrows():
         f = str(row.get("Fund", ""))
         if f and f not in fund_metadata:
             fund_metadata[f] = (str(row.get("ISIN", row.get("Isin", ""))).strip(), str(row.get("Scheme_Code", row.get("scheme_code", ""))).strip())
-            
+
     for fn, (isin, scode) in fund_metadata.items():
         if not fn: continue
         
@@ -1072,106 +1146,189 @@ def compute_period_comparison(
         return result
         
     # 3. True Unitized Accounting Ledger
-    fund_units = {f: 0.0 for f in fund_navs.keys()}
-    
-    global_dates = []
-    global_port_nav = []
-    global_bench_nav = []
-    global_market_value = []
-    
-    port_units = 0.0
-    port_nav = 100.0 # Base 100 on Day 1
-    
-    # Group transactions by exact date for O(1) daily lookup
-    txns_by_date = {}
-    for _, r in df_t.iterrows():
-        d = r["Date"].date()
-        if d not in txns_by_date: txns_by_date[d] = []
-        txns_by_date[d].append(r)
-        
-    bench_start_global = float(bench_sorted[bench_sorted.index >= start_date].iloc[0]) if not bench_sorted[bench_sorted.index >= start_date].empty else 1.0
+    #
+    # PERF: this used to be a day-by-day Python loop that, for every fund on every
+    # day, evaluated `f_navs[f_navs.index.date <= d_obj]` — a full-series scan that
+    # also materialised a fresh datetime.date object array — TWICE (start- and
+    # end-of-day). For 3650 days x 20 funds that is ~146k full-series scans per
+    # call. It is now three vectorized layers:
+    #   (a) one wide day x fund NAV matrix, built with one searchsorted per fund;
+    #   (b) a units-per-day matrix of the same shape, derived from the (few)
+    #       transactions rather than from the (many) days;
+    #   (c) row-wise multiply-and-sum for the daily market values.
+    # Only the genuinely sequential part — portfolio unit issuance, which depends
+    # on the portfolio NAV it is about to change — is still scalar, and it now
+    # steps over cashflow days only, with the constant-unit runs between them
+    # divided vectorially.
+    funds   = list(fund_navs.keys())
+    n_funds = len(funds)
+    n_days  = len(calendar)
 
-    # Simulate portfolio day-by-day exactly as it happened in reality
-    for d in calendar:
-        d_obj = d.date()
-        
-        b_series = bench_sorted[bench_sorted.index <= d]
-        b_curr = float(b_series.iloc[-1]) if not b_series.empty else bench_start_global
-        b_idx = (b_curr / bench_start_global) * 100.0
-        
-        # A) Start-of-Day Market Value
-        market_value_sod = 0.0
-        for f, units in fund_units.items():
-            if units > 0:
-                f_navs = fund_navs[f]
-                past_navs = f_navs[f_navs.index.date <= d_obj]
-                # FIX H-9: Forward-fill from last known NAV instead of hardcoded 10.0
-                nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else float(f_navs.iloc[0]) if not f_navs.empty else 10.0
-                market_value_sod += units * nav_today
-                
-        if port_units > 0:
-            port_nav = market_value_sod / port_units
-            
-        # B) Process today's cashflows
+    # `.index.date <= d_obj` compared LOCAL dates and never raised on a tz
+    # mismatch; strip tz on both sides so searchsorted keeps that property. The
+    # daily resample above already normalised every index to (local) midnight, so
+    # "index <= d" and "index.date <= d.date()" select identically.
+    _cal_naive = calendar.tz_localize(None) if calendar.tz is not None else calendar
+
+    # (a) NAV matrix. searchsorted(side="right") - 1 == "last NAV on or before d";
+    #     clamping at 0 reproduces the `else float(f_navs.iloc[0])` fallback for
+    #     days before the fund's first NAV. Kept float64: float32 would shift
+    #     market_value (rupees, charted absolutely) in its 7th significant digit.
+    nav_mat = np.empty((n_days, n_funds), dtype=np.float64)
+    for _j, _f in enumerate(funds):
+        _s   = fund_navs[_f]
+        _sidx = _s.index
+        if getattr(_sidx, "tz", None) is not None:
+            _sidx = _sidx.tz_localize(None)
+        _pos = _sidx.searchsorted(_cal_naive, side="right")
+        nav_mat[:, _j] = _s.to_numpy(dtype=np.float64)[np.maximum(_pos - 1, 0)]
+
+    # (b) Units per day. Transactions are replayed in the reference's exact order
+    #     (calendar date ascending, original row order within a date) so the
+    #     order-dependent `max(0.0, ...)` clamp still lands identically; units then
+    #     only change on transaction days, i.e. a step function broadcast over days.
+    fund_col   = {f: j for j, f in enumerate(funds)}
+    _n_t       = len(df_t)
+    _t_cols    = df_t.columns
+    _t_fund    = df_t["Fund"].tolist()          # KeyError if absent, as txn["Fund"] was
+    _t_type    = df_t["Type"].tolist()   if "Type"   in _t_cols else [""] * _n_t
+    _t_amt     = df_t["Amount"].tolist() if "Amount" in _t_cols else [0] * _n_t
+    _t_units   = df_t["Units"].tolist()  if "Units"  in _t_cols else [0] * _n_t
+    _t_nav     = df_t["NAV"].tolist()    if "NAV"    in _t_cols else [0] * _n_t
+
+    # Day offset of each transaction; rows outside the calendar were never visited
+    # by the day loop and stay ignored here.
+    _day_of  = (df_t["Date"].dt.normalize() - calendar[0].normalize()).dt.days.to_numpy()
+    _in_cal  = np.nonzero((_day_of >= 0) & (_day_of < n_days))[0]
+    _order   = _in_cal[np.argsort(_day_of[_in_cal], kind="stable")].tolist()
+
+    cashflow    = np.zeros(n_days, dtype=np.float64)
+    units_now   = np.zeros(n_funds, dtype=np.float64)
+    change_days: List[int] = []
+    unit_states: List[np.ndarray] = []
+
+    _m, _n_ord = 0, len(_order)
+    while _m < _n_ord:
+        k = int(_day_of[_order[_m]])
         net_cashflow = 0.0
-        if d_obj in txns_by_date:
-            for txn in txns_by_date[d_obj]:
-                f = txn["Fund"]
-                if f not in fund_units: continue
-                
-                t_type = str(txn.get("Type", "")).upper()
-                amt = abs(float(txn.get("Amount", 0) or 0))
-                units_t = abs(float(txn.get("Units", 0) or 0))
-                nav_t = float(txn.get("NAV", 0) or 0)
-                
-                if amt == 0 and units_t > 0 and nav_t > 0:
-                    amt = units_t * nav_t
-                
-                if "BUY" in t_type or "PURCHASE" in t_type or "SIP" in t_type or "SWITCH-IN" in t_type:
-                    fund_units[f] += units_t
-                    net_cashflow += amt
-                elif "SELL" in t_type or "REDEMPTION" in t_type or "SWP" in t_type or "SWITCH-OUT" in t_type:
-                    fund_units[f] -= units_t
-                    fund_units[f] = max(0.0, fund_units[f])
-                    net_cashflow -= amt
-                elif "REINVEST" in t_type or "BONUS" in t_type:
-                    fund_units[f] += units_t
-                    
-        # C) Issue/Redeem portfolio units at current Portfolio NAV
+        while _m < _n_ord and _day_of[_order[_m]] == k:
+            r = _order[_m]
+            _m += 1
+
+            j = fund_col.get(_t_fund[r])
+            if j is None:                       # fund has no NAV series -> skipped
+                continue
+
+            t_type  = str(_t_type[r]).upper()
+            amt     = abs(float(_t_amt[r] or 0))
+            units_t = abs(float(_t_units[r] or 0))
+            nav_t   = float(_t_nav[r] or 0)
+
+            if amt == 0 and units_t > 0 and nav_t > 0:
+                amt = units_t * nav_t
+
+            if "BUY" in t_type or "PURCHASE" in t_type or "SIP" in t_type or "SWITCH-IN" in t_type:
+                units_now[j] += units_t
+                net_cashflow += amt
+            elif "SELL" in t_type or "REDEMPTION" in t_type or "SWP" in t_type or "SWITCH-OUT" in t_type:
+                units_now[j] -= units_t
+                units_now[j] = max(0.0, units_now[j])
+                net_cashflow -= amt
+            elif "REINVEST" in t_type or "BONUS" in t_type:
+                units_now[j] += units_t
+
+        cashflow[k] = net_cashflow
+        change_days.append(k)
+        unit_states.append(units_now.copy())
+
+    if change_days:
+        _states = np.vstack([np.zeros((1, n_funds), dtype=np.float64),
+                             np.asarray(unit_states, dtype=np.float64)])
+        _which  = np.searchsorted(np.asarray(change_days, dtype=np.int64),
+                                  np.arange(n_days), side="right")
+        units_eod = _states[_which]             # state 0 == "before any transaction"
+    else:
+        units_eod = np.zeros((n_days, n_funds), dtype=np.float64)
+
+    units_sod = np.empty_like(units_eod)        # start-of-day == previous EOD
+    units_sod[0] = 0.0
+    units_sod[1:] = units_eod[:-1]
+
+    # (c) Daily market values. Units are never negative (the clamp above), so
+    #     dropping the reference's `if units > 0` filter only adds exact 0.0 terms.
+    mv_sod = np.einsum("ij,ij->i", units_sod, nav_mat)
+    mv_eod = np.einsum("ij,ij->i", units_eod, nav_mat)
+
+    # Benchmark index level per day — same searchsorted trick as the NAV matrix.
+    # The `index >= start_date` mask is deliberately NOT replaced: an empty/None
+    # benchmark arrives as pd.Series(dtype=float), whose RangeIndex makes this
+    # comparison raise TypeError, and that escaping TypeError is existing
+    # behaviour (an all-NaN benchmark, which keeps its DatetimeIndex, does not).
+    # It is evaluated once here instead of twice.
+    _bs_after = bench_sorted[bench_sorted.index >= start_date]
+    bench_start_global = float(_bs_after.iloc[0]) if not _bs_after.empty else 1.0
+
+    if bench_sorted.empty:
+        b_curr = np.full(n_days, bench_start_global, dtype=np.float64)
+    else:
+        _b_idx  = bench_sorted.index
+        _b_vals = bench_sorted.to_numpy(dtype=np.float64)
+        _bpos   = _b_idx.searchsorted(calendar, side="right")
+        b_curr  = np.where(_bpos > 0, _b_vals[np.maximum(_bpos - 1, 0)], bench_start_global)
+
+    if bench_start_global == 0.0:
+        # The day loop divided by this scalar on its very first iteration.
+        raise ZeroDivisionError("float division by zero")
+    global_bench_nav = (b_curr / bench_start_global) * 100.0
+
+    # Portfolio NAV curve. Between cashflow days port_units is constant, so the
+    # recorded value is just mv_eod / port_units (or the stale NAV carried forward
+    # while port_units is 0 — that quirk is load-bearing for re-entry after a full
+    # exit). float() on every scalar assignment keeps port_nav a Python float, so
+    # a zero NAV still raises ZeroDivisionError instead of silently going inf.
+    global_port_nav = np.empty(n_days, dtype=np.float64)
+    port_units = 0.0
+    port_nav   = 100.0                          # Base 100 on Day 1
+    _cursor    = 0
+
+    for ck in np.nonzero(cashflow)[0].tolist():
+        if ck > _cursor:
+            if port_units > 0:
+                global_port_nav[_cursor:ck] = mv_eod[_cursor:ck] / port_units
+                port_nav = float(global_port_nav[ck - 1])
+            else:
+                global_port_nav[_cursor:ck] = port_nav
+
+        # A) Start-of-Day
+        if port_units > 0:
+            port_nav = float(mv_sod[ck]) / port_units
+
+        # B+C) Issue/Redeem portfolio units at current Portfolio NAV
+        net_cashflow = float(cashflow[ck])
         if net_cashflow > 0:
             port_units += net_cashflow / port_nav
         elif net_cashflow < 0:
             port_units -= abs(net_cashflow) / port_nav
             port_units = max(0.0, port_units)
-            
-        # D) End-of-Day Market Value
-        market_value_eod = 0.0
-        for f, units in fund_units.items():
-            if units > 0:
-                f_navs = fund_navs.get(f)
-                if f_navs is not None:
-                    past_navs = f_navs[f_navs.index.date <= d_obj]
-                    # FIX H-9: Forward-fill from last known NAV instead of hardcoded 10.0
-                    nav_today = float(past_navs.iloc[-1]) if not past_navs.empty else float(f_navs.iloc[0]) if not f_navs.empty else 10.0
-                    market_value_eod += units * nav_today
-                else:
-                    # If we couldn't fetch NAV, assume a constant 10.0 or last known unit price.
-                    # For a sold fund, ideally we would use its historical purchase price or synthetic NAV.
-                    market_value_eod += units * 10.0
-                
+
+        # D) End-of-Day
         if port_units > 0:
-            port_nav = market_value_eod / port_units
-            
-        global_dates.append(d)
-        global_port_nav.append(port_nav)
-        global_bench_nav.append(b_idx)
-        global_market_value.append(market_value_eod)
-        
+            port_nav = float(mv_eod[ck]) / port_units
+
+        global_port_nav[ck] = port_nav
+        _cursor = ck + 1
+
+    if _cursor < n_days:
+        if port_units > 0:
+            global_port_nav[_cursor:] = mv_eod[_cursor:] / port_units
+        else:
+            global_port_nav[_cursor:] = port_nav
+
     global_df = pd.DataFrame({
         "bench": global_bench_nav,
         "port": global_port_nav,
-        "market_value": global_market_value
-    }, index=global_dates)
+        "market_value": mv_eod
+    }, index=calendar)
 
     # 4. Slice the true curve for the requested period
     bench_end_date = global_df.index[-1]

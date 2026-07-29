@@ -15,7 +15,6 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib.request
-import yfinance as yf
 import pandas as pd
 import time
 import threading
@@ -23,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, Any, List
 from shared import config
 from shared.cache import MarketCache
+from shared.services.cache import MARKET_CACHE
 from shared.services.providers.factory import get_provider
 from shared.config import BENCHMARKS, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
 
@@ -52,23 +52,28 @@ _HTTP_SESSION = _create_retry_session()
 # Module-level caches  (simple in-memory; replace with Redis for multi-worker)
 # ---------------------------------------------------------------------------
 _ISIN_TO_CODE_CACHE:  Dict[str, str] = {}       # ISIN → scheme_code
+_ISIN_MISS_CACHE:     Dict[str, float] = {}     # ISIN → ts of last failed resolution
 _NAV_SERIES_CACHE:    Dict[str, Tuple[float, pd.Series]] = {}  # code → (ts, series)
 _TER_CACHE:           Dict[str, float] = {}      # scheme_code → TER %
 _TER_CACHE_TS:        float = 0.0                # timestamp of last TER fetch
 
 _NAV_CACHE_TTL = 3600       # 1 hour
 _TER_CACHE_TTL = 86400      # 24 hours (AMFI updates once daily)
+_ISIN_MISS_TTL = 3600       # 1 hour — retry unresolvable ISINs occasionally, not constantly
 
 def clear_market_data_cache():
     """Invalidate all in-memory market data caches."""
     global _ISIN_TO_CODE_CACHE, _NAV_SERIES_CACHE, _TER_CACHE, _TER_CACHE_TS, _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS
     with _CACHE_LOCK:
         _ISIN_TO_CODE_CACHE.clear()
+        _ISIN_MISS_CACHE.clear()
         _NAV_SERIES_CACHE.clear()
         _TER_CACHE.clear()
         _TER_CACHE_TS = 0.0
         _LIVE_NAV_CACHE.clear()
         _LIVE_NAV_CACHE_TS = 0.0
+    # The parsed AMFI bundle and NAV series live in the L1 tier now.
+    MARKET_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -78,10 +83,13 @@ def clear_market_data_cache():
 _LIVE_NAV_CACHE: Dict[str, float] = {}
 _LIVE_NAV_CACHE_TS: float = 0.0
 
-def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
+def _fetch_amfi_data_uncached() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
     """
     Unified AMFI fetch — downloads NAVAll.txt once and populates both
     live NAV cache and ISIN-to-Code mapping.
+
+    Always hits the network. Call `_fetch_amfi_data()` instead unless you
+    specifically need to force a refresh.
     """
     global _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS, _ISIN_TO_CODE_CACHE
     
@@ -126,12 +134,75 @@ def _fetch_amfi_data() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]
             
     except Exception as e:
         logger.error(f"[AMFI UNIFIED ERROR] {e}")
-        
+
     return live_map, isin_map, date_map
 
 from shared.cache import MarketCache
 import logging
 logger = logging.getLogger(__name__)
+
+
+# The AMFI bundle is the single most reused network payload in the app: it values
+# every holding, resolves every ISIN, and dates every NAV. It used to be refetched
+# and reparsed on every call - including once per unresolvable ISIN - so caching the
+# *parsed* triple here removes the largest source of redundant network I/O.
+#
+# Treated as immutable by convention: callers must not mutate the returned maps.
+# They are handed out by reference deliberately, because deep-copying ~50k-entry
+# dicts on every access would cost more than the fetch it replaces.
+_AMFI_BUNDLE_KEY = "amfi_bundle_v1"
+
+
+def _load_amfi_bundle() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
+    """
+    L2 (disk) then network. Used as the producer behind the L1 cache.
+
+    Reading disk before the network matters for cold starts: a free-tier instance
+    that just woke has an empty L1 but may still have a usable bundle on disk, and
+    re-downloading several MB to rebuild what we already have is pure latency.
+    """
+    if config.CACHE_TTL_MINUTES > 0:
+        cached = MarketCache.get(_AMFI_BUNDLE_KEY)
+        if isinstance(cached, dict) and cached.get("live"):
+            live_map = {k: float(v) for k, v in cached["live"].items()}
+            isin_map = dict(cached.get("isin") or {})
+            date_map = dict(cached.get("date") or {})
+            # Keep the legacy module globals coherent with what we just served.
+            with _CACHE_LOCK:
+                global _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS
+                _LIVE_NAV_CACHE = live_map
+                _LIVE_NAV_CACHE_TS = time.time()
+                _ISIN_TO_CODE_CACHE.update(isin_map)
+            return live_map, isin_map, date_map
+
+    live_map, isin_map, date_map = _fetch_amfi_data_uncached()
+
+    if live_map and config.CACHE_TTL_MINUTES > 0:
+        MarketCache.set(
+            _AMFI_BUNDLE_KEY,
+            {"live": live_map, "isin": isin_map, "date": date_map},
+        )
+
+    return live_map, isin_map, date_map
+
+
+def _fetch_amfi_data(refresh: bool = False) -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
+    """
+    Cached AMFI bundle: (live_navs_by_isin, isin_to_code, nav_date_by_isin).
+
+    Single-flight, so a burst of concurrent holdings enrichment triggers one
+    download rather than one per holding.
+    """
+    ttl = config.CACHE_TTL_MINUTES * 60
+    if refresh or ttl <= 0:
+        return _fetch_amfi_data_uncached()
+
+    # copy_on_read=False: the bundle is three maps with tens of thousands of entries
+    # and is treated as immutable by every consumer. Deep-copying it per access would
+    # cost more than the download it replaces.
+    return MARKET_CACHE.get_or_compute(
+        _AMFI_BUNDLE_KEY, _load_amfi_bundle, ttl, copy_on_read=False
+    )
 
 
 def fetch_live_navs(refresh: bool = False) -> Dict[str, float]:
@@ -148,20 +219,20 @@ def fetch_live_navs(refresh: bool = False) -> Dict[str, float]:
     Returns:
         Dict[str, float]: A mapping of ISIN codes to their latest NAV as floats.
     """
-    cache_key = "amfi_live_navs"
-    if not refresh and config.CACHE_TTL_MINUTES > 0:
-        cached = MarketCache.get(cache_key)
-        if cached: return cached
-
-    live_map, _, _ = _fetch_amfi_data()
-    if live_map and config.CACHE_TTL_MINUTES > 0:
-        MarketCache.set(cache_key, live_map)
+    live_map, _, _ = _fetch_amfi_data(refresh=refresh)
     return live_map
 
+
 def fetch_live_navs_with_date(refresh: bool = False) -> Tuple[Dict[str, float], Dict[str, str]]:
-    """Returns both the NAV mapping and the Date mapping."""
-    # Bypass cache since date mapping is not cached yet
-    live_map, _, date_map = _fetch_amfi_data()
+    """
+    Returns both the NAV mapping and the NAV-date mapping.
+
+    Shares the cached AMFI bundle with fetch_live_navs. This previously bypassed the
+    cache entirely ("date mapping is not cached yet") and so forced a full multi-MB
+    download on every upload and every /sync - the bundle now carries all three maps,
+    so there is nothing left to bypass for.
+    """
+    live_map, _, date_map = _fetch_amfi_data(refresh=refresh)
     return live_map, date_map
 
 def _fetch_amfi_ter_all() -> Dict[str, float]:
@@ -257,14 +328,35 @@ def resolve_scheme_code_from_isin(isin: str) -> str:
     Scheme code string (e.g. "122639"), or "" if not found.
     """
     isin = isin.strip().upper()
+    if not isin:
+        return ""
+
     with _CACHE_LOCK:
         if isin in _ISIN_TO_CODE_CACHE:
             return _ISIN_TO_CODE_CACHE[isin]
 
-    _, _, _ = _fetch_amfi_data()
-    
-    with _CACHE_LOCK:
-        return _ISIN_TO_CODE_CACHE.get(isin, "")
+        # Negative cache. Some ISINs in a CAS are simply not in AMFI's file (closed
+        # schemes, segregated portfolios). Without this, every lookup for such an
+        # ISIN falls through to a bundle refresh, and a single unresolvable holding
+        # re-triggers that work on every request that touches it.
+        missed_at = _ISIN_MISS_CACHE.get(isin)
+        if missed_at is not None and (time.time() - missed_at) < _ISIN_MISS_TTL:
+            return ""
+
+    # Not known yet: consult the (cached) bundle in case it has appeared since.
+    _, isin_map, _ = _fetch_amfi_data()
+
+    code = (isin_map or {}).get(isin, "")
+    if not code:
+        with _CACHE_LOCK:
+            code = _ISIN_TO_CODE_CACHE.get(isin, "")
+
+    if not code:
+        # Bounded TTL rather than permanent: AMFI can add a scheme later.
+        with _CACHE_LOCK:
+            _ISIN_MISS_CACHE[isin] = time.time()
+
+    return code
 
 
 # ---------------------------------------------------------------------------
@@ -284,38 +376,86 @@ def fetch_nav_series_by_code(scheme_code: str, days: int = 3650, refresh: bool =
     fallbacks (for benchmarks) or fail gracefully (for portfolio funds).
     """
     code_str = str(scheme_code).strip()
+    full = _full_nav_series(code_str, refresh=refresh)
+    return _slice_trailing(full, days)
+
+
+# NAV history is always fetched in full and sliced locally, so the `days` argument
+# never affects what is fetched or cached - only what is returned. Keeping one entry
+# per scheme (rather than one per scheme+window) is what stops the same fund being
+# downloaded three times because three call sites asked for 10, 3650 and 9999 days.
+_NAV_LEAD_IN_DAYS = 30
+
+
+def _slice_trailing(series: pd.Series, days: int) -> pd.Series:
+    """
+    Trim to the trailing `days` window, measured from the last observation.
+
+    The extra lead-in gives downstream return/risk windows a little history to
+    anchor on. Note this unifies a pre-existing inconsistency: the cache-hit path
+    used `days + 30` while the fresh-fetch path used `days`, so the same call
+    returned different lengths depending on cache state. `days + 30` wins because
+    it is what production served in the common (warm) case.
+    """
+    if series.empty or days >= 9999:
+        return series.copy()
+
+    cutoff = series.index[-1] - timedelta(days=days + _NAV_LEAD_IN_DAYS)
+    return series[series.index >= cutoff].copy()
+
+
+def _full_nav_series(code_str: str, refresh: bool = False) -> pd.Series:
+    """
+    Full parsed NAV history for a scheme, cached as a *parsed* pd.Series.
+
+    Caching the parsed object rather than the raw JSON map is the point. The disk
+    tier stores `{"DD-MM-YYYY": nav}`, and rebuilding a Series from that means a
+    `to_datetime` over the entire history plus a sort — which previously ran once per
+    holding per request, making a cache hit nearly as expensive as a miss.
+    """
+    ttl = config.CACHE_TTL_MINUTES * 60
+    if refresh or ttl <= 0:
+        return _load_full_nav_series(code_str, refresh=refresh)
+
+    return MARKET_CACHE.get_or_compute(
+        f"nav_full|{code_str}",
+        lambda: _load_full_nav_series(code_str, refresh=False),
+        ttl,
+    )
+
+
+def _load_full_nav_series(code_str: str, refresh: bool) -> pd.Series:
+    """L2 (disk) then network. Producer behind the L1 entry above."""
     cache_key = f"nav_series_{code_str}"
-    
+
     if not refresh:
         cached_data = MarketCache.get(cache_key)
         if cached_data:
-            series = pd.Series(cached_data)
-            # FIX: Add dayfirst=True for DD-MM-YYYY dates, then sort chronologically!
-            series.index = pd.to_datetime(series.index, dayfirst=True)
-            series = series.sort_index()
-            if days < 9999:
-                cutoff = series.index[-1] - timedelta(days=days + 30)
-                return series[series.index >= cutoff].copy()
-            return series.copy()
+            try:
+                series = pd.Series(cached_data)
+                # dayfirst=True for DD-MM-YYYY dates, then sort chronologically.
+                series.index = pd.to_datetime(series.index, dayfirst=True)
+                return series.sort_index().astype(float)
+            except Exception:
+                pass  # corrupt/partial cache entry — fall through to the network
 
     try:
         provider = get_provider()
-        series = provider.fetch_nav_series(code_str, 9999) # Fetch full to cache
+        series = provider.fetch_nav_series(code_str, 9999)  # always full history
 
         if series.empty:
             return pd.Series(dtype=float)
 
-        # Persist the raw map for next time (format expected by cache)
-        raw_map = {d.strftime("%d-%m-%Y"): v for d, v in series.items()}
+        series = series.sort_index()
+
+        # Persist the raw map for next time (format expected by the disk cache)
+        raw_map = {d.strftime("%d-%m-%Y"): float(v) for d, v in series.items()}
         MarketCache.set(cache_key, raw_map)
 
-        if days < 9999:
-            cutoff = series.index[-1] - timedelta(days=days)
-            return series[series.index >= cutoff]
         return series
 
-    except Exception as e:
-        # Silently catch and fail gracefully. Let downstream systems handle the empty series.
+    except Exception:
+        # Fail gracefully. Downstream systems handle the empty series.
         return pd.Series(dtype=float)
 
 
@@ -424,7 +564,31 @@ def fetch_peer_returns(scheme_code: str) -> Tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 def search_mutual_funds(query: str) -> List[Dict]:
-    """Search for funds using MFapi.in search endpoint."""
+    """
+    Search for funds using MFapi.in search endpoint.
+
+    Cached: the peer-comparison path issues up to eight of these per request with a
+    small, repeating set of queries ("Large Cap Direct", "Flexi Cap Direct", ...), and
+    /compare/search re-runs the same user queries constantly. Results are
+    user-independent fund metadata, so a shared entry is correct.
+    """
+    ttl = config.CACHE_TTL_MINUTES * 60
+    if ttl <= 0:
+        return _search_mutual_funds_uncached(query)
+
+    normalized = " ".join(str(query).strip().lower().split())
+    if not normalized:
+        return []
+
+    return MARKET_CACHE.get_or_compute(
+        f"fund_search|{normalized}",
+        lambda: _search_mutual_funds_uncached(query),
+        ttl,
+    )
+
+
+def _search_mutual_funds_uncached(query: str) -> List[Dict]:
+    """Always hits the provider. Use search_mutual_funds() unless bypassing the cache."""
     try:
         provider = get_provider()
         raw_results = provider.search_funds(query)

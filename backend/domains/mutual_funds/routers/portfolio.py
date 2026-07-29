@@ -10,7 +10,11 @@ from domains.mutual_funds.sessions import create_session, get_session
 from shared.config import BENCHMARKS
 from shared.cache import MarketCache
 from shared.services.market_indices import clear_benchmark_cache
-from shared.services.market_data import resolve_scheme_code_from_isin, clear_market_data_cache
+from shared.services.market_data import (
+    resolve_scheme_code_from_isin,
+    clear_market_data_cache,
+    _AMFI_BUNDLE_KEY as AMFI_BUNDLE_KEY,
+)
 
 router = APIRouter()
 
@@ -58,25 +62,30 @@ def sync_portfolio(session_id: str):
         return {"status": "ok", "cleared": 0}
 
     cleared_count = 0
-    # 1. Global NAV Cache (Shared)
-    MarketCache.invalidate("amfi_live_navs")
+
+    # 1. Shared market data. clear_market_data_cache() also drops the in-process L1
+    #    tier, which is where the parsed AMFI bundle and NAV series now live.
+    MarketCache.delete(AMFI_BUNDLE_KEY)
     clear_benchmark_cache()
     clear_market_data_cache()
-    
-    # 2. Fund-specific caches
+
+    # 2. Fund-specific caches.
+    #    Exact-key deletes rather than pattern invalidation: each invalidate() call
+    #    scans the whole cache directory, so the previous loop did 1 + 2N directory
+    #    scans for an N-fund portfolio. delete() touches exactly one path.
     for _, row in portfolio.df_h.iterrows():
         isin = row.get("ISIN")
         name = row.get("Fund")
-        if isin:
-            # Invalidate disclosure cache
-            MarketCache.invalidate(f"portfolio_{isin}")
-            # Invalidate NAV history cache
-            code = resolve_scheme_code_from_isin(isin)
-            if code:
-                MarketCache.invalidate(f"nav_series_{code}")
-            cleared_count += 1
-            
+        if not isin:
+            continue
+
+        MarketCache.delete(f"portfolio_{isin}_{name}")
+        code = resolve_scheme_code_from_isin(isin)
+        if code:
+            MarketCache.delete(f"nav_series_{code}")
+        cleared_count += 1
+
     # 3. Re-calculate portfolio units x live NAVs in memory
     portfolio.update_live_navs()
-            
+
     return {"status": "ok", "cleared": cleared_count}

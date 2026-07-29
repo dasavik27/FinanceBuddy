@@ -7,22 +7,86 @@ Contains reusable business logic for extracting AMCs, generating peer universes,
 and formatting standard metrics to enforce DRY principles across Tab Routers.
 """
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple
+
+import pandas as pd
+
 from shared.config import PE_ESTIMATES, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
+from shared.services.cache import MARKET_CACHE, ttl_for
 from shared.services.market_data import search_mutual_funds, fetch_fund_ter, fetch_nav_series_by_code
 from shared.services.market_indices import fetch_benchmark_series
 from domains.mutual_funds.finance import compute_trailing_returns, compute_consistency_score, compute_risk_metrics
 
+logger = logging.getLogger(__name__)
+
+# Trailing window requested for each peer's NAV history.
+_PEER_NAV_DAYS = 1825 + 90
+
+# Concurrency for peer NAV fetches. These are network-bound, so threads help even on a
+# shared vCPU - the GIL is released during the HTTP wait. Capped because the upstream
+# provider is a free public API and we should not hammer it.
+_PEER_FETCH_WORKERS = 8
+
+
 def _extract_amc(fund_name: str) -> str:
     from domains.mutual_funds.logic import CategorizationEngine
     return CategorizationEngine.extract_amc_brand(fund_name)
+
+
+def _prefetch_peer_navs(codes: List[str]) -> Dict[str, pd.Series]:
+    """
+    Fetch several peers' NAV histories concurrently.
+
+    This replaces up to 30 *sequential* HTTP round-trips, which was the single largest
+    remaining source of wall-clock latency in the domain. The caller still iterates
+    peers in the original order afterwards, so result ordering and tie-breaking are
+    unchanged - only the waiting is overlapped.
+    """
+    navs: Dict[str, pd.Series] = {}
+    unique = list(dict.fromkeys(codes))  # de-dupe, preserve order
+    if not unique:
+        return navs
+
+    with ThreadPoolExecutor(max_workers=min(_PEER_FETCH_WORKERS, len(unique))) as executor:
+        futures = {
+            executor.submit(fetch_nav_series_by_code, code, _PEER_NAV_DAYS): code
+            for code in unique
+        }
+        for future in as_completed(futures):
+            code = futures[future]
+            try:
+                navs[code] = future.result()
+            except Exception as e:
+                logger.error(f"[PEER NAV] fetch failed for {code}: {e}")
+                navs[code] = pd.Series(dtype=float)
+
+    return navs
+
 
 def get_diverse_category_peers(category: str, base_fund_name: str = "", max_peers: int = 5) -> Tuple[List[Dict], bool]:
     """
     Fetches dynamic live category peers via real-time market search.
     Computes trailing returns, alphas, sharpe, and filters for AMC diversity.
     Returns: (list_of_peers, fallback_triggered_boolean)
+
+    Cached and single-flighted. The result is user-independent fund data (a category's
+    peer set), so one entry is shared by every caller. Previously this ran in full on
+    every /compare/peers request: up to eight uncached searches, thirty sequential NAV
+    fetches, and thirty risk-metric computations.
     """
+    ttl = ttl_for("comparison_data")
+    key = f"peers|{category}|{base_fund_name}|{max_peers}"
+    return MARKET_CACHE.get_or_compute(
+        key,
+        lambda: _compute_diverse_category_peers(category, base_fund_name, max_peers),
+        ttl,
+    )
+
+
+def _compute_diverse_category_peers(category: str, base_fund_name: str, max_peers: int) -> Tuple[List[Dict], bool]:
+    """Uncached implementation behind get_diverse_category_peers()."""
     clean_cat = category.replace("Fund", "").strip()
     
     # 1. Broad Search
@@ -66,17 +130,28 @@ def get_diverse_category_peers(category: str, base_fund_name: str = "", max_peer
     base_pe = None if is_debt else PE_ESTIMATES.get(category, PE_ESTIMATES.get("Default", 22.5))
 
     # 4. Metric Computation
+    #
+    # NAV histories are fetched up front and concurrently; the loop below then works
+    # from memory. Self-matches are excluded from the prefetch so we do not spend a
+    # request on a fund we are about to skip.
+    def _is_self(name: str) -> bool:
+        return bool(base_fund_name) and base_fund_name.lower()[:20] in name.lower()
+
+    peer_navs = _prefetch_peer_navs(
+        [str(p["code"]) for p in peers if not _is_self(str(p["name"]))]
+    )
+
     results = []
     for p in peers:
         code = str(p['code'])
         name = str(p['name'])
-        
+
         # Prevent comparing fund to itself
-        if base_fund_name and base_fund_name.lower()[:20] in name.lower():
+        if _is_self(name):
             continue
-            
-        peer_nav = fetch_nav_series_by_code(code, days=1825 + 90)
-        if peer_nav.empty:
+
+        peer_nav = peer_navs.get(code)
+        if peer_nav is None or peer_nav.empty:
             continue
 
         trailing = compute_trailing_returns(peer_nav)
@@ -146,7 +221,10 @@ def get_diverse_category_peers(category: str, base_fund_name: str = "", max_peer
                         risk_m = compute_risk_metrics(nav_s, bench_series, risk_free_rate=6.5)
                         a_v = round(risk_m.get("alpha", 0.0), 2)
                         ter_val = fetch_fund_ter(code) or 0.65
-                        
+                        # Computed once: this was previously called twice with identical
+                        # arguments, once for the number and once for the display string.
+                        b_consistency = round(compute_consistency_score(nav_s, bench_series), 1)
+
                         diverse_peers.append({
                             "name": name,
                             "symbol": code,
@@ -157,8 +235,8 @@ def get_diverse_category_peers(category: str, base_fund_name: str = "", max_peer
                             "ret1y": tr.get("1Y") or 0.0,
                             "ret3y": tr.get("3Y") or 0.0,
                             "ret5y": tr.get("5Y") or 0.0,
-                            "consistency": round(compute_consistency_score(nav_s, bench_series), 1),
-                            "consistency_str": f"{round(compute_consistency_score(nav_s, bench_series), 1)}/10",
+                            "consistency": b_consistency,
+                            "consistency_str": f"{b_consistency}/10",
                             "alpha": a_v,
                             "alpha_str": f"+{a_v}%" if a_v > 0 else f"{a_v}%",
                             "sharpe": round(risk_m.get('sharpe', 0.0), 2),
