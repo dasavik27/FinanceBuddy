@@ -134,31 +134,43 @@ def test_concurrent_requests_compute_once(stub_market):
 
 def test_nav_fetches_are_overlapped(monkeypatch):
     """
-    Times the fan-out helper directly rather than the whole endpoint.
+    Asserts concurrency *structurally* - by observing how many fetches are in flight
+    simultaneously - rather than by wall-clock timing.
 
-    Measuring end-to-end would conflate fetch latency with the per-peer risk-metric
-    computation, which is real CPU work and would swamp the signal - an earlier
-    version of this test did exactly that and mis-reported concurrent fetches as
-    sequential.
+    Two earlier versions of this test were wrong in different ways, both worth
+    recording. The first timed the whole endpoint, which conflates fetch latency with
+    the per-peer risk-metric computation (real CPU work that swamps the signal) and
+    so reported concurrent fetches as sequential. The second timed the helper alone
+    but still asserted on elapsed time, which flakes on a loaded machine.
+
+    An in-flight counter has neither problem: if the fan-out were sequential the peak
+    would be exactly 1 no matter how slow the machine is.
     """
-    delay = 0.1
     codes = [str(200000 + i) for i in range(8)]
+    lock = threading.Lock()
+    state = {"in_flight": 0, "peak": 0}
 
-    def slow_fetch(code, days=0, **kwargs):
-        time.sleep(delay)
-        return _nav(50.0)
+    def tracking_fetch(code, days=0, **kwargs):
+        with lock:
+            state["in_flight"] += 1
+            state["peak"] = max(state["peak"], state["in_flight"])
+        try:
+            time.sleep(0.05)  # hold the slot so any overlap is observable
+            return _nav(50.0)
+        finally:
+            with lock:
+                state["in_flight"] -= 1
 
-    monkeypatch.setattr(tab_common, "fetch_nav_series_by_code", slow_fetch)
-
-    started = time.perf_counter()
+    monkeypatch.setattr(tab_common, "fetch_nav_series_by_code", tracking_fetch)
     navs = tab_common._prefetch_peer_navs(codes)
-    elapsed = time.perf_counter() - started
 
     assert len(navs) == len(codes)
-    sequential = len(codes) * delay
-    assert elapsed < sequential * 0.5, (
-        f"{len(codes)} fetches took {elapsed:.2f}s; sequential would be ~{sequential:.2f}s "
-        "- fan-out does not appear to be concurrent"
+    assert state["peak"] >= 2, (
+        f"peak concurrent fetches was {state['peak']} - fan-out is sequential"
+    )
+    assert state["peak"] <= tab_common._PEER_FETCH_WORKERS, (
+        f"peak concurrent fetches was {state['peak']}, above the "
+        f"{tab_common._PEER_FETCH_WORKERS}-worker cap that protects the upstream API"
     )
 
 
