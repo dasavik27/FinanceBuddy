@@ -17,11 +17,13 @@ Middleware order below is deliberate - see the comments at each layer.
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
+from shared.identity import identity_scope, normalize_pan
 from shared.services.cache import cache_stats, request_scope
 
 # Shared Infrastructure Gateways
@@ -47,10 +49,38 @@ logger = logging.getLogger(__name__)
 # the Render logs without needing an APM.
 SLOW_REQUEST_MS = float(os.getenv("FINANCEBUDDY_SLOW_REQUEST_MS", "1500"))
 
+# 51 of this app's 54 endpoints are sync `def`, which FastAPI runs in anyio's worker
+# threadpool. That pool defaults to 40 tokens, so up to 40 GIL-bound pandas handlers
+# could contend for ~0.1 shared vCPU at once - adding context-switch thrash without
+# any parallelism, and multiplying peak memory by the concurrency, because each
+# handler holds its own intermediate DataFrames on a 512 MB box.
+#
+# Capping it makes excess requests queue instead of thrash: slower to start serving
+# under burst, but faster to finish and bounded in memory. Same reasoning the
+# ThreadPoolExecutor sizing already follows, one level up.
+SYNC_ENDPOINT_CONCURRENCY = int(os.getenv("FINANCEBUDDY_SYNC_CONCURRENCY", "8"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown hooks. There was no startup hook here at all before."""
+    import anyio.to_thread
+
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    previous = limiter.total_tokens
+    limiter.total_tokens = SYNC_ENDPOINT_CONCURRENCY
+    logger.info(
+        "[STARTUP] sync endpoint concurrency capped at %d (anyio default was %d)",
+        SYNC_ENDPOINT_CONCURRENCY, previous,
+    )
+    yield
+
+
 app = FastAPI(
     title="Finance Buddy API",
     description="Smart Wealth Dashboard, Mutual Fund Portfolio Analytics, and Tax Expert Engine",
     version="8.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -65,8 +95,9 @@ class TimingMiddleware:
     """
     Adds a Server-Timing header and logs slow requests.
 
-    Outermost layer, so the number includes compression and everything below it -
-    that is the latency the browser actually experiences.
+    Innermost layer (see the ordering note at the add_middleware calls), so the number
+    is handler time and excludes compression. Close enough to be useful for spotting
+    slow endpoints in the logs; do not read it as the latency the browser experiences.
     """
 
     def __init__(self, app):
@@ -99,6 +130,64 @@ class TimingMiddleware:
             )
 
 
+class DefaultCacheControlMiddleware:
+    """
+    Stamps `Cache-Control: no-store` on any response that did not set one.
+
+    Absent an explicit header, RFC 9111 section 4.2.2 permits a shared cache to
+    store a 200 GET heuristically. Almost every route here returns per-user
+    financial data - holdings, capital gains, income - and only one router was
+    setting the header at all, so the carefully-built "unknown types fail closed"
+    policy in shared/services/cache.py was never actually reached on those paths.
+
+    Doing it as middleware rather than route by route means a new endpoint is
+    private by default and has to opt *out* to be cacheable, which is the correct
+    direction for this data.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+                if not any(k.lower() == b"cache-control" for k, _ in headers):
+                    headers.append((b"cache-control", b"no-store"))
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+class IdentityMiddleware:
+    """
+    Binds the caller's asserted PAN for the request (shared/identity.py).
+
+    Ownership is enforced deep in the data-access layer rather than per route, so
+    the identity has to be available there without threading a parameter through
+    every signature. Same ContextVar mechanism as the L0 memo below.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        raw = None
+        for key, value in scope.get("headers", []):
+            if key == b"x-user-pan":
+                raw = value.decode("latin-1")
+                break
+
+        with identity_scope(normalize_pan(raw)):
+            await self.app(scope, receive, send)
+
+
 class RequestCacheMiddleware:
     """
     Establishes the L0 request-scoped memo store (shared/services/cache.py).
@@ -118,8 +207,21 @@ class RequestCacheMiddleware:
             await self.app(scope, receive, send)
 
 
-# Added first => outermost => measures total time including compression.
+# NOTE ON ORDERING: `add_middleware` PREPENDS to the stack, so the LAST call added is
+# the OUTERMOST layer — the opposite of what the comments here used to claim. Measured
+# nesting, outermost first:
+#
+#   ServerError > RequestCache > Identity > CORS > GZip > DefaultCacheControl > Timing > router
+#
+# Two consequences worth knowing rather than discovering later:
+#   - CORS sits OUTSIDE DefaultCacheControl and short-circuits preflights, so an OPTIONS
+#     response carries no Cache-Control. Harmless (a preflight has no body), but it means
+#     "every response gets no-store" is not literally true.
+#   - Timing is innermost, so its number excludes compression rather than including it.
 app.add_middleware(TimingMiddleware)
+
+# Fail closed on caching, for any route that did not set a header itself.
+app.add_middleware(DefaultCacheControlMiddleware)
 
 # Compress responses > 200 bytes. Portfolio JSON payloads are highly compressible,
 # and on a free tier bandwidth and TTFB both matter.
@@ -142,6 +244,10 @@ app.add_middleware(
     # Let the frontend read the timing header for its own diagnostics.
     expose_headers=["Server-Timing"],
 )
+
+# Identity before the request store: ownership checks run inside handlers, so the
+# PAN must already be bound by the time one executes.
+app.add_middleware(IdentityMiddleware)
 
 # Added last => innermost => wraps the route handler only.
 app.add_middleware(RequestCacheMiddleware)

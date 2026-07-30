@@ -1,23 +1,43 @@
 from fastapi import APIRouter, HTTPException, Header
-from shared import storage
+from shared import identity, storage
 import pandas as pd
 from typing import Dict, Any
 
 router = APIRouter()
 
 @router.get("/")
-def get_upload_history(x_user_pan: str = Header(None), x_upload_type: str = Header("mutual_funds")):
+def get_upload_history(x_upload_type: str = Header("mutual_funds")):
     """
-    Returns the chronological timeline of all CAS uploads filtered by PAN and upload type.
+    Returns the chronological timeline of the caller's CAS uploads.
+
+    The PAN comes from the request-scoped identity rather than a route parameter, so
+    it is the same value every ownership check in the app uses and cannot diverge
+    from it.
     """
-    history = storage.get_history(pan_id=x_user_pan, upload_type=x_upload_type)
+    caller = identity.current_pan()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Sign in with your PAN to view your history.")
+    history = storage.get_history(pan_id=caller, upload_type=x_upload_type)
     return {"status": "success", "history": history}
 
 @router.delete("/{session_id}")
 def delete_session(session_id: str):
     """
-    Deletes a specific session from history and disk.
+    Deletes one of the caller's own sessions from history and disk.
     """
+    exists, owner = storage.get_session_owner(session_id)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if not identity.owns_record(owner):
+        # 404 rather than 403: a 403 confirms the session exists.
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    # Evict from memory as well as disk. Deleting only the registry row left the
+    # portfolio resident and, with no row left to name its owner, readable by anyone
+    # holding the id.
+    from domains.mutual_funds import sessions as mf_sessions
+    mf_sessions.forget(session_id)
+
     success = storage.delete_session(session_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete session.")
@@ -38,11 +58,18 @@ def compare_sessions(session_id_a: str, session_id_b: str):
     Performs Transaction Ledger Reconciliation between two CAS uploads.
     Identifies exact semantic deltas (new transactions) instead of just value changes.
     """
-    # Ensure chronological order (A is always older, B is always newer)
-    history_list = storage.get_history()
+    # Both sessions must belong to the caller. Previously this loaded
+    # storage.get_history() with NO arguments - every session of every user,
+    # materialized into dicts - and then linearly scanned it for two ids, which was
+    # both an unscoped read of other people's rows and a full table scan per compare.
+    caller = identity.current_pan()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Sign in with your PAN to compare statements.")
+
+    history_list = storage.get_history(pan_id=caller)
     meta_a = next((h for h in history_list if h["session_id"] == session_id_a), None)
     meta_b = next((h for h in history_list if h["session_id"] == session_id_b), None)
-    
+
     if not meta_a or not meta_b:
         raise HTTPException(status_code=404, detail="Session metadata not found.")
         

@@ -12,6 +12,7 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import FilterListIcon from '@mui/icons-material/FilterList'
 
 import { useHoldings } from '../hooks/useData'
+import { useDebounce } from '../../../shared/hooks/useDebounce'
 import { VerdictChip, SectionHeader, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../../../shared/components/ui'
 import { fmtInr, gainColor } from '../../../shared/utils/fmt'
 import { getHealthSignal } from '../rules/tabCommon'
@@ -38,11 +39,16 @@ export default function HoldingsTab() {
   const [capFilter, setCapFilter] = useState('All')
   const [selectedFund, setSelectedFund] = useState<any | null>(null)
 
+  // The input stays instant; only the value that reaches the query key waits. Feeding
+  // `search` straight in meant one GET per keystroke, served sequentially by a
+  // single-worker backend, with responses able to land out of order.
+  const debouncedSearch = useDebounce(search, 300)
+
   // Data Acquisition: Holdings Audit
   const { data: hold, isLoading: holdL } = useHoldings({
     sort_by: 'Market Value',
     ascending: 'false',
-    search,
+    search: debouncedSearch,
     cap_filter: capFilter,
   })
 

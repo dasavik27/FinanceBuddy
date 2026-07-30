@@ -94,6 +94,35 @@ def _series_fingerprint(series: Optional[pd.Series]) -> Optional[str]:
         return None
 
 
+def cached_xirr_by_fy(df_t: pd.DataFrame, df_h: pd.DataFrame) -> Any:
+    """
+    compute_xirr_by_fy() with the same content-addressed cache.
+
+    Worth caching even though it is one endpoint: the function is
+    O(financial_years x funds x transactions) - it rebuilds FIFO lots per (FY x fund)
+    and re-slices the full ledger per snapshot - and it was called directly, so every
+    reload of the Insights tab paid the whole cost again.
+
+    Two lines rather than an algorithmic rewrite, deliberately: the complexity is
+    still there, but a revisit is now a dict lookup. Reducing the complexity means
+    touching FIFO lot construction, which is the most numerically sensitive code in
+    the repo and wants its own change with the equivalence tests in front of it.
+    """
+    from domains.mutual_funds.finance import compute_xirr_by_fy
+
+    t_fp = _frame_fingerprint(df_t)
+    h_fp = _frame_fingerprint(df_h)
+
+    if t_fp is None or h_fp is None:
+        return compute_xirr_by_fy(df_t, df_h)
+
+    return DERIVED_CACHE.get_or_compute(
+        f"xirr_by_fy|{t_fp}|{h_fp}",
+        lambda: compute_xirr_by_fy(df_t, df_h),
+        _TTL,
+    )
+
+
 def cached_period_comparison(
     df_t: pd.DataFrame,
     df_h: pd.DataFrame,

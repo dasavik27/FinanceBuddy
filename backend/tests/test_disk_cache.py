@@ -30,7 +30,10 @@ def cache_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(config, "CACHE_DIR", str(d))
     monkeypatch.setattr("shared.cache.CACHE_DIR", str(d))
-    monkeypatch.setattr("shared.cache.CACHE_TTL_MINUTES", 60)
+    # The TTL is now read through the config module at each use site rather than bound
+    # into shared.cache at import, so there is a single value to patch. (That binding
+    # was the bug: POST /market/config mutated config but never reached the disk tier.)
+    monkeypatch.setattr(config, "CACHE_TTL_MINUTES", 60)
     return d
 
 

@@ -24,7 +24,9 @@ export default function DocumentUpload({ title, subtitle, dropText, dropSubText,
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<any[]>([])
-  const { setSession, setSessionById, pan } = useAppStore()
+  const setSession = useAppStore((s) => s.setSession)
+  const setSessionById = useAppStore((s) => s.setSessionById)
+  const pan = useAppStore((s) => s.pan)
 
   const fetchHistory = useCallback(() => {
     if (!pan) return

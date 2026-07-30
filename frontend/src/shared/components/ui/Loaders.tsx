@@ -1,5 +1,27 @@
 import { Box, Typography, Skeleton } from '@mui/material'
 
+/**
+ * Placeholder shown while a lazily-loaded tab chunk downloads.
+ *
+ * Deliberately a skeleton rather than a spinner: tab chunks are small and usually
+ * arrive in well under a second, and a skeleton that echoes the page's shape avoids
+ * the layout jump a centred spinner causes when the real content lands.
+ */
+export function TabFallback() {
+  return (
+    <Box sx={{ pt: 1 }}>
+      <Skeleton variant="text" width={280} height={38} sx={{ mb: 1 }} />
+      <Skeleton variant="text" width={420} height={20} sx={{ mb: 4 }} />
+      <Box sx={{ display: 'flex', gap: 2, mb: 4, flexWrap: 'wrap' }}>
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} variant="rounded" height={110} sx={{ flex: '1 1 200px', borderRadius: '20px' }} />
+        ))}
+      </Box>
+      <Skeleton variant="rounded" height={320} sx={{ borderRadius: '24px' }} />
+    </Box>
+  )
+}
+
 export function ScoreRing({ score, size = 96 }: { score: number; size?: number }) {
   const pct  = Math.min(100, Math.max(0, score))
   const color = pct >= 70 ? '#4EDE93' : pct >= 40 ? '#F59E0B' : '#FF516A'

@@ -33,6 +33,8 @@ import logging
 import sys
 import threading
 import time
+from datetime import date, datetime
+from enum import Enum
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -52,6 +54,11 @@ CACHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "market_indices":      {"ttl": 24 * 3600, "visibility": "public",  "description": "Historical index data"},
     "live_navs":           {"ttl": 4 * 3600,  "visibility": "public",  "description": "Current fund NAVs from AMFI"},
     "comparison_data":     {"ttl": 1800,      "visibility": "public",  "description": "Fund peer comparison"},
+    # A live index quote. Public because an index level is identical for everyone,
+    # but with a 60s freshness window - deliberately NOT `market_indices`, whose 24h
+    # `immutable` policy is right for settled historical series and badly wrong for a
+    # price the UI polls every minute.
+    "market_quote":        {"ttl": 60,        "visibility": "public",  "description": "Live index quote"},
 
     # --- derived from the user's own holdings: private, never shared-cacheable ---
     "portfolio_summary":   {"ttl": 300, "visibility": "no-store", "description": "Portfolio XIRR, gain, allocation"},
@@ -114,8 +121,35 @@ def cache_key(*args, **kwargs) -> str:
     return "|".join(f"{len(p)}~{p}" for p in parts)
 
 
+class UnsafeCacheKey(TypeError):
+    """
+    Raised when a value cannot be turned into a trustworthy cache key.
+
+    Exists so the failure is loud instead of silent. The alternative - falling back
+    to str() - is actively dangerous for containers whose repr is *truncated*: pandas
+    and numpy elide the middle of large objects with "...", so two different
+    portfolios can render to a byte-identical string. Verified: two 100-row frames
+    differing only at row 50 produce the same key. A cache hit on that key serves one
+    user's ledger to another.
+
+    Callers that can proceed without caching (see request_memo) should catch this and
+    compute directly. Being slow is always better than being wrong about money.
+    """
+
+
 def _key_part(value: Any) -> str:
-    """Render one key component, avoiding unstable reprs."""
+    """
+    Render one key component, avoiding unstable reprs.
+
+    **Allowlist, not denylist.** An earlier version rejected a fixed set of type
+    *names* ("DataFrame", "Series", "ndarray", ...) and fell through to `str(value)`
+    for everything else. That leaked badly: DatetimeIndex, RangeIndex,
+    CategoricalIndex, IntegerArray, DataFrameGroupBy and - worst - a plain `dict`
+    holding a DataFrame all sailed through, and the dict case was proven to produce a
+    byte-identical key for two different frames. Since the whole point of this
+    function is that a wrong key silently serves one user's data to another, anything
+    not known to render safely must raise.
+    """
     if value is None:
         return "~"
     if isinstance(value, bool):
@@ -124,9 +158,26 @@ def _key_part(value: Any) -> str:
         # repr of a float is stable, but normalise integral floats so
         # days=9999 and days=9999.0 share a key.
         return str(int(value)) if value.is_integer() else repr(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return value.hex()
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_key_part(v) for v in value) + "]"
-    return str(value)
+    if isinstance(value, Enum):
+        return f"{type(value).__name__}.{value.name}"
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+
+    raise UnsafeCacheKey(
+        f"{type(value).__module__}.{type(value).__name__} is not a safe cache-key "
+        f"component. Only None/bool/int/float/str/bytes/list/tuple/Enum/date are "
+        f"accepted, because anything else may have a truncated or unordered repr and "
+        f"render two different values identically. For frames use a content "
+        f"fingerprint - see domains/mutual_funds/derived.py:_frame_fingerprint."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +322,20 @@ def request_memo(namespace: str = "") -> Callable:
     Memoize for the lifetime of one request.
 
     Use for work that is pure within a request but must not persist across them -
-    ledger rebuilds, NAV series lookups, per-fund benchmark resolution. No TTL and
-    no eviction: the store is discarded with the response.
+    NAV series lookups by code, per-fund benchmark resolution, repeated scalar
+    lookups. No TTL and no eviction: the store is discarded with the response.
+
+    **Arguments must be key-safe.** Do not decorate a function whose arguments are
+    DataFrames, Series or arrays: their reprs are truncated, so two different inputs
+    can produce the same key. Rather than risk that, such a call now bypasses the
+    memo entirely and computes directly (see UnsafeCacheKey). For frame-keyed
+    caching use a content fingerprint - domains/mutual_funds/derived.py shows the
+    pattern with pd.util.hash_pandas_object.
+
+    Note this decorator is only correct inside a request handler. contextvars do not
+    propagate into concurrent.futures worker threads, so a function called from a
+    ThreadPoolExecutor sees no store and silently runs uncached - which is safe, just
+    not useful.
     """
     def decorator(func: Callable) -> Callable:
         ns = namespace or f"{func.__module__}.{func.__qualname__}"
@@ -283,7 +346,14 @@ def request_memo(namespace: str = "") -> Callable:
             if store is None:
                 return func(*args, **kwargs)  # outside a request: no memo
 
-            key = f"{ns}|{cache_key(*args, **kwargs)}"
+            try:
+                key = f"{ns}|{cache_key(*args, **kwargs)}"
+            except UnsafeCacheKey as e:
+                # Fail open to correctness: compute rather than risk a key collision
+                # returning another caller's result.
+                logger.warning("[L0] bypassing memo for %s: %s", ns, e)
+                return func(*args, **kwargs)
+
             if key in store:
                 return _copy_out(store[key])
 
@@ -510,10 +580,23 @@ def cached(ttl: int = 300, namespace: str = "", store: Optional[ProcessCache] = 
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            key = f"{ns}|{cache_key(*args, **kwargs)}"
+            try:
+                key = f"{ns}|{cache_key(*args, **kwargs)}"
+            except UnsafeCacheKey as e:
+                # Same policy as request_memo: an argument we cannot key safely means
+                # no caching, not a 500. Without this, decorating any function that
+                # takes a DataFrame turns every call into an error.
+                logger.warning("[L1] bypassing cache for %s: %s", ns, e)
+                return func(*args, **kwargs)
             return target.get_or_compute(key, lambda: func(*args, **kwargs), ttl)
 
-        wrapper.cache_delete = lambda *a, **k: target.delete(f"{ns}|{cache_key(*a, **k)}")  # type: ignore[attr-defined]
+        def _cache_delete(*a, **k):
+            try:
+                target.delete(f"{ns}|{cache_key(*a, **k)}")
+            except UnsafeCacheKey:
+                pass  # nothing was cached under an unsafe key, so nothing to delete
+
+        wrapper.cache_delete = _cache_delete  # type: ignore[attr-defined]
         wrapper.cache_stats = target.stats  # type: ignore[attr-defined]
         return wrapper
 
@@ -541,6 +624,7 @@ def clear_all_caches() -> None:
 __all__ = [
     "CACHE_CONFIG",
     "cache_key",
+    "UnsafeCacheKey",
     "get_cache_headers",
     "ttl_for",
     "request_scope",

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Box, Paper, Typography, TextField, Skeleton } from '@mui/material'
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch'
 import { useSipProjection } from '../hooks/useData'
+import { useDebounce } from '../../../shared/hooks/useDebounce'
 import { fmtInr } from '../../../shared/utils/fmt'
 
 const inputSx = {
@@ -18,9 +19,19 @@ export default function GoalProjectorPanel() {
   const [stepupPct, setStepupPct] = useState(10)
   const [monthlySip, setMonthlySip] = useState(0) // 0 = use portfolio's own run-rate
 
-  const { data, isLoading, isFetching } = useSipProjection({
-    years, annual_return: annualReturn, stepup_pct: stepupPct, monthly_sip: monthlySip,
-  })
+  // All four values are query-key components, so an unheld number field fired a GET
+  // per digit — changing "12" to "13.5" cost four projections. Debounced rather than
+  // committed on blur so the projection still updates as you explore.
+  //
+  // The params object MUST be memoized: useDebounce compares by identity, so a fresh
+  // literal each render would restart the timer every render and never settle.
+  const params = useMemo(
+    () => ({ years, annual_return: annualReturn, stepup_pct: stepupPct, monthly_sip: monthlySip }),
+    [years, annualReturn, stepupPct, monthlySip],
+  )
+  const debounced = useDebounce(params, 400)
+
+  const { data, isLoading, isFetching } = useSipProjection(debounced)
 
   return (
     <Paper sx={{

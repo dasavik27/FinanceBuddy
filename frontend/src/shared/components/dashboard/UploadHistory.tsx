@@ -30,7 +30,9 @@ const formatDate = (dateString: string) => {
 
 export default function UploadHistory() {
   const currentSessionId = useSessionId()
-  const { setSessionById, setSession, activeModule } = useAppStore()
+  const setSessionById = useAppStore((s) => s.setSessionById)
+  const setSession = useAppStore((s) => s.setSession)
+  const activeModule = useAppStore((s) => s.activeModule)
   const [history, setHistory] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [comparingWith, setComparingWith] = useState<string | null>(null)

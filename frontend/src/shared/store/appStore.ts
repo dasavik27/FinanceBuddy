@@ -1,8 +1,17 @@
 import api from '../api/client'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import CryptoJS from 'crypto-js'
+// Deep imports, not the `CryptoJS` default barrel. crypto-js is CommonJS, so the
+// barrel form defeats tree-shaking and pulls in every cipher, hash and mode — and
+// this module is in the entry graph via App.tsx, so it lands in the first-paint
+// chunk.
+import AES from 'crypto-js/aes'
+import Utf8 from 'crypto-js/enc-utf8'
 
+// NOTE: this is obfuscation, not encryption. The key ships in the JavaScript bundle,
+// so anyone with access to the device can decrypt the persisted slice in one line.
+// It is kept only so the PAN is not sitting in localStorage as clear text for casual
+// inspection; do not treat it as at-rest protection. See SECURITY.md.
 const SECRET_KEY = 'FINANCE_BUDDY_SECURE_STORAGE_KEY_2026'
 
 const encryptedStorage = {
@@ -10,14 +19,14 @@ const encryptedStorage = {
     const encrypted = localStorage.getItem(name)
     if (!encrypted) return null
     try {
-      const decrypted = CryptoJS.AES.decrypt(encrypted, SECRET_KEY).toString(CryptoJS.enc.Utf8)
+      const decrypted = AES.decrypt(encrypted, SECRET_KEY).toString(Utf8)
       return decrypted || null
     } catch {
       return null
     }
   },
   setItem: (name: string, value: string): void => {
-    const encrypted = CryptoJS.AES.encrypt(value, SECRET_KEY).toString()
+    const encrypted = AES.encrypt(value, SECRET_KEY).toString()
     localStorage.setItem(name, encrypted)
   },
   removeItem: (name: string): void => {
@@ -57,7 +66,7 @@ interface AppState {
   lastSynced: number
   setSession: (id: string, type: string, data: any) => void
   setSessionById: (id: string, type: string) => void
-  clearSession: (type: string) => void
+  clearSession: (type?: string) => void
   clearAllSessionsByPan: (pan: string) => void
   setFilters: (f: Partial<Filters>) => void
   triggerRefresh: () => void
@@ -82,7 +91,11 @@ export const useAppStore = create<AppState>()(
       setTaxRegime: (regime) => set({ taxRegime: regime }),
 
       activeModule: 'mutual_funds',
-      setActiveModule: (module) => set({ activeModule: module }),
+      // No-op when unchanged. Each domain dashboard calls this from a mount effect, so
+      // it fired on every navigation and every remount — and any set() produces a new
+      // state object, waking every subscriber even though nothing changed.
+      setActiveModule: (module) =>
+        set((s) => (s.activeModule === module ? s : { activeModule: module })),
 
       mfSessionId: null,
       taxSessionId: null,
@@ -128,14 +141,23 @@ export const useAppStore = create<AppState>()(
           filters: { benchmark: 'Nifty 50', categories: [], amcs: [], plan: 'All', minAlloc: 0 },
         })),
 
+      // `type` is optional: omitted (or an unrecognized module such as
+      // 'indian_stocks', which owns no session id) clears BOTH. The previous version
+      // only branched on the two known modules, so signing out while the stocks module
+      // was active silently cleared neither session — the same class of no-op as
+      // passing a MouseEvent in here, just narrower.
       clearSession: (type) =>
-        set((state) => ({
-          mfSessionId: type === 'mutual_funds' ? null : state.mfSessionId,
-          taxSessionId: type === 'tax_expert' ? null : state.taxSessionId,
-          parseData: null, 
-          isPartial: false, 
-          lastSynced: Date.now() 
-        })),
+        set((state) => {
+          const clearsMf = !type || type === 'mutual_funds' || type === 'indian_stocks'
+          const clearsTax = !type || type === 'tax_expert' || type === 'indian_stocks'
+          return {
+            mfSessionId: clearsMf ? null : state.mfSessionId,
+            taxSessionId: clearsTax ? null : state.taxSessionId,
+            parseData: null,
+            isPartial: false,
+            lastSynced: Date.now(),
+          }
+        }),
         
       clearAllSessionsByPan: (panToClear: string) => {
         const state = get()

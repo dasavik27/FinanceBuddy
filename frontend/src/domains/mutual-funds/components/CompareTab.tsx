@@ -25,6 +25,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { useHoldings, usePerformance } from '../hooks/useData'
+import { useDebounce } from '../../../shared/hooks/useDebounce'
 import { useSessionId, useAppStore } from '../../../shared/store/appStore'
 import { apiClient } from '../../../shared/api/client'
 import { SectionHeader, VerdictChip, MetricCard, GlassTableContainer, GlassHeader, OverlayLoader, InfoTooltip } from '../../../shared/components/ui'
@@ -75,10 +76,14 @@ export default function CompareTab() {
   const allHoldings = holdData?.holdings ?? []
   const fundNames = allHoldings.map((h: any) => h.Fund)
 
+  // One /compare/search per keystroke before this, all queued behind one worker.
+  const debouncedExtSearch = useDebounce(extSearch, 300)
+
   const { data: searchRes } = useQuery({
-    queryKey: ['tickerSearch', extSearch],
-    queryFn: () => apiClient.searchTicker(extSearch),
-    enabled: extSearch.length >= 3,
+    queryKey: ['tickerSearch', debouncedExtSearch],
+    queryFn: () => apiClient.searchTicker(debouncedExtSearch),
+    enabled: debouncedExtSearch.length >= 3,
+    gcTime: 60 * 1000,
   })
 
   // 1. Identify all assets for historical fetching
@@ -119,6 +124,30 @@ export default function CompareTab() {
 
   const historiesFetching = historyResults.some((r: any) => r.isFetching) || rollingResults.some((r: any) => r.isFetching)
 
+  // useQueries returns a NEW array (with new result wrapper objects) on every render,
+  // so using it directly as a memo dependency meant the memo never cached — it
+  // recomputed on every render, including a full calculateDrawdown pass over up to
+  // 1,825 daily NAVs per selected asset. Depending on the extracted `.data`
+  // references instead makes the dependency change only when data actually changes.
+  //
+  // A `.map(r => r.data)` still allocates a new array each render, so it is itself
+  // memoized against a cheap identity signature of the underlying data.
+  // The asset ids are part of the signature, not just the timestamps. Timestamps alone
+  // are ambiguous: several entries are 0 while pending, and parallel fetches routinely
+  // resolve within the same millisecond — so swapping one asset for another could leave
+  // the signature unchanged. `histories` would then stay stale while `allMatrix`
+  // recomputed against the new `selectedAssets`, and `histories[i]` would map one
+  // fund's price history onto a different fund's row: wrong drawdown and return figures
+  // rendered as fact.
+  const assetSignature = selectedAssets.map((a: any) => a.id).join('|')
+  const historySignature = assetSignature + '::' + historyResults.map((r: any) => r.dataUpdatedAt ?? 0).join('|')
+  const rollingSignature = assetSignature + '::' + rollingResults.map((r: any) => r.dataUpdatedAt ?? 0).join('|')
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const histories = useMemo(() => historyResults.map((r: any) => r.data), [historySignature])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rollings = useMemo(() => rollingResults.map((r: any) => r.data), [rollingSignature])
+
   const cleanCoreName = (name: string) => {
     if (!name) return ''
     return name.toLowerCase()
@@ -148,7 +177,7 @@ export default function CompareTab() {
         const intersection = tokensX.filter(t => tokensA.includes(t))
         return (intersection.length / Math.max(tokensX.length, tokensA.length)) >= 0.6
       })
-      const hist = historyResults[i]?.data ?? {}
+      const hist = histories[i] ?? {}
       const isBench = asset.type === 'bench'
       const bStats: any = (perfData as any)?.benchmark_stats
       const trailingDict: Record<string, number> = {}
@@ -205,27 +234,40 @@ export default function CompareTab() {
         },
       }
     })
-  }, [selectedAssets, allHoldings, perfData, historyResults])
+  }, [selectedAssets, allHoldings, perfData, histories])
+
+  // The three sandbox sliders call their setters continuously while dragging, and this
+  // projection rebuilds a row per year per selected asset. Feeding the raw values in
+  // meant every pixel of drag recomputed the projection and re-rendered an AreaChart,
+  // a RadarChart and a BarChart — enough to visibly lock the tab.
+  //
+  // Debounced rather than switched to onChangeCommitted so the value labels above each
+  // slider stay live while dragging; only the projection waits.
+  const simParams = useMemo(
+    () => ({ sip: sipAmount, lumpsum: lumpsumAmount, years: simYears }),
+    [sipAmount, lumpsumAmount, simYears],
+  )
+  const simSettled = useDebounce(simParams, 200)
 
   const simCurveData = useMemo(() => {
-    const yearsArr = Array.from({ length: simYears + 1 }, (_, i) => i)
+    const yearsArr = Array.from({ length: simSettled.years + 1 }, (_, i) => i)
     return yearsArr.map((y: number) => {
       const row: any = { year: `Year ${y}`, rawYear: y }
       allMatrix.forEach((m: any) => {
         const retStr = m.data['3Y Ret'] !== '—' ? m.data['3Y Ret'] : (m.data['1Y Ret'] !== '—' ? m.data['1Y Ret'] : '12%')
         const rateNum = parseFloat(retStr.replace(/[^0-9.-]/g, '')) || 12.0
         const r = rateNum / 100.0
-        
-        let fv = lumpsumAmount * Math.pow(1 + r, y)
+
+        let fv = simSettled.lumpsum * Math.pow(1 + r, y)
         if (r > 0 && y > 0) {
-          const annualSip = sipAmount * 12
+          const annualSip = simSettled.sip * 12
           fv += annualSip * ((Math.pow(1 + r, y) - 1) / r) * (1 + r)
         }
         row[m.id] = Math.round(fv)
       })
       return row
     })
-  }, [allMatrix, sipAmount, lumpsumAmount, simYears])
+  }, [allMatrix, simSettled])
 
 
 
@@ -240,12 +282,22 @@ export default function CompareTab() {
     })
   }, [allMatrix])
 
+  // Was an inline array literal in the JSX, so recharts received a new `data` prop on
+  // every render and re-diffed all five axes even when nothing had changed.
+  const radarData = useMemo(() => [
+    { metric: 'Alpha', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.AlphaVal + 10) * 5))])) },
+    { metric: 'Sharpe', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, m.data.SharpeVal * 40))])) },
+    { metric: 'Sortino', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.SortinoVal ?? 0) * 30))])) },
+    { metric: 'Consistency', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, m.data.ConsistVal * 10])) },
+    { metric: 'Stability', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, 100 - m.data.VolVal * 3)])) },
+  ], [allMatrix])
+
   const rollingChartData = useMemo(() => {
     const dateSet = new Set<string>()
     const maps: Record<string, Map<string, number>> = {}
 
     selectedAssets.forEach((asset: any, idx: number) => {
-      const res = rollingResults[idx]?.data
+      const res = rollings[idx]
       if (res && res.fund_series?.length) {
         const m = new Map<string, number>()
         res.fund_series.forEach((pt: any) => {
@@ -273,7 +325,7 @@ export default function CompareTab() {
       })
       return row
     })
-  }, [selectedAssets, rollingResults])
+  }, [selectedAssets, rollings])
 
   const trendData = useMemo(() => {
     if (activeTrend === 'Trailing' || activeTrend === 'Rolling') return []
@@ -478,13 +530,7 @@ export default function CompareTab() {
                       <Paper className="glass" sx={{ p: 3, height: '100%', minHeight: 400 }}>
                         <GlassHeader label="Risk-Return Radar" icon={AutoAwesomeIcon} />
                         <ResponsiveContainer width="100%" height={320}>
-                          <RadarChart data={[
-                            { metric: 'Alpha', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.AlphaVal + 10) * 5))])) },
-                            { metric: 'Sharpe', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, m.data.SharpeVal * 40))])) },
-                            { metric: 'Sortino', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, Math.min(100, (m.data.SortinoVal ?? 0) * 30))])) },
-                            { metric: 'Consistency', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, m.data.ConsistVal * 10])) },
-                            { metric: 'Stability', ...Object.fromEntries(allMatrix.map((m: any) => [m.id, Math.max(0, 100 - m.data.VolVal * 3)])) },
-                          ]}>
+                          <RadarChart data={radarData}>
                             <PolarGrid stroke="rgba(255,255,255,0.1)" />
                             <PolarAngleAxis dataKey="metric" tick={{ fill: '#94A3B8', fontSize: 11, fontWeight: 700 }} />
                             {allMatrix.map((m: any) => (

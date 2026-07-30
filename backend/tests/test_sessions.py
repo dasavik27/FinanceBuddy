@@ -239,6 +239,12 @@ def test_evicted_session_is_rehydrated_from_disk(clean_store, monkeypatch):
 
     monkeypatch.setattr(sessions.storage, "load_session", fake_load)
     monkeypatch.setattr(sessions, "Portfolio", Stub)
+    # The disk path now authorizes against the registry before loading frames, so the
+    # session has to exist there. That requirement is the fix for a real leak: frames
+    # whose registry row has been deleted must not be loadable, because with the row
+    # gone there is nothing left to say who owns them. Unowned (None) keeps this test
+    # about rehydration rather than about authorization.
+    monkeypatch.setattr(sessions.storage, "get_session_owner", lambda sid: (True, None))
 
     sessions.get_session("gone")
     assert loaded == ["gone"]

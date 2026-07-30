@@ -16,7 +16,8 @@ import { ErrorBoundary } from '../../../shared/components/ui'
 export default function TaxExpertDashboard() {
   const sid = useTaxSessionId()
   const setActiveModule = useAppStore((s) => s.setActiveModule)
-  const { setSession, clearSession } = useAppStore()
+  const setSession = useAppStore((s) => s.setSession)
+  const clearSession = useAppStore((s) => s.clearSession)
   const [sessionExpired, setSessionExpired] = useState(false)
 
   useEffect(() => {

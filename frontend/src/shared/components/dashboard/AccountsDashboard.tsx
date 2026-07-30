@@ -20,7 +20,9 @@ export default function AccountsDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ['accounts-summary'],
     queryFn: () => apiClient.getAccountsSummary(),
-    refetchInterval: 10000 // Refresh every 10s just in case
+    // No polling. This data only changes when the user themselves purges or clears,
+    // and both mutations below already invalidate this key. A 10s interval was 6
+    // requests/minute at a single-worker backend for data that cannot change on its own.
   })
 
   const purgeMutation = useMutation({

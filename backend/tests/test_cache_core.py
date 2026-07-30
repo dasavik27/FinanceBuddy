@@ -61,6 +61,15 @@ def test_unknown_cache_type_defaults_to_no_store():
 
 
 def test_public_only_for_user_independent_market_data():
+    """
+    An allowlist, so adding a `public` type is a deliberate act rather than a typo.
+
+    Each name below has been checked to contain only data that is identical for every
+    user. Note the limit of this guard: it validates the *policy table*, not what a
+    route actually puts in the body. `/benchmark-overlay` shipped a user's portfolio
+    curve under `comparison_data` and this test could not see it - that is what
+    tests/test_cache_headers_routes.py exists for.
+    """
     for cache_type, policy in CACHE_CONFIG.items():
         if policy.get("visibility") == "public":
             assert cache_type in {
@@ -68,7 +77,19 @@ def test_public_only_for_user_independent_market_data():
                 "market_indices",
                 "live_navs",
                 "comparison_data",
+                # A live index quote (Nifty level + 1D change). Same for everyone; 60s TTL.
+                "market_quote",
             }, f"{cache_type} marked public - confirm it contains no user-specific data"
+
+
+def test_market_quote_is_short_lived():
+    """
+    A live quote must not inherit the 24h `immutable` policy that suits settled
+    historical series - the UI polls it every 60 seconds.
+    """
+    assert CACHE_CONFIG["market_quote"]["ttl"] <= 300
+    header = get_cache_headers("market_quote")["Cache-Control"]
+    assert "immutable" not in header
 
 
 def test_every_configured_type_declares_visibility():

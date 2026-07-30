@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { apiClient } from '../../../shared/api/client'
 import { useSessionId, useFilters } from '../../../shared/store/appStore'
 
@@ -54,6 +54,10 @@ export function useHoldings(extra: Record<string, any> = {}) {
     queryKey: ['holdings', sid, p, extra],
     queryFn: () => apiClient.getHoldings(sid!, { ...p, ...extra }),
     enabled: !!sid,
+    // The search box is debounced, so a settled keystroke still changes this key.
+    // Without keepPreviousData the grid unmounts to a loading state on every change;
+    // with it, the previous rows stay visible until the new ones arrive.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -180,7 +184,9 @@ export function useFundInsights(isin: string, name: string = '') {
     queryKey: ['fund-insights', sid, isin, name],
     queryFn: () => apiClient.getFundInsights(sid!, isin, { name }),
     enabled: !!sid && !!isin && isin !== 'N/A',
-    staleTime: 1000, // Reduced for verification
+    // Was 1s ("Reduced for verification"), which meant reopening the same fund's
+    // drawer refetched every time. The underlying NAV data is end-of-day.
+    staleTime: 10 * 60 * 1000,
   })
 }
 export function useTransactions(fund = '') {

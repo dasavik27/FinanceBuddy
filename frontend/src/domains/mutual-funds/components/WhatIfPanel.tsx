@@ -4,6 +4,7 @@ import { Box, Paper, Typography, TextField, Autocomplete, Grid, Chip, CircularPr
 import ScienceIcon from '@mui/icons-material/Science'
 import { apiClient } from '../../../shared/api/client'
 import { useWhatIf } from '../hooks/useData'
+import { useDebounce } from '../../../shared/hooks/useDebounce'
 import { fmtInr } from '../../../shared/utils/fmt'
 
 export default function WhatIfPanel() {
@@ -12,10 +13,17 @@ export default function WhatIfPanel() {
   const [monthlyAmount, setMonthlyAmount] = useState(10000)
   const [years, setYears] = useState(5)
 
+  // Debounced before it reaches the key: typing a fund name previously issued one
+  // /compare/search per keystroke at a single-worker backend.
+  const debouncedQuery = useDebounce(query, 300)
+
   const { data: searchRes, isFetching: searching } = useQuery({
-    queryKey: ['whatIfSearch', query],
-    queryFn: () => apiClient.searchTicker(query),
-    enabled: query.length >= 3 && !selected,
+    queryKey: ['whatIfSearch', debouncedQuery],
+    queryFn: () => apiClient.searchTicker(debouncedQuery),
+    enabled: debouncedQuery.length >= 3 && !selected,
+    // Search results for a given string do not change minute to minute, and this
+    // drops the per-keystroke entries out of the cache sooner.
+    gcTime: 60 * 1000,
   })
   const options = searchRes?.results ?? []
 

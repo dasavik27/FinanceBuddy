@@ -140,7 +140,7 @@ def _hermetic(monkeypatch):
 
     for name in (
         "fetch_benchmark_series", "_fetch_benchmark_series_uncached", "_fetch_yahoo_series",
-        "_fetch_nselib_series", "_fetch_mf_nav_series",
+        "_fetch_mf_nav_series",
     ):
         monkeypatch.setattr(market_indices, name, _network_forbidden, raising=True)
 
