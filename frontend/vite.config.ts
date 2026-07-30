@@ -1,9 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-
+// Force Vite to clear its cache to fix the styled_default bug
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    force: true,
+  },
   build: {
+
     // Split the heavy, rarely-changing vendor libraries out of the app chunk so
     // they stay cached across deploys instead of being re-downloaded whenever
     // application code changes. Without this everything landed in one bundle.
@@ -11,7 +15,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@emotion/react', '@emotion/styled'],
           charts: ['recharts'],
           motion: ['framer-motion'],
           data: ['@tanstack/react-query', 'axios', 'zustand'],

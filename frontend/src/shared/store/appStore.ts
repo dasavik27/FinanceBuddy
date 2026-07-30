@@ -35,6 +35,12 @@ const encryptedStorage = {
 }
 
 
+interface GoogleUser {
+  email: string
+  name: string
+  picture_url: string
+}
+
 interface Filters {
   benchmark: string
   categories: string[]
@@ -44,6 +50,18 @@ interface Filters {
 }
 
 interface AppState {
+  // ── Google OAuth ──────────────────────────────────────────────────────────
+  googleUser: GoogleUser | null
+  /** Short-lived JWT. Stored in memory only — never persisted to disk/localStorage. */
+  accessToken: string | null
+  /** Opaque refresh token. Persisted (encrypted) to survive page reloads. */
+  refreshToken: string | null
+  setGoogleAuth: (user: GoogleUser, accessToken: string, refreshToken: string, pan: string | null) => void
+  clearGoogleAuth: () => void
+  setAccessToken: (token: string) => void
+  isAuthenticated: boolean
+
+  // ── Identity ──────────────────────────────────────────────────────────────
   pan: string | null
   setPan: (pan: string | null) => void
 
@@ -81,8 +99,23 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
+      // ── Google OAuth ────────────────────────────────────────────────────
+      googleUser: null,
+      accessToken: null,   // in memory only
+      refreshToken: null,  // persisted (encrypted)
+      isAuthenticated: false,
+
+      setGoogleAuth: (user, accessToken, refreshToken, pan) =>
+        set({ googleUser: user, accessToken, refreshToken, pan, isAuthenticated: true }),
+
+      clearGoogleAuth: () =>
+        set({ googleUser: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
+
+      setAccessToken: (token) => set({ accessToken: token }),
+
+      // ── PAN (legacy + linked via Google) ───────────────────────────────
       pan: null,
-      setPan: (pan) => set({ pan }),
+      setPan: (pan) => set({ pan, isAuthenticated: true }),
 
       taxSlab: 30,
       setTaxSlab: (slab) => set({ taxSlab: slab }),
@@ -175,8 +208,12 @@ export const useAppStore = create<AppState>()(
 
       logout: () => {
         try {
-          const pan = get().pan;
-          if (pan) {
+          const { pan, refreshToken } = get();
+          // Revoke refresh token on backend if we have one (Google flow)
+          if (refreshToken) {
+            api.post('/auth/google/logout', { refresh_token: refreshToken }).catch(console.error);
+          } else if (pan) {
+            // Legacy PAN-only logout
             api.post('/auth/logout', { pan }).catch(console.error);
           }
           localStorage.clear()
@@ -186,6 +223,10 @@ export const useAppStore = create<AppState>()(
         }
         set({
           pan: null,
+          googleUser: null,
+          accessToken: null,
+          refreshToken: null,
+          isAuthenticated: false,
           mfSessionId: null,
           taxSessionId: null,
           parseData: null,
@@ -206,9 +247,12 @@ export const useAppStore = create<AppState>()(
     {
       name: 'finance-buddy-storage',
       storage: createJSONStorage(() => encryptedStorage),
-      partialize: (state) => ({ 
-        pan: state.pan, 
-        taxRegime: state.taxRegime, 
+      partialize: (state) => ({
+        pan: state.pan,
+        // Refresh token persisted so sessions survive page reload.
+        // Access token is intentionally NOT persisted (stays in memory only).
+        refreshToken: state.refreshToken,
+        taxRegime: state.taxRegime,
         taxSessionId: state.taxSessionId,
         compareFunds: state.compareFunds,
         compareBench: state.compareBench
@@ -237,3 +281,7 @@ export const useSetTaxSlab = () => useAppStore(s => s.setTaxSlab)
 export const useTaxRegime = () => useAppStore(s => s.taxRegime)
 export const useSetTaxRegime = () => useAppStore(s => s.setTaxRegime)
 export const useClearAllSessionsByPan = () => useAppStore(s => s.clearAllSessionsByPan)
+export const useGoogleUser = () => useAppStore(s => s.googleUser)
+export const useIsAuthenticated = () => useAppStore(s => s.isAuthenticated)
+export const useAccessToken = () => useAppStore(s => s.accessToken)
+export const useRefreshToken = () => useAppStore(s => s.refreshToken)

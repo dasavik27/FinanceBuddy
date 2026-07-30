@@ -7,16 +7,94 @@ import type {
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
+// ── Request interceptor: attach auth credential ──────────────────────────────
+// Priority: Bearer JWT (Google OAuth) > X-User-PAN (legacy/local dev)
 api.interceptors.request.use((config) => {
-  const pan = useAppStore.getState().pan
-  if (pan) {
+  const { accessToken, pan } = useAppStore.getState()
+  if (accessToken) {
+    config.headers['Authorization'] = `Bearer ${accessToken}`
+  } else if (pan) {
     config.headers['X-User-PAN'] = pan
   }
   return config
 })
 
-// ── API calls ────────────────────────────────────────────────────────────────
+// ── Response interceptor: auto-refresh JWT on 401 ────────────────────────────
+let _refreshing: Promise<string | null> | null = null
+
+api.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config
+    // Only attempt one refresh per request, only on 401, skip auth endpoints.
+    if (
+      error?.response?.status === 401 &&
+      !original._retried &&
+      !original.url?.includes('/auth/')
+    ) {
+      original._retried = true
+      const { refreshToken, setAccessToken, clearGoogleAuth } = useAppStore.getState()
+      if (!refreshToken) {
+        clearGoogleAuth()
+        return Promise.reject(error)
+      }
+      try {
+        // Deduplicate concurrent refresh calls
+        if (!_refreshing) {
+          _refreshing = api
+            .post('/auth/refresh', { refresh_token: refreshToken })
+            .then((r) => {
+              setAccessToken(r.data.access_token)
+              // Also update refresh token in store if backend rotated it
+              useAppStore.setState({ refreshToken: r.data.refresh_token })
+              return r.data.access_token as string
+            })
+            .catch(() => null)
+            .finally(() => { _refreshing = null })
+        }
+        const newToken = await _refreshing
+        if (!newToken) {
+          clearGoogleAuth()
+          return Promise.reject(error)
+        }
+        original.headers['Authorization'] = `Bearer ${newToken}`
+        return api(original)
+      } catch {
+        clearGoogleAuth()
+        return Promise.reject(error)
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
 export const apiClient = {
+  // ── Google OAuth ──────────────────────────────────────────────────────────
+  /** Returns the Google authorization URL to redirect the user to. */
+  getGoogleLoginUrl: async (): Promise<{ url: string }> => {
+    const { data } = await api.get('/auth/google/login')
+    return data
+  },
+
+  /** Exchange the authorization code Google returned for our JWT tokens. */
+  googleCallback: async (code: string): Promise<any> => {
+    const { data } = await api.post('/auth/google/callback', { code })
+    return data
+  },
+
+  /** Link a PAN to the authenticated Google account (called once, first login). */
+  linkPan: async (pan: string, refreshToken: string): Promise<any> => {
+    const { data } = await api.post('/auth/link-pan', { pan, refresh_token: refreshToken })
+    return data
+  },
+
+  /** Check if Google OAuth is configured on the backend and get the client ID. */
+  getGoogleConfig: async (): Promise<{ configured: boolean; client_id?: string }> => {
+    const { data } = await api.get('/auth/google/config')
+    return data
+  },
+
+  // ── CAS / Mutual Funds ────────────────────────────────────────────────────
   /** Parses CAS PDF statement and initializes a portfolio session. */
   parseFile: async (file: File, password: string, uploadType: string = 'mutual_funds'): Promise<ParseResponse> => {
     const fd = new FormData()

@@ -19,15 +19,25 @@ import os
 import time
 from contextlib import asynccontextmanager
 
+# Load .env manually to avoid python-dotenv dependency
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(env_path):
+    with open(env_path) as f:
+        for line in f:
+            if line.strip() and not line.startswith('#'):
+                key, _, value = line.partition('=')
+                if key and value:
+                    os.environ[key.strip()] = value.strip()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from shared.identity import identity_scope, normalize_pan
+from shared.identity import identity_scope, normalize_pan, decode_jwt_pan
 from shared.services.cache import cache_stats, request_scope
 
 # Shared Infrastructure Gateways
-from shared.routers import auth, market, accounts, history
+from shared.routers import auth, google_auth, market, accounts, history
 
 # Domain: Mutual Funds
 from domains.mutual_funds.routers import (
@@ -166,6 +176,10 @@ class IdentityMiddleware:
     """
     Binds the caller's asserted PAN for the request (shared/identity.py).
 
+    Priority order:
+      1. Authorization: Bearer <JWT>  — Google OAuth flow (verified, preferred)
+      2. X-User-PAN header            — legacy PAN-only flow (local dev / tests)
+
     Ownership is enforced deep in the data-access layer rather than per route, so
     the identity has to be available there without threading a parameter through
     every signature. Same ContextVar mechanism as the L0 memo below.
@@ -178,13 +192,21 @@ class IdentityMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        raw = None
+        auth_header = None
+        pan_header  = None
         for key, value in scope.get("headers", []):
-            if key == b"x-user-pan":
-                raw = value.decode("latin-1")
-                break
+            if key == b"authorization":
+                auth_header = value.decode("latin-1")
+            elif key == b"x-user-pan":
+                pan_header = value.decode("latin-1")
 
-        with identity_scope(normalize_pan(raw)):
+        # JWT takes priority: it is cryptographically verified.
+        pan = decode_jwt_pan(auth_header)
+        # Fall back to legacy header (local dev, unit tests, PAN-only login).
+        if pan is None:
+            pan = normalize_pan(pan_header)
+
+        with identity_scope(pan):
             await self.app(scope, receive, send)
 
 
@@ -258,10 +280,11 @@ app.add_middleware(RequestCacheMiddleware)
 # ────────────────────────────────────────────────────────────────────────────
 
 # Shared Infrastructure
-app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
-app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
-app.include_router(accounts.router,  prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
-app.include_router(history.router,   prefix="/history",   tags=["Infrastructure - History Timeline"])
+app.include_router(auth.router,         prefix="/auth",      tags=["Infrastructure - Authentication"])
+app.include_router(google_auth.router,  prefix="/auth",      tags=["Infrastructure - Google OAuth"])
+app.include_router(market.router,       prefix="/market",    tags=["Infrastructure - Live Market Feed"])
+app.include_router(accounts.router,     prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
+app.include_router(history.router,      prefix="/history",   tags=["Infrastructure - History Timeline"])
 
 # Domain: Mutual Funds
 app.include_router(portfolio.router,    prefix="/mutual-funds/portfolio",     tags=["Mutual Funds - Session Management"])

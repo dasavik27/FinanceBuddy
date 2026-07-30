@@ -56,6 +56,28 @@ instead of thrash. Raise it only alongside more CPU.
 | `FINANCEBUDDY_MAX_RESIDENT_SESSIONS` | `3` | Resident mutual-fund portfolios. Overflow rehydrates from SQLite. |
 | `FINANCEBUDDY_MAX_TAX_SESSIONS` | `8` | Resident tax sessions. Overflow rehydrates from SQLite. |
 | `FINANCEBUDDY_TAX_SESSION_TTL` | `86400` | Tax session idle TTL, seconds. |
+| `GOOGLE_CLIENT_ID` | (none) | Google OAuth Client ID for authentication. |
+| `GOOGLE_CLIENT_SECRET` | (none) | Google OAuth Client Secret. |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:5173/auth/callback` | **Must** match the environment's frontend domain. |
+| `JWT_SECRET` | (dev-secret) | Secret key to sign access tokens. **Must** be changed in prod. |
+
+## Environments (Local vs Production)
+
+The codebase natively supports environment separation via environment variables. You do not need to change code to deploy to production.
+
+### 1. Local Development (`.env`)
+- **Backend**: Uses a `.env` file (which is ignored by git) loaded automatically by `main.py`.
+- **Frontend**: By default, `VITE_API_URL` is empty, and Vite's proxy forwards `/api` to `localhost:8000`.
+- **Google OAuth**: `GOOGLE_REDIRECT_URI` defaults to `http://localhost:5173/auth/callback`. You configure this exactly as-is in the Google Cloud Console.
+
+### 2. Production (Render / Vercel)
+- **Backend (e.g. Render)**: Do NOT upload `.env`. Instead, add the variables directly in the Render dashboard:
+  - `FINANCEBUDDY_ALLOWED_ORIGINS=https://your-production-frontend.vercel.app`
+  - `GOOGLE_REDIRECT_URI=https://your-production-frontend.vercel.app/auth/callback`
+  - `JWT_SECRET=your_secure_random_string`
+- **Frontend (e.g. Vercel)**: In your Vercel project settings, set:
+  - `VITE_API_URL=https://your-production-backend.onrender.com`
+- **Google OAuth**: In Google Cloud Console, add `https://your-production-frontend.vercel.app/auth/callback` to the list of Authorized redirect URIs for your Client ID (or create a completely separate "Production" Client ID for better security isolation).
 
 ## Storage is ephemeral, and the app is built for that
 

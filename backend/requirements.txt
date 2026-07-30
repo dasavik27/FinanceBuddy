@@ -56,3 +56,8 @@ camelot-py==2.0.0
 # ── Testing ────────────────────────────────────────────────────────────────
 pytest>=9.0.0
 httpx>=0.28.1
+
+# ── Authentication ─────────────────────────────────────────────────────────
+# python-jose handles JWT sign/verify (HS256). The [cryptography] extra is
+# required for the RS256 path used to verify Google's own id_token signature.
+python-jose[cryptography]==3.3.0

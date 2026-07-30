@@ -132,6 +132,35 @@ def _init_db():
         # The dedup lookup is now scoped by (data_hash, pan_id). data_hash already has
         # a UNIQUE index, which serves it.
 
+        # ── OAuth / JWT tables ───────────────────────────────────────────────
+        # google_users: one row per Google account. pan_id is NULL until the user
+        # completes the PAN-linking step (first login only).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS google_users (
+                google_id   TEXT PRIMARY KEY,
+                email       TEXT NOT NULL,
+                name        TEXT,
+                picture_url TEXT,
+                pan_id      TEXT,
+                created_at  REAL DEFAULT (unixepoch()),
+                updated_at  REAL DEFAULT (unixepoch())
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_google_users_pan ON google_users(pan_id)")
+
+        # refresh_tokens: rotating tokens bound to a google_id. Only the hash is
+        # stored so a DB breach does not immediately yield usable tokens.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                token_hash  TEXT PRIMARY KEY,
+                google_id   TEXT NOT NULL,
+                expires_at  REAL NOT NULL,
+                revoked     INTEGER DEFAULT 0,
+                created_at  REAL DEFAULT (unixepoch())
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_google ON refresh_tokens(google_id)")
+
         _ensure_mf_indexes(conn)
 
 

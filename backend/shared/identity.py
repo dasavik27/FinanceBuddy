@@ -45,7 +45,7 @@ PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 #             These are trusted internal callers running in-process.
 #   None    - inside a request that presented no usable PAN. An anonymous HTTP
 #             caller. Must NOT reach an owned record.
-#   "ABC..." - inside a request asserting that PAN.
+#   "ABC...\" - inside a request asserting that PAN.
 #
 # Collapsing the first two would mean either locking internal callers out of their
 # own data or letting an anonymous HTTP request read anybody's. IdentityMiddleware
@@ -54,6 +54,31 @@ PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 _UNSET = "\x00__no_request__"
 
 _current_pan: ContextVar[str] = ContextVar("current_pan", default=_UNSET)
+
+
+def decode_jwt_pan(authorization_header: Optional[str]) -> Optional[str]:
+    """
+    Extract and verify the PAN from a Bearer JWT issued by google_auth.py.
+
+    Returns the PAN string on success, None if the header is absent, malformed,
+    expired, or has no PAN claim.  Intentionally does NOT raise so that callers
+    with a missing/invalid token fall through to the legacy X-User-PAN path.
+
+    Import is deferred to avoid a circular import: google_auth imports identity,
+    and jose is only available if python-jose is installed.
+    """
+    if not authorization_header or not authorization_header.startswith("Bearer "):
+        return None
+    token = authorization_header[len("Bearer "):]
+    try:
+        from shared.routers.google_auth import decode_access_token
+        payload = decode_access_token(token)
+        if payload is None:
+            return None
+        return normalize_pan(payload.get("pan"))
+    except Exception:
+        return None
+
 
 
 def normalize_pan(raw: Optional[str]) -> Optional[str]:

@@ -1,7 +1,8 @@
 import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { usePan } from './shared/store/appStore'
-import Landing   from './shared/components/Landing'
+import { useAppStore } from './shared/store/appStore'
+import Landing        from './shared/components/Landing'
+import AuthCallback   from './shared/components/AuthCallback'
 import { TabFallback } from './shared/components/ui'
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
@@ -12,15 +13,18 @@ const Layout    = lazy(() => import('./shared/components/layout/Layout'))
 const Dashboard = lazy(() => import('./shared/components/layout/Dashboard'))
 
 export default function App() {
-  const pan = usePan()
-  // A skeleton fallback rather than null: `null` renders a blank white screen for
-  // however long the dashboard chunk takes to arrive, which reads as a broken app on a
-  // slow connection.
+  // Accept both Google-authed users (isAuthenticated) and legacy PAN-only users (pan)
+  const isAuthenticated = useAppStore((s) => s.isAuthenticated)
+  const pan             = useAppStore((s) => s.pan)
+  const authed          = isAuthenticated || !!pan
+
   return (
     <Suspense fallback={<TabFallback />}>
       <Routes>
-        <Route path="/" element={pan ? <Navigate to="/dashboard" replace /> : <Landing />} />
-        <Route path="/dashboard/*" element={pan ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
+        <Route path="/"               element={authed ? <Navigate to="/dashboard" replace /> : <Landing />} />
+        {/* Google OAuth redirect handler — always accessible, no auth required */}
+        <Route path="/auth/callback"  element={<AuthCallback />} />
+        <Route path="/dashboard/*"    element={authed ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   )
