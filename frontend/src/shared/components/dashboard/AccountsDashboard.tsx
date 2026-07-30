@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, alpha, Tabs, Tab } from '@mui/material'
+import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, alpha } from '@mui/material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import DeleteIcon from '@mui/icons-material/Delete'
 import SecurityIcon from '@mui/icons-material/Security'
@@ -10,14 +10,12 @@ import CachedIcon from '@mui/icons-material/Cached'
 
 import { apiClient } from '../../api/client'
 import { useClearAllSessionsByPan, useLogout } from '../../store/appStore'
-import UploadHistory from './UploadHistory'
 
 export default function AccountsDashboard() {
   const queryClient = useQueryClient()
   const clearSessions = useClearAllSessionsByPan()
   const logout = useLogout()
   const [deletePan, setDeletePan] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState(0)
 
   const { data, isLoading } = useQuery({
     queryKey: ['accounts-summary'],
@@ -72,24 +70,7 @@ export default function AccountsDashboard() {
         </Typography>
       </Box>
 
-      <Paper className="glass" sx={{ mb: 4, borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)' }}>
-        <Tabs 
-          value={activeTab} 
-          onChange={(e, val) => setActiveTab(val)}
-          sx={{
-            minHeight: 56,
-            '& .MuiTab-root': { minHeight: 56, fontWeight: 700, textTransform: 'none', fontSize: '0.95rem' },
-            '& .MuiTabs-indicator': { height: 3, borderRadius: '3px 3px 0 0' }
-          }}
-        >
-          <Tab label="Data Vaults & Caches" />
-          <Tab label="Upload History & Recon" />
-        </Tabs>
-      </Paper>
-
-      {activeTab === 0 && (
-        <Box>
-          {accounts.length === 0 ? (
+      {accounts.length === 0 ? (
         <Paper className="glass" sx={{ p: 6, borderRadius: '24px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.05)' }}>
           <ShieldIcon sx={{ fontSize: 48, color: '#64748B', mb: 2 }} />
           <Typography variant="h6" sx={{ color: '#F8FAFC', fontWeight: 800, mb: 1 }}>No Active Accounts Found</Typography>
@@ -143,6 +124,8 @@ export default function AccountsDashboard() {
         </Grid>
       )}
 
+
+
       {/* Global Cache Management */}
       <Box sx={{ mt: 6 }}>
         <Typography variant="h6" sx={{ color: '#F8FAFC', fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -171,14 +154,6 @@ export default function AccountsDashboard() {
           </Button>
         </Paper>
       </Box>
-        </Box>
-      )}
-
-      {activeTab === 1 && (
-        <Box>
-          <UploadHistory />
-        </Box>
-      )}
 
       <Dialog 
         open={!!deletePan} 

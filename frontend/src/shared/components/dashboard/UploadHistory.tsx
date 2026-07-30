@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Box, Typography, Paper, Grid, Chip, Button, Stack, CircularProgress, Alert, Switch, FormControlLabel, IconButton, Tooltip } from '@mui/material'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Box, Typography, Paper, Grid, Chip, Button, Stack, CircularProgress, Alert, Switch, FormControlLabel, IconButton, Tooltip, Collapse } from '@mui/material'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useDropzone } from 'react-dropzone'
 import api, { apiClient } from '../../api/client'
 import { useSessionId, useAppStore } from '../../store/appStore'
 import HistoryIcon from '@mui/icons-material/History'
-import PersonIcon from '@mui/icons-material/Person'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
@@ -15,8 +16,10 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import TrendingDownIcon from '@mui/icons-material/TrendingDown'
 import SpeedIcon from '@mui/icons-material/Speed'
 import StarsIcon from '@mui/icons-material/Stars'
-import SavingsIcon from '@mui/icons-material/Savings'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import CloudUploadIcon from '@mui/icons-material/CloudUpload'
+import AddIcon from '@mui/icons-material/Add'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 
 const fmtInr = (v: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v || 0)
 
@@ -27,13 +30,45 @@ const formatDate = (dateString: string) => {
 
 export default function UploadHistory() {
   const currentSessionId = useSessionId()
-  const { setSessionById, activeModule } = useAppStore()
+  const { setSessionById, setSession, activeModule } = useAppStore()
   const [history, setHistory] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [comparingWith, setComparingWith] = useState<string | null>(null)
   const [compareResult, setCompareResult] = useState<any | null>(null)
   const [compareLoading, setCompareLoading] = useState(false)
   const [hideClosed, setHideClosed] = useState(true)
+
+  // ── Upload state ──
+  const [showUpload, setShowUpload] = useState(false)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadLoading, setUploadLoading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  const onDrop = useCallback((accepted: File[]) => {
+    if (accepted[0]) { setUploadFile(accepted[0]); setUploadError(null) }
+  }, [])
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop, accept: { 'application/pdf': ['.pdf'] }, maxFiles: 1,
+  })
+
+  const handleUpload = async () => {
+    if (!uploadFile) return
+    setUploadLoading(true); setUploadError(null)
+    try {
+      const data = await apiClient.parseFile(uploadFile, '', 'mutual_funds')
+      setSession(data.session_id, 'mutual_funds', data)
+      // Refresh history list
+      const hist = await apiClient.getHistory(activeModule)
+      setHistory(hist.history || [])
+      setShowUpload(false)
+      setUploadFile(null)
+    } catch (e: any) {
+      setUploadError(e?.response?.data?.detail ?? 'Failed to parse. Please check the file.')
+    } finally {
+      setUploadLoading(false)
+    }
+  }
 
   useEffect(() => {
     fetchHistory()
@@ -150,20 +185,106 @@ export default function UploadHistory() {
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', pb: 4 }}>
-      <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
-        <Box sx={{ width: 48, height: 48, borderRadius: '16px', bgcolor: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <HistoryIcon sx={{ color: '#6366F1', fontSize: 28 }} />
+
+      {/* ── Header + Import toggle ── */}
+      <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box sx={{ width: 48, height: 48, borderRadius: '16px', bgcolor: 'rgba(99,102,241,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <HistoryIcon sx={{ color: '#6366F1', fontSize: 28 }} />
+          </Box>
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 900, color: '#fff' }}>Statement History</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 600 }}>Restore a previous snapshot, import a new CAS, or run ledger reconciliation.</Typography>
+          </Box>
         </Box>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 900, color: '#fff' }}>Upload History & Recon</Typography>
-          <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 600 }}>Compare historical CAS uploads and view ledger deltas.</Typography>
-        </Box>
+        <Button
+          variant={showUpload ? 'contained' : 'outlined'}
+          startIcon={showUpload ? <ExpandMoreIcon /> : <AddIcon />}
+          onClick={() => { setShowUpload(v => !v); setUploadFile(null); setUploadError(null) }}
+          sx={{
+            borderRadius: '12px', fontWeight: 800, textTransform: 'none',
+            ...(showUpload
+              ? { background: 'linear-gradient(135deg,#6366F1,#4F46E5)', boxShadow: '0 6px 20px rgba(99,102,241,0.4)' }
+              : { borderColor: 'rgba(99,102,241,0.4)', color: '#818CF8', '&:hover': { borderColor: '#6366F1', bgcolor: 'rgba(99,102,241,0.08)' } }),
+          }}
+        >
+          {showUpload ? 'Hide Upload' : 'Import New CAS'}
+        </Button>
       </Box>
+
+      {/* ── Inline upload panel (collapsible) ── */}
+      <Collapse in={showUpload}>
+        <Paper className="glass" sx={{
+          p: 3, mb: 4, borderRadius: '20px',
+          border: '1px solid rgba(99,102,241,0.25)',
+          background: 'rgba(15,23,42,0.7)',
+        }}>
+          <Typography sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', mb: 2 }}>
+            Import New Statement
+          </Typography>
+
+          {uploadError && (
+            <Alert severity="error" sx={{ mb: 2, borderRadius: '12px' }}>{uploadError}</Alert>
+          )}
+
+          <Box
+            {...getRootProps()}
+            component={motion.div as any}
+            whileHover={{ scale: 1.005 }}
+            whileTap={{ scale: 0.99 }}
+            sx={{
+              border: `2px dashed ${isDragActive ? '#6366F1' : uploadFile ? '#4EDE93' : 'rgba(255,255,255,0.1)'}`,
+              borderRadius: '16px', p: 3, textAlign: 'center', cursor: 'pointer',
+              background: isDragActive ? 'rgba(99,102,241,0.07)' : uploadFile ? 'rgba(78,222,147,0.04)' : 'transparent',
+              transition: 'all 0.2s ease',
+              '&:hover': { borderColor: uploadFile ? '#4EDE93' : '#6366F1' },
+            }}
+          >
+            <input {...getInputProps()} />
+            {uploadFile ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                <CheckCircleIcon sx={{ color: '#4EDE93', fontSize: 24 }} />
+                <Box sx={{ textAlign: 'left' }}>
+                  <Typography sx={{ color: '#4EDE93', fontWeight: 800, fontSize: '0.9rem' }}>{uploadFile.name}</Typography>
+                  <Typography sx={{ color: '#64748B', fontSize: '0.75rem' }}>{(uploadFile.size / 1024).toFixed(0)} KB · Click to replace</Typography>
+                </Box>
+              </Box>
+            ) : (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                <CloudUploadIcon sx={{ color: '#6366F1', fontSize: 28 }} />
+                <Typography sx={{ color: '#94A3B8', fontWeight: 600, fontSize: '0.9rem' }}>
+                  {isDragActive ? 'Release to import' : 'Drag & drop your CAS PDF, or click to browse'}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          <AnimatePresence>
+            {uploadFile && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}>
+                <Button
+                  fullWidth variant="contained" onClick={handleUpload} disabled={uploadLoading}
+                  sx={{
+                    mt: 2, py: 1.3, borderRadius: '14px', fontWeight: 800, textTransform: 'none',
+                    background: 'linear-gradient(135deg,#6366F1,#4F46E5)',
+                    boxShadow: '0 6px 20px rgba(99,102,241,0.4)',
+                    '&:hover': { background: 'linear-gradient(135deg,#4F46E5,#4338CA)' },
+                  }}
+                >
+                  {uploadLoading ? <><CircularProgress size={16} sx={{ color: '#fff', mr: 1 }} />Analysing Portfolio...</> : 'Analyse & Switch to New Statement'}
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Paper>
+      </Collapse>
+
       {history.length === 0 && (
-        <Alert severity="info" sx={{ borderRadius: 3, bgcolor: 'rgba(255,255,255,0.05)', color: '#fff' }}>
-          No historical uploads found. Upload a CAS file to start tracking.
+        <Alert severity="info" sx={{ borderRadius: 3, bgcolor: 'rgba(255,255,255,0.05)', color: '#fff', mb: 3 }}>
+          No historical uploads found. Use "Import New CAS" above to start tracking.
         </Alert>
       )}
+
 
       <Grid container spacing={4}>
         {/* Timeline Column */}

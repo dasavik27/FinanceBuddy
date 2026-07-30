@@ -31,7 +31,7 @@ export const apiClient = {
   },
 
   getHistory: async (uploadType: string = 'mutual_funds'): Promise<any> => {
-    const { data } = await api.get('/history', {
+    const { data } = await api.get('/history/', {
       headers: {
         'X-Upload-Type': uploadType
       }

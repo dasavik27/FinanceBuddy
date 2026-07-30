@@ -1,9 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Box, Typography, Button, TextField, Alert, CircularProgress, Paper, Chip, Stack } from '@mui/material'
+import { Box, Typography, Button, Alert, CircularProgress, Paper, Chip, Stack } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
-import LockIcon from '@mui/icons-material/Lock'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import ShieldIcon from '@mui/icons-material/Shield'
 import HistoryIcon from '@mui/icons-material/History'
@@ -22,7 +21,6 @@ interface DocumentUploadProps {
 
 export default function DocumentUpload({ title, subtitle, dropText, dropSubText, uploadType }: DocumentUploadProps) {
   const [file, setFile] = useState<File | null>(null)
-  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<any[]>([])
@@ -59,7 +57,7 @@ export default function DocumentUpload({ title, subtitle, dropText, dropSubText,
     setLoading(true)
     setError(null)
     try {
-      const data = await apiClient.parseFile(file, password, uploadType)
+      const data = await apiClient.parseFile(file, '', uploadType)
       setSession(data.session_id, uploadType, data)
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to parse document. Check the file and password.')
@@ -174,22 +172,6 @@ export default function DocumentUpload({ title, subtitle, dropText, dropSubText,
               transition={{ duration: 0.3 }}
             >
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, mb: 3 }}>
-                <TextField
-                  fullWidth
-                  type="password"
-                  label="Document Password (Optional)"
-                  placeholder="ABCDE1234F"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
-                  sx={{
-                    '& .MuiOutlinedInput-root': { borderRadius: '16px', background: 'rgba(255,255,255,0.03)' },
-                  }}
-                  InputProps={{
-                    startAdornment: <LockIcon sx={{ mr: 1.5, color: '#6366F1' }} />,
-                  }}
-                />
-
                 <Button
                   fullWidth
                   variant="contained"

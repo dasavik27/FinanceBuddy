@@ -1,14 +1,16 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { Box, Tabs, Tab, Paper } from '@mui/material'
+import { Box, Tabs, Tab, Paper, Typography } from '@mui/material'
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import { useMfSessionId, useAppStore } from '../../../shared/store/appStore'
-import DocumentUpload from '../../../shared/components/dashboard/DocumentUpload'
+import MFUploadPanel from './MFUploadPanel'
 import OverviewTab    from './OverviewTab'
 import HoldingsTab    from './HoldingsTab'
 import PerformanceTab from './PerformanceTab'
 import CompareTab     from './CompareTab'
-import InsightsTab from './InsightsTab'
-import JourneyTab from './JourneyTab'
+import InsightsTab    from './InsightsTab'
+import JourneyTab     from './JourneyTab'
+import UploadHistory  from '../../../shared/components/dashboard/UploadHistory'
 import { ErrorBoundary } from '../../../shared/components/ui'
 
 export default function MutualFundsDashboard() {
@@ -21,23 +23,16 @@ export default function MutualFundsDashboard() {
     setActiveModule('mutual_funds')
   }, [setActiveModule])
 
+  // ── No session: show smart upload / history panel ──
   if (!sid) {
-    return (
-      <DocumentUpload 
-        title="Import Your Mutual Funds"
-        subtitle="Upload your detailed CAS PDF statement to generate your executive cockpit."
-        dropText="Drag & drop your CAS PDF"
-        dropSubText="or click anywhere in this box to browse from your device"
-        uploadType="mutual_funds"
-      />
-    )
+    return <MFUploadPanel />
   }
 
-  // Derive current tab from pathname
+  // ── Session active: full dashboard ──
   const pathParts = location.pathname.split('/')
   const currentTab = pathParts[pathParts.length - 1]
-  const tabValue = ['overview', 'holdings', 'performance', 'compare', 'journey', 'insights'].includes(currentTab) 
-    ? currentTab 
+  const tabValue = ['overview', 'holdings', 'performance', 'compare', 'journey', 'insights', 'history'].includes(currentTab)
+    ? currentTab
     : 'overview'
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
@@ -46,41 +41,53 @@ export default function MutualFundsDashboard() {
 
   return (
     <Box>
-      <Paper 
-        className="glass" 
-        sx={{ 
-          mb: 4, 
-          borderRadius: '16px', 
+      <Paper
+        className="glass"
+        sx={{
+          mb: 4,
+          borderRadius: '16px',
           border: '1px solid rgba(255,255,255,0.05)',
-          background: 'rgba(255,255,255,0.02)' 
+          background: 'rgba(255,255,255,0.02)',
         }}
       >
-        <Tabs 
-          value={tabValue} 
-          onChange={handleTabChange}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            minHeight: 56,
-            '& .MuiTab-root': {
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          {/* Module identity badge */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pl: 2, flexShrink: 0 }}>
+            <AccountBalanceIcon sx={{ color: '#6366F1', fontSize: 20 }} />
+            <Typography sx={{ fontWeight: 800, fontSize: '0.82rem', color: '#475569', letterSpacing: '0.06em', display: { xs: 'none', md: 'block' } }}>
+              MUTUAL FUNDS
+            </Typography>
+          </Box>
+
+          <Tabs
+            value={tabValue}
+            onChange={handleTabChange}
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{
               minHeight: 56,
-              fontWeight: 700,
-              textTransform: 'none',
-              fontSize: '0.95rem',
-            },
-            '& .MuiTabs-indicator': {
-              height: 3,
-              borderRadius: '3px 3px 0 0'
-            }
-          }}
-        >
-          <Tab label="Overview" value="overview" />
-          <Tab label="Holdings" value="holdings" />
-          <Tab label="Performance" value="performance" />
-          <Tab label="Compare" value="compare" />
-          <Tab label="Wealth Journey" value="journey" />
-          <Tab label="Insights & Rebalance" value="insights" />
-        </Tabs>
+              '& .MuiTab-root': {
+                minHeight: 56,
+                fontWeight: 700,
+                textTransform: 'none',
+                fontSize: '0.92rem',
+              },
+              '& .MuiTabs-indicator': {
+                height: 3,
+                borderRadius: '3px 3px 0 0',
+              },
+            }}
+          >
+            <Tab label="Overview"            value="overview"    />
+            <Tab label="Holdings"            value="holdings"    />
+            <Tab label="Performance"         value="performance" />
+            <Tab label="Compare"             value="compare"     />
+            <Tab label="Wealth Journey"      value="journey"     />
+            <Tab label="Insights & Rebalance" value="insights"   />
+            <Tab label="Statement History"   value="history"     />
+          </Tabs>
+
+        </Box>
       </Paper>
 
       <Routes>
@@ -91,9 +98,9 @@ export default function MutualFundsDashboard() {
         <Route path="compare"      element={<ErrorBoundary fallbackMessage="Compare tab encountered a rendering error."><CompareTab /></ErrorBoundary>} />
         <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
         <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsTab /></ErrorBoundary>} />
+        <Route path="history"      element={<ErrorBoundary fallbackMessage="Statement History encountered a rendering error."><UploadHistory /></ErrorBoundary>} />
         <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
       </Routes>
     </Box>
   )
 }
-
