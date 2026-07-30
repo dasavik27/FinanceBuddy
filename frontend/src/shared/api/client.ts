@@ -179,6 +179,12 @@ export const apiClient = {
     return data
   },
 
+  /** Fetch all tax sessions for the current PAN (used by history/switch panel). */
+  getTaxHistory: async (): Promise<any> => {
+    const { data } = await api.get('/tax-expert/tax-history')
+    return data
+  },
+
   reconcileBrokerFile: async (sessionId: string, file: File): Promise<any> => {
     const fd = new FormData()
     fd.append('broker_file', file)

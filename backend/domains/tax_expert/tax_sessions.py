@@ -593,6 +593,7 @@ def list_sessions() -> list:
 
 def get_sessions_by_pan(pan: str) -> list:
     """Get all tax sessions for a given PAN."""
+    import datetime as _dt
     _ensure_loaded()
     target = pan.upper()
     results = []
@@ -601,12 +602,28 @@ def get_sessions_by_pan(pan: str) -> list:
     for sid, data in snapshot:
         if data.get("pan", "").upper() == target:
             ais = data.get("ais_data", {})
+            fy = ais.get("fy", "")
+            # Derive Assessment Year from Financial Year (e.g. "2024-25" -> "2025-26")
+            ay = ""
+            if fy and "-" in fy:
+                try:
+                    start_year = int(fy.split("-")[0])
+                    ay = f"{start_year + 1}-{str(start_year + 2)[-2:]}"
+                except (ValueError, IndexError):
+                    pass
+            last_access = data.get("_last_access", 0)
+            created_at_iso = (
+                _dt.datetime.utcfromtimestamp(last_access).strftime("%Y-%m-%dT%H:%M:%S")
+                if last_access else ""
+            )
             results.append({
                 "session_id": sid,
                 "pan": data.get("pan", ""),
                 "name": ais.get("personal", {}).get("name", ""),
-                "fy": ais.get("fy", ""),
+                "fy": fy,
+                "ay": ay,
                 "gross_salary": ais.get("salary", {}).get("gross", 0),
+                "created_at": created_at_iso,
             })
     return results
 
