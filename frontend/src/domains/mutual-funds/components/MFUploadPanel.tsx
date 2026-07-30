@@ -103,6 +103,11 @@ function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryLis
                     <Chip label="Active" size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(99,102,241,0.25)', color: '#818CF8', borderRadius: '6px' }} />
                   )}
                 </Box>
+                {h.statement_period && (
+                  <Typography sx={{ color: '#38BDF8', fontWeight: 600, fontSize: '0.7rem', mb: 0.5 }}>
+                    Period: {h.statement_period}
+                  </Typography>
+                )}
                 <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
                   <Chip label={`${h.num_funds} Funds`} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: '#E2E8F0', borderRadius: '6px' }} />
                   <Chip label={fmtINR(h.total_value)} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 800, background: 'rgba(78,222,147,0.1)', color: '#4EDE93', borderRadius: '6px' }} />
@@ -131,6 +136,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
   const [file, setFile]     = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState<string | null>(null)
+  const [password, setPassword] = useState('')
   const { setSession }      = useAppStore()
 
   const onDrop = useCallback((accepted: File[]) => {
@@ -146,7 +152,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
     setLoading(true)
     setError(null)
     try {
-      const data = await apiClient.parseFile(file, '', 'mutual_funds')
+      const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
       onUploaded()
     } catch (e: any) {
@@ -181,7 +187,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
         {file ? (
           <Box>
             <CheckCircleIcon sx={{ color: '#4EDE93', fontSize: 28, mb: 0.5 }} />
-            <Typography sx={{ color: '#4EDE93', fontWeight: 700, fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <Typography sx={{ color: '#4EDE93', fontWeight: 700, fontSize: '0.82rem', wordBreak: 'break-all' }}>
               {file.name}
             </Typography>
             <Typography sx={{ color: '#64748B', fontSize: '0.72rem' }}>{(file.size / 1024).toFixed(0)} KB · Click to replace</Typography>
@@ -196,23 +202,37 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
         )}
       </Box>
 
-      <AnimatePresence>
-        {file && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}>
-            <Button
-              fullWidth variant="contained" onClick={handleUpload} disabled={loading}
-              sx={{
-                mt: 1.5, py: 1.2, borderRadius: '12px', fontWeight: 800, fontSize: '0.88rem',
-                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                boxShadow: '0 6px 20px rgba(99,102,241,0.4)', textTransform: 'none',
-                '&:hover': { background: 'linear-gradient(135deg, #4F46E5 0%, #4338CA 100%)' },
+      {file && (
+        <Box>
+          <Box sx={{ mt: 2, mb: 1 }}>
+            <Typography sx={{ color: '#94A3B8', fontSize: '0.75rem', mb: 0.5, fontWeight: 600 }}>PDF Password (Optional)</Typography>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Defaults to PAN if blank"
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: '10px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff', outline: 'none', fontSize: '0.85rem'
               }}
-            >
-              {loading ? <><CircularProgress size={16} sx={{ color: '#fff', mr: 1 }} />Importing...</> : 'Import & Analyse'}
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            />
+          </Box>
+          <Button
+            fullWidth variant="contained" onClick={handleUpload} disabled={loading}
+            sx={{
+              mt: 1.5, py: 1.2, borderRadius: '12px', fontWeight: 800, fontSize: '0.88rem',
+              background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+              color: '#fff',
+              boxShadow: '0 6px 20px rgba(99,102,241,0.4)', textTransform: 'none',
+              '&:hover': { background: 'linear-gradient(135deg, #4F46E5 0%, #4338CA 100%)' },
+              '&.Mui-disabled': { background: 'linear-gradient(135deg, rgba(99,102,241,0.7) 0%, rgba(79,70,229,0.7) 100%)', color: 'rgba(255,255,255,0.9)' }
+            }}
+          >
+            {loading ? <><CircularProgress size={16} sx={{ color: '#fff', mr: 1 }} />Importing...</> : 'Import & Analyse'}
+          </Button>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -328,9 +348,10 @@ export function SwitchStatementButton({ sessionId }: SwitchPopoverProps) {
 // ────────────────────────────────────────────────────────────────
 
 export default function MFUploadPanel() {
-  const [file, setFile]       = useState<File | null>(null)
+  const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [password, setPassword] = useState('')
   const [history, setHistory] = useState<any[]>([])
   const { setSession, setSessionById, pan } = useAppStore()
 
@@ -355,7 +376,7 @@ export default function MFUploadPanel() {
     if (!file) return setError('Please drop or select a CAS PDF.')
     setLoading(true); setError(null)
     try {
-      const data = await apiClient.parseFile(file, '', 'mutual_funds')
+      const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to parse. Please check the file.')
@@ -414,13 +435,9 @@ export default function MFUploadPanel() {
               Your PAN is used automatically to unlock the PDF — no password needed.
             </Typography>
 
-            <AnimatePresence mode="wait">
-              {error && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                  <Alert severity="error" sx={{ mb: 2.5, borderRadius: '14px' }}>{error}</Alert>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {error && (
+              <Alert severity="error" sx={{ mb: 2.5, borderRadius: '14px' }}>{error}</Alert>
+            )}
 
             {/* Drop zone */}
             <Box
@@ -429,7 +446,7 @@ export default function MFUploadPanel() {
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               sx={{
-                flex: 1,
+                flex: 1, minWidth: 0,
                 border: `2px dashed ${isDragActive ? '#6366F1' : file ? '#4EDE93' : 'rgba(255,255,255,0.1)'}`,
                 borderRadius: '20px',
                 p: { xs: 4, md: 6 },
@@ -448,7 +465,7 @@ export default function MFUploadPanel() {
                     <Box sx={{ width: 56, height: 56, mx: 'auto', mb: 2, borderRadius: '50%', background: 'rgba(78,222,147,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <CheckCircleIcon sx={{ fontSize: 28, color: '#4EDE93' }} />
                     </Box>
-                    <Typography sx={{ color: '#4EDE93', fontWeight: 800, fontSize: '1rem', mb: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', px: 2 }}>{file.name}</Typography>
+                    <Typography sx={{ color: '#4EDE93', fontWeight: 800, fontSize: '1rem', mb: 0.5, wordBreak: 'break-all', px: 2 }}>{file.name}</Typography>
                     <Typography sx={{ color: '#64748B', fontSize: '0.8rem' }}>{(file.size / 1024).toFixed(0)} KB · Click to replace</Typography>
                   </motion.div>
                 ) : (
@@ -467,24 +484,38 @@ export default function MFUploadPanel() {
               </AnimatePresence>
             </Box>
 
-            <AnimatePresence>
-              {file && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}>
-                  <Button
-                    fullWidth variant="contained" size="large"
-                    onClick={handleAnalyze} disabled={loading}
-                    sx={{
-                      py: 1.8, borderRadius: '16px', fontWeight: 800, fontSize: '1.05rem',
-                      background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                      boxShadow: '0 8px 28px rgba(99,102,241,0.45)', textTransform: 'none',
-                      '&:hover': { background: 'linear-gradient(135deg, #4F46E5 0%, #4338CA 100%)', boxShadow: '0 12px 36px rgba(99,102,241,0.6)' },
+            {file && (
+              <Box>
+                <Box sx={{ mb: 2 }}>
+                  <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', mb: 1, fontWeight: 600 }}>PDF Password (Optional)</Typography>
+                  <input 
+                    type="password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Defaults to your PAN if left blank"
+                    style={{
+                      width: '100%', padding: '14px 18px', borderRadius: '14px',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#fff', outline: 'none', fontSize: '0.95rem'
                     }}
-                  >
-                    {loading ? <><CircularProgress size={20} sx={{ color: '#fff', mr: 1.5 }} />Analysing Portfolio...</> : 'Analyse Portfolio'}
-                  </Button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  />
+                </Box>
+                <Button
+                  fullWidth variant="contained" size="large"
+                  onClick={handleAnalyze} disabled={loading}
+                  sx={{
+                    py: 1.8, borderRadius: '16px', fontWeight: 800, fontSize: '1.05rem',
+                    background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                    color: '#fff',
+                    boxShadow: '0 8px 28px rgba(99,102,241,0.45)', textTransform: 'none',
+                    '&:hover': { background: 'linear-gradient(135deg, #4F46E5 0%, #4338CA 100%)', boxShadow: '0 12px 36px rgba(99,102,241,0.6)' },
+                    '&.Mui-disabled': { background: 'linear-gradient(135deg, rgba(99,102,241,0.7) 0%, rgba(79,70,229,0.7) 100%)', color: 'rgba(255,255,255,0.9)' }
+                  }}
+                >
+                  {loading ? <><CircularProgress size={20} sx={{ color: '#fff', mr: 1.5 }} />Analysing Portfolio...</> : 'Analyse Portfolio'}
+                </Button>
+              </Box>
+            )}
 
             <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: '#334155', mt: 2 }}>
               <ShieldIcon sx={{ fontSize: 11, verticalAlign: 'middle', mr: 0.5, color: '#4EDE93' }} />

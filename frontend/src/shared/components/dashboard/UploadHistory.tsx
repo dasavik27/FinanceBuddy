@@ -43,6 +43,7 @@ export default function UploadHistory() {
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploadLoading, setUploadLoading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploadPassword, setUploadPassword] = useState('')
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setUploadFile(accepted[0]); setUploadError(null) }
@@ -56,7 +57,7 @@ export default function UploadHistory() {
     if (!uploadFile) return
     setUploadLoading(true); setUploadError(null)
     try {
-      const data = await apiClient.parseFile(uploadFile, '', 'mutual_funds')
+      const data = await apiClient.parseFile(uploadFile, uploadPassword, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
       // Refresh history list
       const hist = await apiClient.getHistory(activeModule)
@@ -242,10 +243,10 @@ export default function UploadHistory() {
           >
             <input {...getInputProps()} />
             {uploadFile ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
-                <CheckCircleIcon sx={{ color: '#4EDE93', fontSize: 24 }} />
-                <Box sx={{ textAlign: 'left' }}>
-                  <Typography sx={{ color: '#4EDE93', fontWeight: 800, fontSize: '0.9rem' }}>{uploadFile.name}</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center', minWidth: 0 }}>
+                <CheckCircleIcon sx={{ color: '#4EDE93', fontSize: 24, flexShrink: 0 }} />
+                <Box sx={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
+                  <Typography sx={{ color: '#4EDE93', fontWeight: 800, fontSize: '0.9rem', wordBreak: 'break-all' }}>{uploadFile.name}</Typography>
                   <Typography sx={{ color: '#64748B', fontSize: '0.75rem' }}>{(uploadFile.size / 1024).toFixed(0)} KB · Click to replace</Typography>
                 </Box>
               </Box>
@@ -259,23 +260,37 @@ export default function UploadHistory() {
             )}
           </Box>
 
-          <AnimatePresence>
-            {uploadFile && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}>
-                <Button
-                  fullWidth variant="contained" onClick={handleUpload} disabled={uploadLoading}
-                  sx={{
-                    mt: 2, py: 1.3, borderRadius: '14px', fontWeight: 800, textTransform: 'none',
-                    background: 'linear-gradient(135deg,#6366F1,#4F46E5)',
-                    boxShadow: '0 6px 20px rgba(99,102,241,0.4)',
-                    '&:hover': { background: 'linear-gradient(135deg,#4F46E5,#4338CA)' },
+          {uploadFile && (
+            <Box>
+              <Box sx={{ mt: 3, mb: 1 }}>
+                <Typography sx={{ color: '#94A3B8', fontSize: '0.8rem', mb: 1, fontWeight: 600 }}>PDF Password (Optional)</Typography>
+                <input 
+                  type="password" 
+                  value={uploadPassword}
+                  onChange={(e) => setUploadPassword(e.target.value)}
+                  placeholder="Defaults to your PAN if left blank"
+                  style={{
+                    width: '100%', padding: '12px 16px', borderRadius: '12px',
+                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#fff', outline: 'none', fontSize: '0.9rem'
                   }}
-                >
-                  {uploadLoading ? <><CircularProgress size={16} sx={{ color: '#fff', mr: 1 }} />Analysing Portfolio...</> : 'Analyse & Switch to New Statement'}
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                />
+              </Box>
+              <Button
+                fullWidth variant="contained" onClick={handleUpload} disabled={uploadLoading}
+              sx={{
+                mt: 3, py: 1.3, borderRadius: '14px', fontWeight: 800, textTransform: 'none',
+                background: 'linear-gradient(135deg,#6366F1,#4F46E5)',
+                color: '#fff',
+                boxShadow: '0 6px 20px rgba(99,102,241,0.4)',
+                '&:hover': { background: 'linear-gradient(135deg,#4F46E5,#4338CA)' },
+                '&.Mui-disabled': { background: 'linear-gradient(135deg, rgba(99,102,241,0.7) 0%, rgba(79,70,229,0.7) 100%)', color: 'rgba(255,255,255,0.9)' }
+              }}
+            >
+              {uploadLoading ? <><CircularProgress size={16} sx={{ color: '#fff', mr: 1 }} />Analysing Portfolio...</> : 'Analyse & Switch to New Statement'}
+              </Button>
+            </Box>
+          )}
         </Paper>
       </Collapse>
 
@@ -302,9 +317,16 @@ export default function UploadHistory() {
                   {isActive && <Box sx={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', bgcolor: '#6366F1' }} />}
                   
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                    <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 800 }}>
-                      {formatDate(h.created_at + 'Z')}
-                    </Typography>
+                    <Box>
+                      <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 800 }}>
+                        {formatDate(h.created_at + 'Z')}
+                      </Typography>
+                      {h.statement_period && (
+                        <Typography variant="caption" sx={{ color: '#38BDF8', fontWeight: 700, mt: 0.5, display: 'block' }}>
+                          Period: {h.statement_period}
+                        </Typography>
+                      )}
+                    </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       {isActive && <Chip label="ACTIVE" size="small" sx={{ bgcolor: 'rgba(99,102,241,0.2)', color: '#6366F1', fontWeight: 900 }} />}
                       <IconButton onClick={() => handleDeleteSession(h.session_id)} size="small" sx={{ color: 'rgba(255,255,255,0.3)', '&:hover': { color: '#FF516A', bgcolor: 'rgba(255,81,106,0.1)' } }}>

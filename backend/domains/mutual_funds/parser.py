@@ -21,7 +21,7 @@ def _get(obj, key, default=None):
     val = getattr(obj, key, default)
     return val if val is not None else default
 
-def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[str], bool]:
+def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[str], bool, str]:
     """Parse CAMS/KFintech CAS PDF. The uploaded PDF is not retained after parsing."""
     import casparser  # lazy: see note at top of module
 
@@ -36,7 +36,7 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
             logger.info("[DEBUG] CASParser success.")
         except Exception as e:
             logger.info(f"[DEBUG] CASParser ERROR: {e}")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), f"CASParser Error: {str(e)}", False
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), f"CASParser Error: {str(e)}", False, ""
         finally:
             if os.path.exists(temp_path):
                 try: os.remove(temp_path)
@@ -47,8 +47,31 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
         if not folios:
             # Check if it's a 'data' object but empty
             if hasattr(data, 'folios') and not data.folios:
-                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "No folios found in CAS. Check your PDF.", False
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "Failed to extract folios from PDF.", False
+                return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "No folios found in CAS. Check your PDF.", False, ""
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "Failed to extract folios from PDF.", False, ""
+            
+        statement_period_raw = _get(data, 'statement_period', {})
+        
+        # Pydantic vs dict resolution fallback loop
+        period_from = getattr(statement_period_raw, 'from_', None) or _get(statement_period_raw, 'from_', '') or _get(statement_period_raw, 'from', '')
+        period_to = getattr(statement_period_raw, 'to', None) or _get(statement_period_raw, 'to', '')
+        
+        # Fallback to pure stringification if casparser returns something completely different
+        if not period_from and not period_to:
+            if hasattr(statement_period_raw, '__dict__'):
+                sp_dict = statement_period_raw.__dict__
+                period_from = sp_dict.get('from_') or sp_dict.get('from') or ''
+                period_to = sp_dict.get('to') or ''
+                
+        if not period_from and not period_to and isinstance(statement_period_raw, str):
+            period_from = statement_period_raw
+            period_to = ""
+            
+        statement_period = ""
+        if period_from and period_to:
+            statement_period = f"{period_from} to {period_to}"
+        elif period_from:
+            statement_period = period_from
             
         holdings, txns, sips = [], [], []
         
@@ -187,9 +210,9 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
             df_h["Gain%"] = (df_h["Gain"] / df_h["Invested"] * 100).fillna(0)
             df_h["Weight%"] = (df_h["Market Value"] / df_h["Market Value"].sum() * 100)
 
-        return df_h, pd.DataFrame(txns), pd.DataFrame(sips), None, is_partial
+        return df_h, pd.DataFrame(txns), pd.DataFrame(sips), None, is_partial, statement_period
     except Exception as e:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e), False
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(e), False, ""
 
 from domains.mutual_funds.logic import CategorizationEngine
 import logging

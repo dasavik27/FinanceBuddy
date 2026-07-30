@@ -120,7 +120,7 @@ def _remember(session_id: str, portfolio: Portfolio) -> None:
             )
 
 
-def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
+def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
     """
     Initializes a new portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with AMFI & Morningstar categorization.
@@ -147,7 +147,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
 
     # Persist BEFORE compacting: to_sql writes categoricals as their codes in some
     # pandas/SQLite combinations, and the round-trip must preserve the label.
-    final_session_id = storage.save_session(session_id, df_h, df_t, df_s, is_partial, pan_id, upload_type)
+    final_session_id = storage.save_session(session_id, df_h, df_t, df_s, is_partial, statement_period, pan_id, upload_type)
 
     for frame in (df_h, df_t, df_s):
         _compact_dtypes(frame)

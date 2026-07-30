@@ -112,6 +112,16 @@ class Portfolio:
 
         total_expense = self.compute_expense_drag()
 
+        nav_date = ""
+        if "NAV Date" in self.df_h.columns and not self.df_h["NAV Date"].dropna().empty:
+            nav_date = str(self.df_h["NAV Date"].dropna().max())
+            try:
+                # Convert YYYY-MM-DD to DD MMM YYYY for UI
+                dt = pd.to_datetime(nav_date)
+                nav_date = dt.strftime("%d %b, %Y")
+            except:
+                pass
+
         return {
             "total_value":     round(self.total_value, 2),
             "total_invested":  round(self.total_invested, 2),
@@ -123,7 +133,8 @@ class Portfolio:
             "expense_drag":    round(total_expense, 2),
             "num_funds":       len(self.df_h),
             "is_absolute":     is_abs,
-            "is_partial":      self.is_partial
+            "is_partial":      self.is_partial,
+            "nav_date":        nav_date
         }
 
     def compute_expense_drag(self) -> float:

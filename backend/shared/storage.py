@@ -56,6 +56,11 @@ def _init_db():
         except sqlite3.OperationalError:
             pass
 
+        try:
+            conn.execute("ALTER TABLE sessions ADD COLUMN statement_period TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+
         # The GC sweep scans for sessions older than 24h on every pass.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
 
@@ -125,7 +130,7 @@ def check_duplicate_upload(df_t: pd.DataFrame) -> Optional[str]:
         row = cursor.fetchone()
         return row[0] if row else None
 
-def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
+def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
     """
     Persists the dataframes to SQLite and registers the session, tied to a PAN.
     """
@@ -161,9 +166,9 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
     # 3. Save to SQLite Registry
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
-            INSERT INTO sessions (session_id, data_hash, total_value, total_invested, num_funds, is_partial, pan_id, upload_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, ledger_hash, total_value, total_invested, num_funds, is_partial, pan_id, upload_type))
+            INSERT INTO sessions (session_id, data_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, ledger_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type))
         conn.commit()
         
     return session_id

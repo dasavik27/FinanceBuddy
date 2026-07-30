@@ -32,14 +32,14 @@ async def parse_cas(
     actual_pw = password if password and password.strip() else x_user_pan
     if not actual_pw:
         raise HTTPException(status_code=400, detail="Password is required (or log in with your PAN so it can be used automatically).")
-    df_h, df_t, df_s, err, is_partial = parse_cas_file(raw, actual_pw)
+    df_h, df_t, df_s, err, is_partial, statement_period = parse_cas_file(raw, actual_pw)
 
     if err:
         raise HTTPException(status_code=422, detail=err)
     if df_h.empty:
         raise HTTPException(status_code=422, detail="No active holdings found in CAS.")
 
-    session_id = create_session(df_h, df_t, df_s, is_partial, pan_id=x_user_pan, upload_type=x_upload_type)
+    session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, pan_id=x_user_pan, upload_type=x_upload_type)
     
     return {
         "session_id": session_id,

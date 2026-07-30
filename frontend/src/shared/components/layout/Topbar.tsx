@@ -76,11 +76,12 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   }
 
   const getSyncedText = () => {
+    const timeStr = new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const diff = Math.floor((Date.now() - lastSynced) / 60000)
-    if (diff < 1) return 'Live Prices Synced'
-    if (diff < 60) return `Prices updated ${diff}m ago`
+    if (diff < 1) return `Synced at ${timeStr}`
+    if (diff < 60) return `Synced at ${timeStr} (${diff}m ago)`
     const hours = Math.floor(diff / 60)
-    return `Prices updated ${hours}h ago`
+    return `Synced at ${timeStr} (${hours}h ago)`
   }
 
   const currentTTL = config?.cache_ttl ?? 60
