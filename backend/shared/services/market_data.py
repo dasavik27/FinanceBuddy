@@ -22,66 +22,54 @@ from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, Any, List
 from shared import config
 from shared.cache import MarketCache
-from shared.services.cache import MARKET_CACHE
+from shared.services.cache import MARKET_CACHE, ttl_for
 from shared.services.providers.factory import get_provider
 from shared.config import BENCHMARKS, FUND_BENCH_BY_CAP, FUND_BENCH_BY_CAT
 
 # ── Thread-safe Cache Locks ──────────────────────────────────────────────
 _CACHE_LOCK = threading.Lock()
 
-# ── Resilient HTTP Session ───────────────────────────────────────────────
-def _create_retry_session() -> requests.Session:
-    session = requests.Session()
-    retry = Retry(
-        total=5,
-        read=5,
-        connect=5,
-        backoff_factor=1.0,  # 1s, 2s, 4s, 8s
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=["GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    return session
-
-_HTTP_SESSION = _create_retry_session()
-
 
 # ---------------------------------------------------------------------------
-# Module-level caches  (simple in-memory; replace with Redis for multi-worker)
+# Module-level caches
 # ---------------------------------------------------------------------------
+# Only two remain, and both are small string→small-value maps that back a hot
+# lookup rather than holding a payload.
+#
+# Removed as dead weight: `_LIVE_NAV_CACHE` (assigned the full ~50,000-entry live
+# NAV map in two places and never read anywhere), `_NAV_SERIES_CACHE` and
+# `_NAV_CACHE_TTL` (superseded by the L1 tier, never read), `_TER_CACHE` /
+# `_TER_CACHE_TS` / `_TER_CACHE_TTL` (now an L1 entry), and `_HTTP_SESSION` plus
+# `_create_retry_session` (a retry/backoff policy with zero use sites - the two
+# AMFI downloads that matter use raw urllib, so the resilience it advertised was
+# fictional).
+#
+# The point is not tidiness: those dicts held a second copy of the AMFI bundle
+# *outside* the 32 MB MARKET_CACHE budget, so the tier could report 20 of 32 MB
+# used while the process actually held roughly double that in globals the budget
+# could not see.
 _ISIN_TO_CODE_CACHE:  Dict[str, str] = {}       # ISIN → scheme_code
 _ISIN_MISS_CACHE:     Dict[str, float] = {}     # ISIN → ts of last failed resolution
-_NAV_SERIES_CACHE:    Dict[str, Tuple[float, pd.Series]] = {}  # code → (ts, series)
-_TER_CACHE:           Dict[str, float] = {}      # scheme_code → TER %
-_TER_CACHE_TS:        float = 0.0                # timestamp of last TER fetch
 
-_NAV_CACHE_TTL = 3600       # 1 hour
-_TER_CACHE_TTL = 86400      # 24 hours (AMFI updates once daily)
 _ISIN_MISS_TTL = 3600       # 1 hour — retry unresolvable ISINs occasionally, not constantly
+_TER_NEGATIVE_TTL = 300     # 5 min — how long a failed TER fetch is remembered
+# AMFI publishes the expense-ratio file once a day. Its own constant rather than
+# ttl_for("live_navs"): the TER table is a different datatype from live NAVs and the
+# policy registry has no entry for it, so borrowing that one was a coincidence.
+_TER_TTL = 24 * 3600
 
 def clear_market_data_cache():
     """Invalidate all in-memory market data caches."""
-    global _ISIN_TO_CODE_CACHE, _NAV_SERIES_CACHE, _TER_CACHE, _TER_CACHE_TS, _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS
     with _CACHE_LOCK:
         _ISIN_TO_CODE_CACHE.clear()
         _ISIN_MISS_CACHE.clear()
-        _NAV_SERIES_CACHE.clear()
-        _TER_CACHE.clear()
-        _TER_CACHE_TS = 0.0
-        _LIVE_NAV_CACHE.clear()
-        _LIVE_NAV_CACHE_TS = 0.0
-    # The parsed AMFI bundle and NAV series live in the L1 tier now.
+    # The parsed AMFI bundle, TER table and NAV series live in the L1 tier now.
     MARKET_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
 # Live NAVs from AMFI daily file
 # ---------------------------------------------------------------------------
-
-_LIVE_NAV_CACHE: Dict[str, float] = {}
-_LIVE_NAV_CACHE_TS: float = 0.0
 
 def _fetch_amfi_data_uncached() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str]]:
     """
@@ -91,8 +79,8 @@ def _fetch_amfi_data_uncached() -> Tuple[Dict[str, float], Dict[str, str], Dict[
     Always hits the network. Call `_fetch_amfi_data()` instead unless you
     specifically need to force a refresh.
     """
-    global _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS, _ISIN_TO_CODE_CACHE
-    
+    global _ISIN_TO_CODE_CACHE
+
     url = "https://www.amfiindia.com/spages/NAVAll.txt"
     live_map: Dict[str, float] = {}
     isin_map: Dict[str, str]   = {}
@@ -128,16 +116,13 @@ def _fetch_amfi_data_uncached() -> Tuple[Dict[str, float], Dict[str, str], Dict[
             if isin2: isin_map[isin2] = code
             
         with _CACHE_LOCK:
-            _LIVE_NAV_CACHE = live_map
-            _LIVE_NAV_CACHE_TS = time.time()
             _ISIN_TO_CODE_CACHE.update(isin_map)
-            
+
     except Exception as e:
         logger.error(f"[AMFI UNIFIED ERROR] {e}")
 
     return live_map, isin_map, date_map
 
-from shared.cache import MarketCache
 import logging
 logger = logging.getLogger(__name__)
 
@@ -164,14 +149,15 @@ def _load_amfi_bundle() -> Tuple[Dict[str, float], Dict[str, str], Dict[str, str
     if config.CACHE_TTL_MINUTES > 0:
         cached = MarketCache.get(_AMFI_BUNDLE_KEY)
         if isinstance(cached, dict) and cached.get("live"):
-            live_map = {k: float(v) for k, v in cached["live"].items()}
-            isin_map = dict(cached.get("isin") or {})
-            date_map = dict(cached.get("date") or {})
-            # Keep the legacy module globals coherent with what we just served.
+            # No conversion or copying here. json.dump wrote the NAVs as JSON
+            # numbers, so json.load already returns floats - the previous
+            # `{k: float(v) for ...}` re-walked ~50,000 entries to convert floats to
+            # floats, and the two dict() copies walked ~100,000 more, all on the
+            # cold-start path this branch exists to make fast.
+            live_map = cached["live"]
+            isin_map = cached.get("isin") or {}
+            date_map = cached.get("date") or {}
             with _CACHE_LOCK:
-                global _LIVE_NAV_CACHE, _LIVE_NAV_CACHE_TS
-                _LIVE_NAV_CACHE = live_map
-                _LIVE_NAV_CACHE_TS = time.time()
                 _ISIN_TO_CODE_CACHE.update(isin_map)
             return live_map, isin_map, date_map
 
@@ -193,9 +179,13 @@ def _fetch_amfi_data(refresh: bool = False) -> Tuple[Dict[str, float], Dict[str,
     Single-flight, so a burst of concurrent holdings enrichment triggers one
     download rather than one per holding.
     """
-    ttl = config.CACHE_TTL_MINUTES * 60
-    if refresh or ttl <= 0:
+    if refresh or config.CACHE_TTL_MINUTES <= 0:
         return _fetch_amfi_data_uncached()
+
+    # Per-datatype TTL, not the single global CACHE_TTL_MINUTES. AMFI publishes
+    # NAVAll.txt once a day around 23:00 IST, so a 60-minute global TTL had this
+    # multi-megabyte file re-downloaded and re-parsed roughly 24 times daily.
+    ttl = ttl_for("live_navs")
 
     # copy_on_read=False: the bundle is three maps with tens of thousands of entries
     # and is treated as immutable by every consumer. Deep-copying it per access would
@@ -235,17 +225,13 @@ def fetch_live_navs_with_date(refresh: bool = False) -> Tuple[Dict[str, float], 
     live_map, _, date_map = _fetch_amfi_data(refresh=refresh)
     return live_map, date_map
 
-def _fetch_amfi_ter_all() -> Dict[str, float]:
+_TER_BUNDLE_KEY = "amfi_ter_v1"
+
+
+def _fetch_amfi_ter_all_uncached() -> Dict[str, float]:
     """
     Robust TER parser using header discovery (Fixes fragile parts[-1]).
     """
-    global _TER_CACHE, _TER_CACHE_TS
-
-    with _CACHE_LOCK:
-        now = time.time()
-        if config.CACHE_TTL_MINUTES > 0 and _TER_CACHE and (now - _TER_CACHE_TS) < _TER_CACHE_TTL:
-            return _TER_CACHE
-
     url = "https://www.amfiindia.com/modules/TotalExpenseRatioDownload"
     ter_map: Dict[str, float] = {}
     try:
@@ -283,12 +269,68 @@ def _fetch_amfi_ter_all() -> Dict[str, float]:
 
     except Exception: pass
 
-    if ter_map:
-        with _CACHE_LOCK:
-            _TER_CACHE = ter_map
-            _TER_CACHE_TS = now
-
     return ter_map
+
+
+def _load_ter_bundle() -> Dict[str, float]:
+    """
+    Producer for the L1 TER entry: disk cache first, then network.
+
+    Mirrors _load_amfi_bundle. The L2 hop matters because a restart otherwise pays
+    the full multi-megabyte download again even when it succeeded a minute earlier.
+
+    Note the empty-result case is handled *here*, inside the producer, rather than by
+    the caller. Writing the negative entry from the caller meant every request that saw
+    an empty map re-`set()` it, and ProcessCache.set recomputes the expiry — so
+    continuous traffic slid the deadline forward indefinitely and one transient AMFI
+    failure removed expense ratios permanently.
+    """
+    cached = MarketCache.get(_TER_BUNDLE_KEY)
+    if isinstance(cached, dict) and cached:
+        return cached
+
+    ter_map = _fetch_amfi_ter_all_uncached()
+    if ter_map:
+        MarketCache.set(_TER_BUNDLE_KEY, ter_map)
+    return ter_map
+
+
+def _fetch_amfi_ter_all() -> Dict[str, float]:
+    """
+    The AMFI expense-ratio table, cached and single-flighted.
+
+    This is called once per holding from inside ThreadPoolExecutor(max_workers=10)
+    in routers/holdings.py. The previous implementation checked a module-level dict
+    under a lock but *released the lock before the network fetch*, so on a cold cache
+    all ten worker threads missed simultaneously and each downloaded the full AMFI
+    TER file - ten multi-megabyte downloads per /holdings request.
+
+    get_or_compute() gives the single-flight that collapses those ten misses into one
+    fetch, with the other nine waiting on the result.
+
+    A failed or empty parse is cached too, for a much shorter window. Previously
+    `if ter_map:` meant failures were never stored, so a down AMFI endpoint produced
+    ten concurrent 15-second downloads on *every* subsequent request, indefinitely.
+
+    copy_on_read=False: this is a large read-only lookup table, treated as immutable
+    by every consumer (fetch_fund_ter only does a .get). Deep-copying tens of
+    thousands of entries per holding would cost more than it saves.
+    """
+    if config.CACHE_TTL_MINUTES <= 0:
+        return _fetch_amfi_ter_all_uncached()
+
+    def produce() -> Dict[str, float]:
+        result = _load_ter_bundle()
+        if not result:
+            # Negative caching, written exactly once per miss so the deadline is fixed
+            # rather than sliding: a failing upstream is retried once per
+            # _TER_NEGATIVE_TTL, not once per request, and not never.
+            MARKET_CACHE.set(_TER_BUNDLE_KEY, {}, _TER_NEGATIVE_TTL, copy_on_read=False)
+        return result
+
+    return MARKET_CACHE.get_or_compute(
+        _TER_BUNDLE_KEY, produce, _TER_TTL, copy_on_read=False
+    )
 
 
 def fetch_fund_ter(scheme_code: str, plan: str = "Direct") -> Optional[float]:

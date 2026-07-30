@@ -36,7 +36,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from domains.mutual_funds.models import Portfolio
-from shared import storage
+from shared import identity, storage
 import logging
 logger = logging.getLogger(__name__)
 
@@ -100,12 +100,21 @@ def _compact_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 # Session lifecycle
 # ---------------------------------------------------------------------------
 
-def _remember(session_id: str, portfolio: Portfolio) -> None:
-    """Insert a session as most-recently-used and evict beyond the budget."""
+def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = None) -> None:
+    """
+    Insert a session as most-recently-used and evict beyond the budget.
+
+    The owner is stored alongside the portfolio so ownership can be checked from
+    memory. That matters for two reasons: a resident hit must not depend on SQLite
+    being reachable, and a session whose registry row has been deleted (by
+    /history/{sid} DELETE or an account purge) must not become readable by anyone
+    just because the registry can no longer say who owns it.
+    """
     now = datetime.now()
     with _SESSIONS_LOCK:
         _SESSIONS[session_id] = {
             "portfolio": portfolio,
+            "owner": owner_pan,
             "created_at": now,
             "last_accessed": now,
         }
@@ -125,8 +134,20 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     Initializes a new portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with AMFI & Morningstar categorization.
     """
-    # Deduplication check: if this ledger exists on disk, skip processing
-    duplicate_id = storage.check_duplicate_upload(df_t)
+    # Normalize the owner exactly as every read does. The write path used to store the
+    # raw X-User-PAN header while identity.normalize_pan() upper-cases on the way in,
+    # so a lowercase header made a session its own owner could not read: reads compared
+    # "ABCDE1234F" against a stored "abcde1234f" and 404'd. Masked logs rendered both
+    # sides identically, which would have made it undiagnosable in production.
+    pan_id = identity.normalize_pan(pan_id)
+
+    # Deduplication check: if this owner already uploaded this exact ledger, reuse
+    # the existing session. The hash is computed once here and threaded into
+    # save_session, both because the dedup lookup and the registry row must agree
+    # and because computing it twice ran a row-wise `df.apply` over the whole ledger
+    # twice per upload.
+    ledger_hash = storage.compute_ledger_hash(df_t, pan_id)
+    duplicate_id = storage.check_duplicate_upload(ledger_hash, pan_id)
     if duplicate_id:
         return duplicate_id
 
@@ -147,7 +168,13 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
 
     # Persist BEFORE compacting: to_sql writes categoricals as their codes in some
     # pandas/SQLite combinations, and the round-trip must preserve the label.
-    final_session_id = storage.save_session(session_id, df_h, df_t, df_s, is_partial, statement_period, pan_id, upload_type)
+    final_session_id = storage.save_session(
+        session_id, df_h, df_t, df_s, is_partial, statement_period, pan_id, upload_type,
+        ledger_hash=ledger_hash,
+    )
+    # save_session returns a different id if it adopted a concurrent duplicate.
+    if final_session_id != session_id:
+        return final_session_id
 
     for frame in (df_h, df_t, df_s):
         _compact_dtypes(frame)
@@ -155,7 +182,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     portfolio = Portfolio(df_h, df_t, df_s, is_partial)
     portfolio.update_live_navs()
 
-    _remember(session_id, portfolio)
+    _remember(session_id, portfolio, owner_pan=pan_id)
     return session_id
 
 
@@ -198,6 +225,16 @@ def _session_purge_worker():
             except Exception as e:
                 logger.error(f"[GC CACHE SWEEP ERROR] {e}")
 
+            # 4. Expire tax_sessions rows. Tax-session eviction is deliberately
+            #    non-destructive (the row is what makes rehydration possible), so
+            #    without a periodic sweep that table would only grow between
+            #    restarts.
+            try:
+                from domains.tax_expert.tax_sessions import purge_expired_from_disk
+                purge_expired_from_disk()
+            except Exception as e:
+                logger.error(f"[GC TAX SWEEP ERROR] {e}")
+
         except Exception as e:
             logger.error(f"[GC ERROR] {e}")
         time.sleep(600)  # GC sweep execution interval: 10 minutes
@@ -206,22 +243,66 @@ def _session_purge_worker():
 threading.Thread(target=_session_purge_worker, daemon=True).start()
 
 
+_NOT_FOUND_DETAIL = "Session expired or not found. Please re-upload your CAS."
+
+
+def _deny(session_id: str, owner: Optional[str]) -> "HTTPException":
+    """
+    Build the denial. 404 rather than 403 on purpose: a 403 confirms the session
+    exists, which is exactly the signal an id-guessing caller is looking for.
+    """
+    caller = identity.current_pan()
+    logger.warning(
+        "[AUTHZ] caller=%s denied access to session %s owned=%s (same PAN in different "
+        "case is a bug, not an attack - both mask identically here)",
+        identity.mask_pan(caller), session_id, identity.mask_pan(owner),
+    )
+    return HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+
+
 def get_session(session_id: str) -> Portfolio:
     """
     Retrieves the active portfolio session and updates the activity heartbeat.
-    Raises HTTP 404 if the session has expired or does not exist.
+    Raises HTTP 404 if the session has expired, does not exist, or belongs to
+    somebody else.
+
+    Ownership is resolved from whichever source is authoritative for the path taken:
+
+    - **Resident hit** - from the entry itself. Not from SQLite, because a resident
+      session must stay usable when the database is unreachable, and because a
+      session whose registry row was deleted must not become readable by everyone
+      merely because the registry can no longer name its owner.
+    - **Disk miss** - from the registry, and the session must both exist and be
+      owned by the caller. A lookup that *fails* (rather than returning "absent")
+      denies with 503: an authorization check that cannot run must not default to
+      allowing access.
     """
     with _SESSIONS_LOCK:
         entry = _SESSIONS.get(session_id)
         if entry is not None:
+            if not identity.owns_record(entry.get("owner")):
+                raise _deny(session_id, entry.get("owner"))
             entry["last_accessed"] = datetime.now()
             _SESSIONS.move_to_end(session_id)
             return entry["portfolio"]
 
-    # Miss: reconstruct from disk. Done outside the lock because it does I/O.
+    # Miss: authorize against the registry, then reconstruct from disk.
+    try:
+        exists, owner = storage.get_session_owner(session_id)
+    except storage.OwnerLookupFailed:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not verify access to this session. Please retry.",
+        )
+
+    if not exists:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+    if not identity.owns_record(owner):
+        raise _deny(session_id, owner)
+
     disk_data = storage.load_session(session_id)
     if disk_data is None:
-        raise HTTPException(status_code=404, detail="Session expired or not found. Please re-upload your CAS.")
+        raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
 
     df_h, df_t, df_s, is_partial = disk_data
     for frame in (df_h, df_t, df_s):
@@ -239,8 +320,50 @@ def get_session(session_id: str) -> Portfolio:
     except Exception as e:
         logger.warning(f"[SESSION REHYDRATE] live NAV refresh failed for {session_id}: {e}")
 
-    _remember(session_id, portfolio)
+    _remember(session_id, portfolio, owner_pan=owner)
     return portfolio
+
+
+def forget(session_id: str) -> bool:
+    """Drop one resident session. Returns whether it was present."""
+    with _SESSIONS_LOCK:
+        return _SESSIONS.pop(session_id, None) is not None
+
+
+def evict_for_pan(pan_id: str) -> int:
+    """
+    Drop a PAN's resident sessions. Returns how many were dropped.
+
+    Required by the purge path: deleting the SQLite rows left the portfolios sitting
+    in memory, so data the user asked to have permanently deleted stayed readable for
+    up to the session TTL by anyone holding the id - and, with the registry row gone,
+    the registry could no longer say who owned it. The tax store already did this; the
+    mutual-fund store did not.
+    """
+    target = (pan_id or "").upper()
+    with _SESSIONS_LOCK:
+        doomed = [
+            sid for sid, entry in _SESSIONS.items()
+            if (entry.get("owner") or "").upper() == target
+        ]
+        for sid in doomed:
+            _SESSIONS.pop(sid, None)
+    if doomed:
+        logger.info("[SESSION] evicted %d resident session(s) for %s", len(doomed), identity.mask_pan(pan_id))
+    return len(doomed)
+
+
+def clear_all() -> int:
+    """
+    Drop every resident session. Returns how many were dropped.
+
+    Exists so callers do not have to touch `_SESSIONS` directly - doing that skips
+    _SESSIONS_LOCK and races the GC daemon.
+    """
+    with _SESSIONS_LOCK:
+        count = len(_SESSIONS)
+        _SESSIONS.clear()
+    return count
 
 
 def session_stats() -> Dict[str, Any]:

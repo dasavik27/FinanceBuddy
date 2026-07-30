@@ -41,10 +41,28 @@ class MFApiProvider(MarketDataProvider):
             if not data:
                 return pd.Series(dtype=float)
 
-            # Parse to a map of Datetime objects -> floats
-            raw_map = {pd.to_datetime(rec["date"], dayfirst=True): float(rec["nav"]) for rec in data}
-            
-            series = pd.Series(raw_map).sort_index()
+            # Vectorized parse: ONE pd.to_datetime call over the whole date column,
+            # not one per record.
+            #
+            # The previous dict comprehension called pd.to_datetime() per row, paying
+            # parser setup and dayfirst inference ~2,500 times for a 10-year scheme -
+            # roughly 50,000 invocations to warm a 20-fund portfolio on 0.1 vCPU.
+            # mfapi returns dates as DD-MM-YYYY, so the format is known and passing it
+            # explicitly skips per-element inference as well.
+            dates = pd.to_datetime(
+                [rec["date"] for rec in data], format="%d-%m-%Y", errors="coerce"
+            )
+            navs = pd.to_numeric([rec["nav"] for rec in data], errors="coerce")
+
+            series = pd.Series(navs, index=dates, dtype=float)
+            # A malformed date or NAV becomes NaT/NaN rather than raising, matching the
+            # old behaviour of skipping unparseable rows.
+            series = series[series.index.notna()].dropna()
+            # Duplicate dates would previously collapse via dict keying; keep that.
+            series = series[~series.index.duplicated(keep="last")].sort_index()
+
+            if series.empty:
+                return pd.Series(dtype=float)
 
             # Truncate by days if required
             if days < 9999:

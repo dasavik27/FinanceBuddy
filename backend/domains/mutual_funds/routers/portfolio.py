@@ -19,13 +19,26 @@ from shared.services.market_data import (
 router = APIRouter()
 
 @router.post("/parse")
-async def parse_cas(
+def parse_cas(
     file: UploadFile = File(...),
     password: str = Form(None), # Made optional for testing
     x_user_pan: str = Header(None),
     x_upload_type: str = Header("mutual_funds")
 ):
-    raw = await file.read()
+    """
+    Parse a CAS PDF and create a portfolio session.
+
+    Deliberately a sync `def`, not `async def`: parse_cas_file (casparser + PDF
+    extraction) and create_session (ledger hash + three SQLite writes) are blocking
+    work measured in seconds. Under `async def` they ran directly on the event loop
+    of a single-worker deployment, which froze the whole API for the duration -
+    including /health, which can fail the platform health check mid-upload. As a
+    sync def, FastAPI runs this in the threadpool and the loop stays responsive.
+
+    The tax-expert equivalent (domains/tax_expert/routers/session.py) was already
+    fixed for exactly this reason; this endpoint is the same bug.
+    """
+    raw = file.file.read()
     # CAS statements are conventionally password-protected with the investor's own PAN.
     # If no password is supplied, fall back to the logged-in profile's PAN (X-User-PAN header)
     # rather than a hardcoded credential.

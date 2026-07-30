@@ -14,9 +14,16 @@ import main
 from domains.tax_expert import computation_cache, tax_sessions
 
 
+# A syntactically valid PAN: the identity middleware rejects malformed ones, so the
+# fixture's owner and the client's asserted identity have to be a real PAN shape.
+TEST_PAN = "ABCDE1234F"
+
+
 @pytest.fixture
 def client():
-    return TestClient(main.app)
+    # Sessions below are owned by TEST_PAN, and reading an owned session now requires
+    # asserting that identity - the same header the frontend's axios interceptor sends.
+    return TestClient(main.app, headers={"X-User-PAN": TEST_PAN})
 
 
 @pytest.fixture
@@ -28,7 +35,7 @@ def session_id():
     """
     ais = {
         "fy": "2025-26",
-        "personal": {"pan": "TESTPAN123A", "name": "Phase Two Test"},
+        "personal": {"pan": TEST_PAN, "name": "Phase Two Test"},
         "salary": {"gross": 1_800_000, "tds_deducted": 150_000, "employer": "Acme", "quarterly": [
             {"quarter": "Q1", "amount": 450_000, "tds": 37_500},
             {"quarter": "Q2", "amount": 450_000, "tds": 37_500},
@@ -62,7 +69,7 @@ def session_id():
         "cg_real_estate": [], "cg_unlisted": [], "cg_bonds_gold": [],
         "refunds": [{"sr": 1, "amount": 5_000, "financial_year": "2024-25"}],
     }
-    sid = tax_sessions.create_tax_session(ais, pan_id="TESTPAN123A")
+    sid = tax_sessions.create_tax_session(ais, pan_id=TEST_PAN)
     # Brought-forward losses: another rule the old aggregation skipped.
     tax_sessions.update_overrides(sid, {"bf_losses": {"ltcl": 50_000, "stcl": 10_000}})
     yield sid
@@ -185,16 +192,58 @@ def test_session_version_bumps_on_mutation(session_id):
     assert tax_sessions.get_session_version(session_id) > v0
 
 
-def test_lru_and_ttl_bounds_are_enforced(monkeypatch):
+def test_lru_bound_caps_resident_sessions(monkeypatch):
     """The store must not grow without bound — that was the 512 MB failure mode."""
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 3)
     created = [
         tax_sessions.create_tax_session({"personal": {"pan": f"BOUND{i}"}}, pan_id=f"BOUND{i}")
         for i in range(6)
     ]
+    # Only the cap's worth stay in memory...
     assert len(tax_sessions.list_sessions()) <= 3
-    # The most recently created must survive; the earliest must have been evicted.
+    # ...and the most recent is one of them.
     assert tax_sessions.get_tax_session(created[-1]) is not None
-    assert tax_sessions.get_tax_session(created[0]) is None
     for sid in created:
         tax_sessions.delete_tax_session(sid)
+
+
+def test_eviction_is_not_data_loss(monkeypatch):
+    """
+    An LRU-evicted session must still be retrievable.
+
+    Eviction used to delete the SQLite row as well, which made it destructive: the
+    row was the only durable copy, so the user's uploaded AIS was simply gone and
+    they had to re-upload. This asserts the rehydration path that makes a small
+    resident cap safe.
+    """
+    monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 2)
+    first = tax_sessions.create_tax_session(
+        {"personal": {"pan": "EVICT0"}, "fy": "2025-26"}, pan_id="EVICT0"
+    )
+    later = [
+        tax_sessions.create_tax_session({"personal": {"pan": f"EVICT{i}"}}, pan_id=f"EVICT{i}")
+        for i in range(1, 4)
+    ]
+
+    resident_ids = {sid for sid, _ in tax_sessions.list_sessions()}
+    assert first not in resident_ids, "expected the oldest session to be evicted from memory"
+
+    restored = tax_sessions.get_tax_session(first)
+    assert restored is not None, "evicted session was destroyed instead of rehydrated"
+    assert restored["ais_data"]["fy"] == "2025-26"
+
+    for sid in [first, *later]:
+        tax_sessions.delete_tax_session(sid)
+
+
+def test_clear_all_does_not_brick_the_store():
+    """
+    clear_all() left _sessions_loaded True, so _ensure_loaded() never reloaded and
+    every session 404'd until the process restarted - even with rows intact on disk.
+    """
+    sid = tax_sessions.create_tax_session(
+        {"personal": {"pan": "CLEARME"}, "fy": "2025-26"}, pan_id="CLEARME"
+    )
+    tax_sessions.clear_all()
+    assert tax_sessions.get_tax_session(sid) is not None, "store did not recover after clear_all()"
+    tax_sessions.delete_tax_session(sid)

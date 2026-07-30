@@ -36,7 +36,12 @@ interface SidebarProps {
 export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpand }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { clearSession } = useAppStore()
+  // Always select. `useAppStore()` with no selector compares the whole state object
+  // with Object.is, and every set() produces a new object — so this component
+  // re-rendered on any unrelated store write (setActiveModule on every navigation,
+  // triggerRefresh, setFilters).
+  const clearSession = useAppStore((s) => s.clearSession)
+  const activeModule = useAppStore((s) => s.activeModule)
 
   return (
     <>
@@ -59,8 +64,9 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
         <SidebarContent 
           location={location} 
           navigate={navigate} 
-          isPartial={isPartial} 
-          clearSession={clearSession} 
+          isPartial={isPartial}
+          clearSession={clearSession}
+          activeModule={activeModule}
           onClose={() => {}} 
           collapsed={collapsed}
           onToggle={onToggle}
@@ -86,8 +92,9 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
         <SidebarContent 
           location={location} 
           navigate={navigate} 
-          isPartial={isPartial} 
-          clearSession={clearSession} 
+          isPartial={isPartial}
+          clearSession={clearSession}
+          activeModule={activeModule}
           onClose={onClose} 
           collapsed={false}
           onToggle={() => {}}
@@ -98,8 +105,8 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
   )
 }
 
-function SidebarContent({ location, navigate, isPartial, clearSession, onClose, collapsed, onToggle, onExpand }: any) {
-  const { pan } = useAppStore()
+function SidebarContent({ location, navigate, isPartial, clearSession, activeModule, onClose, collapsed, onToggle, onExpand }: any) {
+  const pan = useAppStore((s) => s.pan)
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5 }}>
       {/* Branding */}
@@ -195,7 +202,11 @@ function SidebarContent({ location, navigate, isPartial, clearSession, onClose, 
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography sx={{ fontSize: 11, fontWeight: 800, color: 'text.secondary', letterSpacing: '0.1em' }}>ACCOUNT STATUS</Typography>
-            <IconButton size="small" onClick={clearSession} sx={{ color: 'tertiary', '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
+            {/* clearSession(type) expects a module name. Passing it straight to
+                onClick handed it a MouseEvent, so both `type === 'mutual_funds'` and
+                `type === 'tax_expert'` were false and NEITHER session id was cleared —
+                the button silently did nothing but wipe parseData. */}
+            <IconButton size="small" onClick={() => clearSession(activeModule)} sx={{ color: 'tertiary', '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
               <LogoutIcon sx={{ fontSize: 18, color: '#FF516A' }} />
             </IconButton>
           </Box>
@@ -205,7 +216,7 @@ function SidebarContent({ location, navigate, isPartial, clearSession, onClose, 
           </Typography>
         </Box>
       ) : (
-        <IconButton onClick={clearSession} sx={{ color: '#FF516A', mb: 1, '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
+        <IconButton onClick={() => clearSession(activeModule)} sx={{ color: '#FF516A', mb: 1, '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
           <LogoutIcon sx={{ fontSize: 24 }} />
         </IconButton>
       )}

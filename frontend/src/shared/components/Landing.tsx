@@ -1,20 +1,33 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
 import {
   Box, Typography, Button, TextField, Alert, CircularProgress,
-  Paper
+  Collapse, GlobalStyles, Paper
 } from '@mui/material'
 import LockIcon         from '@mui/icons-material/Lock'
 import TrendingUpIcon   from '@mui/icons-material/TrendingUp'
 import api              from '../api/client'
 import { useAppStore }  from '../store/appStore'
 
+// The two entrance animations, as CSS. `prefers-reduced-motion` is honoured, which
+// the framer-motion version did not do.
+const landingAnimations = (
+  <GlobalStyles styles={{
+    '@keyframes fbRiseIn': {
+      from: { opacity: 0, transform: 'translateY(20px)' },
+      to:   { opacity: 1, transform: 'translateY(0)' },
+    },
+    '@media (prefers-reduced-motion: reduce)': {
+      '*': { animation: 'none !important', transition: 'none !important' },
+    },
+  }} />
+)
+
 export default function Landing() {
   const [loginPan, setLoginPan] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
-  const { setPan } = useAppStore()
+  const setPan = useAppStore((s) => s.setPan)
   const navigate = useNavigate()
 
   const handleLogin = async () => {
@@ -45,18 +58,15 @@ export default function Landing() {
         overflow: 'hidden',
       }}
     >
+      {landingAnimations}
+
       {/* Dynamic Background Glows */}
       <Box sx={{ position: 'absolute', top: '-10%', left: '10%', width: 600, height: 600, background: 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 60%)', filter: 'blur(80px)', pointerEvents: 'none' }} />
       <Box sx={{ position: 'absolute', bottom: '-20%', right: '10%', width: 700, height: 700, background: 'radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 60%)', filter: 'blur(80px)', pointerEvents: 'none' }} />
       <Box sx={{ position: 'absolute', top: '30%', left: '50%', transform: 'translateX(-50%)', width: 800, height: 800, background: 'radial-gradient(circle, rgba(139,92,246,0.04) 0%, transparent 70%)', filter: 'blur(100px)', pointerEvents: 'none' }} />
 
       {/* Hero Section */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        style={{ zIndex: 1, width: '100%' }}
-      >
+      <Box sx={{ zIndex: 1, width: '100%', animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) both' }}>
         <Box sx={{ textAlign: 'center', mb: 6 }}>
           {/* Main App Badge */}
           <Box
@@ -106,15 +116,13 @@ export default function Landing() {
             Experience institutional-grade analytics spanning <strong style={{ color: '#F8FAFC' }}>Indian Stocks, Mutual Funds, and Tax Optimization.</strong>
           </Typography>
         </Box>
-      </motion.div>
+      </Box>
 
       {/* PAN Login Hub */}
-      <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
-        style={{ zIndex: 1, width: '100%', maxWidth: 540 }}
-      >
+      <Box sx={{
+        zIndex: 1, width: '100%', maxWidth: 540,
+        animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) 150ms both',
+      }}>
         <Paper
           className="glass"
           sx={{
@@ -156,13 +164,13 @@ export default function Landing() {
               />
             </Box>
 
-            <AnimatePresence mode="wait">
-              {error && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                  <Alert severity="error" sx={{ borderRadius: '12px', bgcolor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', '& .MuiAlert-icon': { color: '#EF4444' } }}>{error}</Alert>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* MUI's own Collapse rather than AnimatePresence: it does the same
+                enter/exit height transition and is already in the bundle, whereas
+                framer-motion was 36.7 KB gzipped in the first-paint graph for this
+                and two fade-ins. */}
+            <Collapse in={!!error} unmountOnExit>
+              <Alert severity="error" sx={{ borderRadius: '12px', bgcolor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', '& .MuiAlert-icon': { color: '#EF4444' } }}>{error}</Alert>
+            </Collapse>
 
             <Button
               variant="contained"
@@ -184,7 +192,7 @@ export default function Landing() {
             </Button>
           </Box>
         </Paper>
-      </motion.div>
+      </Box>
 
       {/* Footer */}
       <Typography variant="caption" display="block" textAlign="center" sx={{ mt: 8, mb: 2, color: '#475569', zIndex: 1, fontWeight: 600 }}>

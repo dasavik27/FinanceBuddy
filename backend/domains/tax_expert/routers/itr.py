@@ -40,8 +40,14 @@ def upload_itr(session_id: str, file: UploadFile = File(...)):
 
 
 @router.get("/{session_id}/tax/itr")
-async def get_itr(session_id: str):
-    """Retrieve previously uploaded ITR summary for comparison."""
+def get_itr(session_id: str):
+    """
+    Retrieve previously uploaded ITR summary for comparison.
+
+    Sync `def`: get_tax_session() can trigger _ensure_loaded(), which reads every
+    stored session blob from SQLite and json.loads each one - blocking work that
+    must not run on the event loop of a single-worker deployment.
+    """
     session = get_tax_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")

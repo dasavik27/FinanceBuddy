@@ -370,7 +370,11 @@ def get_performance(
 
 
 @router.get("/{session_id}/rolling/{fund_isin}")
-async def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 3):
+def rolling_returns_detail(session_id: str, fund_isin: str, window: int = 3):
+    # Sync `def` on purpose: get_session() does SQLite reads plus a live-NAV refresh
+    # on a cache miss, and fetch_benchmark_series() can go to the network. Under
+    # `async def` all of that ran on the single worker's event loop and blocked every
+    # other request, including /health.
     s    = get_session(session_id)
     df_h = s.df_h
     

@@ -1,15 +1,20 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Box, Tabs, Tab, alpha } from '@mui/material'
 import SummarizeIcon from '@mui/icons-material/Summarize'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import SavingsIcon from '@mui/icons-material/Savings'
 import ShowChartIcon from '@mui/icons-material/ShowChart'
-import TaxOverviewTab from './tax/TaxOverviewTab'
-import TaxIncomeTab from './tax/TaxIncomeTab'
-import TaxSavingsTab from './tax/TaxSavingsTab'
-import TaxCapitalGainsTab from './tax/TaxCapitalGainsTab'
-import TaxITRCompareTab from './tax/TaxITRCompareTab'
 import BalanceIcon from '@mui/icons-material/Balance'
+import { TabFallback } from '../../../shared/components/ui'
+
+// Lazy for the same reason as the mutual-fund tabs: these five were statically
+// imported, so viewing the Tax Summary also downloaded Capital Gains (the second
+// largest component in the app) and everything else.
+const TaxOverviewTab     = lazy(() => import('./tax/TaxOverviewTab'))
+const TaxIncomeTab       = lazy(() => import('./tax/TaxIncomeTab'))
+const TaxSavingsTab      = lazy(() => import('./tax/TaxSavingsTab'))
+const TaxCapitalGainsTab = lazy(() => import('./tax/TaxCapitalGainsTab'))
+const TaxITRCompareTab   = lazy(() => import('./tax/TaxITRCompareTab'))
 
 const TAX_TABS = [
   { label: 'Tax Summary', icon: <SummarizeIcon /> },
@@ -57,11 +62,13 @@ export default function TaxStrategyTab() {
         </Tabs>
       </Box>
 
-      {tab === 0 && <TaxOverviewTab />}
-      {tab === 1 && <TaxIncomeTab />}
-      {tab === 2 && <TaxSavingsTab />}
-      {tab === 3 && <TaxCapitalGainsTab />}
-      {tab === 4 && <TaxITRCompareTab />}
+      <Suspense fallback={<TabFallback />}>
+        {tab === 0 && <TaxOverviewTab />}
+        {tab === 1 && <TaxIncomeTab />}
+        {tab === 2 && <TaxSavingsTab />}
+        {tab === 3 && <TaxCapitalGainsTab />}
+        {tab === 4 && <TaxITRCompareTab />}
+      </Suspense>
     </Box>
   )
 }

@@ -3,12 +3,20 @@ services/market_indices.py
 Fetches and aligns index/benchmark data (Nifty 50, Sensex, Gold, etc.)
 from Yahoo Finance with mfapi.in historical mutual fund datasets.
 
-Architectural Upgrade (v9.0): 4-Tier Benchmark Splicing Engine
-To guarantee 100% uptime for index proxy benchmarking (e.g., Nifty Smallcap 250), this module implements a resilient fallback cascade:
+Benchmark splicing: a 3-tier fallback cascade for index proxy benchmarking
+(e.g. Nifty Smallcap 250), so a single upstream outage does not blank a chart:
 1. MFAPI.in (Primary): Fetches accurate NAVs from actual index funds.
 2. Yahoo Finance NSE (Fallback 1): If MFAPI is down, fetches NSE tickers (e.g. ^CNXSC).
-3. Yahoo Finance BSE (Fallback 2): If Yahoo drops NSE data (frequent issue), fetches BSE equivalents (e.g. BSE-SMLCAP.BO).
-4. NSELib (Fallback 3): If Yahoo completely delists the index, fetches direct from the NSE API.
+3. Yahoo Finance BSE (Fallback 2): If Yahoo drops NSE data (frequent issue), fetches
+   BSE equivalents (e.g. BSE-SMLCAP.BO).
+
+This used to claim a fourth tier reading directly from the NSE API via nselib. That
+function existed but nothing ever called it - `_fetch_benchmark_series_uncached` went
+no further than the BSE fallback - so the documented resilience was not real. It has
+been deleted rather than wired up: it was also the only outbound HTTP call in the
+backend with no timeout at all (nselib issues bare `requests.get`), plus a
+`time.sleep(0.5)` loop, which is precisely what must not run on a single worker.
+Restoring a fourth tier means giving it an explicit timeout first.
 """
 
 # yfinance is imported lazily inside the two functions that need it. It is a heavy
@@ -24,7 +32,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from shared.services.providers.factory import get_provider
-from shared.services.cache import MARKET_CACHE
+from shared.services.cache import MARKET_CACHE, ttl_for
 import logging
 logger = logging.getLogger(__name__)
 
@@ -41,6 +49,12 @@ _BENCH_L1_PREFIX = "bench_full|"
 # requested window never fragments the cache.
 _FULL_HORIZON_DAYS = 9999
 
+# TTL for the bounded-window fallback, including when it comes back empty. Shorter
+# than the main entry because this path only runs for tickers the primary fetch could
+# not satisfy: long enough to stop per-request retries, short enough to recover
+# quickly once the upstream does.
+_BENCH_FALLBACK_TTL = 900
+
 
 def clear_benchmark_cache():
     """Invalidate all cached benchmark series."""
@@ -51,7 +65,39 @@ def clear_benchmark_cache():
 # Live Market Summary
 # ---------------------------------------------------------------------------
 
+_MARKET_SUMMARY_KEY = "nifty_live_summary_v1"
+
+# Short, because this is a live quote. Long enough that N browser tabs polling on a
+# 60s interval collapse onto roughly one upstream call per minute in total.
+_MARKET_SUMMARY_TTL = 60
+
+
 def fetch_live_market_summary() -> Dict:
+    """
+    Live Nifty 50 price and 1D change, cached and single-flighted.
+
+    This was the only completely uncached network path left on a polled endpoint.
+    /market/summary is hit once a minute by every open tab, and the call below is
+    expensive in the worst case: yfinance's `fast_info` performs a cookie/crumb
+    handshake (30s default timeout) plus a quote fetch (30s) plus a timezone lookup
+    (10s). Yahoo rate-limiting is routine, and without a cache every poll from every
+    tab paid the full timeout while holding a worker thread.
+
+    The fallback dict is cached too - deliberately. Caching only successes means a
+    rate-limited upstream is retried on every single request, which is exactly when
+    you least want to be hammering it.
+    """
+    from shared import config
+
+    if config.CACHE_TTL_MINUTES <= 0:
+        return _fetch_live_market_summary_uncached()
+
+    return MARKET_CACHE.get_or_compute(
+        _MARKET_SUMMARY_KEY, _fetch_live_market_summary_uncached, _MARKET_SUMMARY_TTL
+    )
+
+
+def _fetch_live_market_summary_uncached() -> Dict:
     """
     Fetch live Nifty 50 price and 1D change from Yahoo Finance.
     Returns a safe fallback dict on any failure — never raises.
@@ -115,9 +161,14 @@ def fetch_benchmark_series(ticker: str, period_days: int = 365, refresh: bool = 
     Never returns fabricated data.
     """
     from shared import config
-    ttl_sec = config.CACHE_TTL_MINUTES * 60
-    if ttl_sec <= 0 or refresh:
+    if config.CACHE_TTL_MINUTES <= 0 or refresh:
         return _fetch_benchmark_series_uncached(ticker, period_days)
+
+    # Per-datatype TTL rather than the single global CACHE_TTL_MINUTES (default 60).
+    # Index history only changes at market close, so a 60-minute TTL meant
+    # re-downloading settled historical series ~24 times a day. The policy table
+    # already declared the right value; nothing was reading it.
+    ttl_sec = ttl_for("market_indices")
 
     # Cache ONE full-history series per ticker and slice locally.
     #
@@ -136,7 +187,18 @@ def fetch_benchmark_series(ticker: str, period_days: int = 365, refresh: bool = 
     if full is None or full.empty:
         # A few tickers only respond to a bounded window (Yahoo is inconsistent about
         # very long ranges), so fall back to honouring exactly what the caller asked.
-        return _fetch_benchmark_series_uncached(ticker, period_days)
+        #
+        # This fallback is itself cached, keyed by (ticker, period). Previously it was
+        # not, and because an empty result was stored in the full-history entry above,
+        # the code could never tell "not cached" from "cached as empty" - so a ticker
+        # Yahoo refuses re-ran the fallback on *every* request, forever. For a Yahoo
+        # symbol that path makes two downloads (~20s), and /benchmark-overlay asks for
+        # four benchmarks, so it was roughly 80s of dead upstream work per request.
+        return MARKET_CACHE.get_or_compute(
+            f"{_BENCH_L1_PREFIX}{ticker}|{period_days}",
+            lambda: _fetch_benchmark_series_uncached(ticker, period_days),
+            _BENCH_FALLBACK_TTL,
+        )
 
     return _slice_trailing_days(full, period_days)
 
@@ -155,13 +217,6 @@ def _slice_trailing_days(series: pd.Series, period_days: int) -> pd.Series:
     return series[series.index >= cutoff].copy()
 
 
-_NSELIB_MAP = {
-    "^CNXSC": "NIFTY SMALLCAP 250",
-    "NIFTYMIDCAP150.NS": "NIFTY MIDCAP 150",
-    "^CRSLDX": "NIFTY 500",
-    "^NSEI": "NIFTY 50"
-}
-
 # Reverse map for human names from NSE search
 _INDEX_ALIAS_MAP = {
     "NIFTY 50": "^NSEI",
@@ -173,50 +228,6 @@ _INDEX_ALIAS_MAP = {
     "S&P 500": "^GSPC",
     "GOLD": "GC=F"
 }
-
-def _fetch_nselib_series(index_name: str, period_days: int) -> pd.Series:
-    """Fetch index history from nselib in chunks (NSE API limits queries to 1 year)."""
-    try:
-        from nselib import capital_market
-    except ImportError:
-        logger.info("[NSELIB] nselib package not installed.")
-        return pd.Series(dtype=float)
-
-    import time
-    end = datetime.now()
-    dfs = []
-    
-    # Calculate how many 365-day chunks we need (Cap at 6 years to ensure 5Y math clears weekends)
-    chunks = min((period_days // 365) + 1, 6)
-        
-    for _ in range(chunks):
-        start = end - timedelta(days=365)
-        from_str = start.strftime("%d-%m-%Y")
-        to_str = end.strftime("%d-%m-%Y")
-        
-        try:
-            df = capital_market.index_data(index=index_name, from_date=from_str, to_date=to_str)
-            if isinstance(df, pd.DataFrame) and not df.empty and 'CLOSE_INDEX_VAL' in df.columns:
-                dfs.append(df[['TIMESTAMP', 'CLOSE_INDEX_VAL']])
-        except Exception as e:
-            # Fix #10: Log chunk failures instead of swallowing silently
-            logger.error(f"[NSELIB CHUNK ERROR] {index_name} ({from_str} to {to_str}): {e}")
-            
-        end = start - timedelta(days=1)
-        time.sleep(0.5) # respect NSE rate limits
-        
-    if dfs:
-        try:
-            full = pd.concat(dfs, ignore_index=True)
-            full['TIMESTAMP'] = pd.to_datetime(full['TIMESTAMP'], format='%d-%b-%Y')
-            full = full.sort_values('TIMESTAMP').set_index('TIMESTAMP')
-            series = pd.to_numeric(full['CLOSE_INDEX_VAL'], errors='coerce').dropna()
-            return series
-        except Exception as e:
-            logger.error(f"[NSELIB ERROR] Parsing failed: {e}")
-            
-    return pd.Series(dtype=float)
-
 
 _MFAPI_TO_YAHOO_MAP = {
     "120716": "^NSEI",          # Nifty 50

@@ -18,7 +18,13 @@ import threading
 import time
 from typing import Any, List, Optional, Tuple
 
-from shared.config import CACHE_DIR, CACHE_TTL_MINUTES
+# Imported as a module, deliberately: NOT `from shared.config import CACHE_TTL_MINUTES`.
+# That form binds the value at import time, while POST /market/config mutates the
+# module attribute - so the disk tier kept expiring against the boot-time TTL forever
+# while the in-process tier used the new one. Setting the TTL to 0 to disable caching
+# left this tier fully active.
+from shared import config
+from shared.config import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +68,7 @@ class MarketCache:
     @classmethod
     def get(cls, key: str) -> Optional[Any]:
         """Retrieve data from cache if present and not expired."""
-        if CACHE_TTL_MINUTES <= 0:
+        if config.CACHE_TTL_MINUTES <= 0:
             return None
 
         path = cls._get_path(key)
@@ -76,7 +82,7 @@ class MarketCache:
             cls._unlink(path)
             return None
 
-        if (time.time() - data.get("_timestamp", 0)) > (CACHE_TTL_MINUTES * 60):
+        if (time.time() - data.get("_timestamp", 0)) > (config.CACHE_TTL_MINUTES * 60):
             # Delete rather than merely reporting a miss, otherwise expired entries
             # accumulate forever.
             cls._unlink(path)
@@ -95,7 +101,7 @@ class MarketCache:
         never the truncated middle of a write, which the previous open()+dump()
         allowed.
         """
-        if CACHE_TTL_MINUTES <= 0:
+        if config.CACHE_TTL_MINUTES <= 0:
             return
 
         path = cls._get_path(key)
@@ -192,7 +198,7 @@ class MarketCache:
 
         Returns (expired_removed, evicted_for_size).
         """
-        ttl_sec = CACHE_TTL_MINUTES * 60
+        ttl_sec = config.CACHE_TTL_MINUTES * 60
         entries: List[Tuple[float, int, str]] = []  # (mtime, size, path)
         expired = 0
         now = time.time()
@@ -252,7 +258,7 @@ class MarketCache:
             "entries": count,
             "bytes": total,
             "bytes_budget": MAX_CACHE_BYTES,
-            "ttl_minutes": CACHE_TTL_MINUTES,
+            "ttl_minutes": config.CACHE_TTL_MINUTES,
         }
 
     # -- helpers ------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { fmtInr } from '../../utils/fmt'
-import React, { useState, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Box, Typography, Chip, Menu, MenuItem, Checkbox,
          ListItemText, IconButton, Tooltip as MuiTooltip,
          Divider, alpha as muiAlpha } from '@mui/material'
@@ -182,25 +182,37 @@ export default function PortfolioChart({
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Map benchmark names to colors
-  const benchColors: Record<string, string> = {}
-  selectedBenchmarks.forEach((bm, i) => {
-    benchColors[bm] = BENCHMARK_COLORS[i % BENCHMARK_COLORS.length]
-  })
+  const benchColors: Record<string, string> = useMemo(() => {
+    const colors: Record<string, string> = {}
+    selectedBenchmarks.forEach((bm, i) => {
+      colors[bm] = BENCHMARK_COLORS[i % BENCHMARK_COLORS.length]
+    })
+    return colors
+  }, [selectedBenchmarks])
 
-  // Build combined data array with date-aware alignment for overlay benchmarks
-  const combinedData = dates.map((d, i) => {
+  // Build combined data array with date-aware alignment for overlay benchmarks.
+  //
+  // MUST stay memoized. This used to be a bare dates.map(), and it sat inside a
+  // feedback loop: onMouseMove sets hoveredPoint from e.activePayload[0].payload, and
+  // because the array was rebuilt every render that payload was a fresh object every
+  // time, so the setState always changed identity -> re-render -> rebuild -> recharts
+  // sees a new `data` prop and re-diffs every series, including the Brush's nested
+  // full-resolution chart. Moving the cursor across a 5-year daily series with three
+  // comparators re-derived ~5,500 point objects and re-rendered two SVG charts per
+  // mousemove event.
+  const combinedData = useMemo(() => dates.map((d, i) => {
     const point: any = { date: d }
-    
+
     // Portfolio is always aligned by index i
     let pk = parseFloat(((portfolioSeries[i] || 100) * 10).toFixed(2))
     point.PortfolioK = isNaN(pk) ? 1000 : pk
-    
+
     // Primary benchmark is also aligned by index i
     if (selectedBenchmarks.includes(primaryBenchmark)) {
       let bk = parseFloat(((primarySeries[i] || 100) * 10).toFixed(2))
       point[primaryBenchmark] = isNaN(bk) ? 1000 : bk
     }
-    
+
     // Overlay benchmarks
     Object.entries(overlaySeries).forEach(([bm, series]) => {
       if (selectedBenchmarks.includes(bm)) {
@@ -210,7 +222,7 @@ export default function PortfolioChart({
       }
     })
     return point
-  })
+  }), [dates, portfolioSeries, primarySeries, overlaySeries, selectedBenchmarks, primaryBenchmark])
 
   // Reset brush when period/data changes
   useEffect(() => {
@@ -221,20 +233,35 @@ export default function PortfolioChart({
   const basePoint = combinedData.length > 0 ? combinedData[brushRange.startIndex] : null
   const startDate = basePoint ? basePoint.date : ''
 
-  // Y-axis domain
-  let allVals: number[] = []
-  combinedData.forEach(d => {
-    allVals.push(d.PortfolioK)
-    selectedBenchmarks.forEach(bm => {
-      if (d[bm] !== undefined && !isNaN(d[bm])) allVals.push(d[bm])
-    })
-  })
-  
-  const yMin = allVals.length > 0 ? Math.min(...allVals) : 900
-  const yMax = allVals.length > 0 ? Math.max(...allVals) : 1500
-  const yPad = (yMax - yMin) * 0.08
-  const yDomain: [number, number] = [Math.floor((yMin - yPad) / 100) * 100,
-                                      Math.ceil((yMax + yPad)  / 100) * 100]
+  // Y-axis domain.
+  //
+  // Tracked with a running min/max rather than collecting every value into an array
+  // and spreading it into Math.min/Math.max. The spread was also a latent crash: an
+  // "ALL" period on a long history can exceed the JS engine's argument limit and throw
+  // RangeError: Maximum call stack size exceeded.
+  const yDomain: [number, number] = useMemo(() => {
+    let yMin = Infinity
+    let yMax = -Infinity
+
+    for (const d of combinedData) {
+      if (!isNaN(d.PortfolioK)) {
+        if (d.PortfolioK < yMin) yMin = d.PortfolioK
+        if (d.PortfolioK > yMax) yMax = d.PortfolioK
+      }
+      for (const bm of selectedBenchmarks) {
+        const v = d[bm]
+        if (v !== undefined && !isNaN(v)) {
+          if (v < yMin) yMin = v
+          if (v > yMax) yMax = v
+        }
+      }
+    }
+
+    if (yMin === Infinity) return [900, 1500]
+
+    const yPad = (yMax - yMin) * 0.08
+    return [Math.floor((yMin - yPad) / 100) * 100, Math.ceil((yMax + yPad) / 100) * 100]
+  }, [combinedData, selectedBenchmarks])
 
   const fmtK = (v: number) => {
     return new Intl.NumberFormat('en-IN').format(v)
@@ -243,12 +270,20 @@ export default function PortfolioChart({
   const toggleFullscreen = useCallback(() => {
     if (!fullscreen) {
       containerRef.current?.requestFullscreen?.()
-      setFullscreen(true)
     } else {
       document.exitFullscreen?.()
-      setFullscreen(false)
     }
   }, [fullscreen])
+
+  // Track the browser's actual fullscreen state instead of assuming our button is the
+  // only way it changes. Pressing Esc exits fullscreen without telling us, which left
+  // `fullscreen` stuck true — the chart kept its 540px fullscreen height inside a
+  // normal-sized card until the button was clicked twice.
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === containerRef.current)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
 
   const openCompare  = (e: React.MouseEvent<HTMLElement>) => setCompareAnchor(e.currentTarget)
   const closeCompare = () => setCompareAnchor(null)
@@ -447,9 +482,13 @@ export default function PortfolioChart({
             data={combinedData} 
             margin={{ top: 8, right: 24, left: 8, bottom: 0 }}
             onMouseMove={(e: any) => {
-              if (e && e.activePayload && e.activePayload.length > 0) {
-                setHoveredPoint(e.activePayload[0].payload)
-              }
+              const next = e?.activePayload?.[0]?.payload
+              if (!next) return
+              // Bail when the cursor is still over the same point. Setting state
+              // unconditionally on every mousemove re-rendered the whole chart for
+              // pixel movements within one data point — several times per point at
+              // typical mouse sample rates.
+              setHoveredPoint((prev: any) => (prev?.date === next.date ? prev : next))
             }}
             onMouseLeave={() => setHoveredPoint(null)}
           >

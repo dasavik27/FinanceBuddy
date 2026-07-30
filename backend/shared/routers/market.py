@@ -4,6 +4,8 @@ Live market indices and global clock.
 """
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+from shared.services.cache import get_cache_headers
 from shared.services.market_indices import fetch_live_market_summary
 from datetime import datetime
 
@@ -11,13 +13,20 @@ router = APIRouter()
 
 @router.get("/summary")
 def get_market_summary():
-    """Returns live market indices and server time."""
+    """
+    Live market indices and server time.
+
+    Index levels are user-independent market data, so this is one of the few
+    responses that may legitimately be shared-cacheable. The header lets the browser
+    absorb the frontend's 60-second poll instead of every tick reaching the server.
+    """
     summary = fetch_live_market_summary()
-    return {
+    body = {
         **summary,
         "server_time": datetime.now().strftime("%H:%M:%S"),
         "date": datetime.now().strftime("%d %b, %Y")
     }
+    return JSONResponse(content=body, headers=get_cache_headers("market_quote"))
 @router.get("/nav/{isin}")
 def get_live_nav(isin: str):
     """Fetch live NAV for a specific fund by ISIN."""
@@ -31,14 +40,22 @@ def get_market_config():
     from shared import config
     return {"cache_ttl": config.CACHE_TTL_MINUTES}
 
+# A TTL of 0 or less disabled every cache tier, turning each request into a full
+# upstream fan-out - including the AMFI downloads. On ~0.1 vCPU that is a trivial
+# denial of service, and it persisted to SQLite so it survived a restart. Floored so
+# the endpoint can tune caching but not switch it off.
+MIN_CACHE_TTL_MINUTES = 1
+
+
 @router.post("/config")
 def update_market_config(ttl: int):
     from shared import config
     from shared.storage import DB_PATH
     import sqlite3
-    
+
+    ttl = max(MIN_CACHE_TTL_MINUTES, ttl)
     config.CACHE_TTL_MINUTES = ttl
-    
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute(

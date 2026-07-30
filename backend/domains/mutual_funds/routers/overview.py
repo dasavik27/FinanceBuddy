@@ -115,7 +115,12 @@ def get_benchmark_overlay(
     result["series"]["Portfolio"] = comp.get("portfolio", [])
     
     if not bm_list or not result["dates"]:
-        headers = get_cache_headers("comparison_data")
+        # NOT "comparison_data": that type is `public`, and this body carries
+        # result["series"]["Portfolio"] - the user's own CAS-derived value series.
+        # `public` authorizes a CDN or corporate proxy to store one user's portfolio
+        # and serve it to another. Only genuinely user-independent market data may
+        # ever use a public type; see the note in shared/services/cache.py.
+        headers = get_cache_headers("holdings_detail")
         return JSONResponse(content=result, headers=headers)
         
     start_val = result["series"]["Portfolio"][0] if result["series"]["Portfolio"] else 100.0

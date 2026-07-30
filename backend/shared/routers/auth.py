@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import sqlite3
 import re
+from shared.identity import mask_pan
 from shared.storage import DB_PATH
 import logging
 logger = logging.getLogger(__name__)
@@ -24,24 +25,23 @@ def login_with_pan(req: LoginRequest):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.execute("SELECT pan_id FROM users WHERE pan_id = ?", (pan,))
         user = cursor.fetchone()
-        
+
         if not user:
-            # Create the user profile
             conn.execute("INSERT INTO users (pan_id) VALUES (?)", (pan,))
-            
-            # MIGRATION STRATEGY: Attach orphaned sessions to the FIRST user created.
-            # This ensures the user doesn't lose their existing CAS files after this update.
-            cursor = conn.execute("SELECT COUNT(*) FROM users")
-            user_count = cursor.fetchone()[0]
-            if user_count == 1:
-                logger.info(f"[AUTH] First user {pan} created. Migrating orphaned sessions...")
-                conn.execute("UPDATE sessions SET pan_id = ? WHERE pan_id IS NULL", (pan,))
-                
             conn.commit()
-            logger.info(f"[AUTH] New user profile created for PAN: {pan}")
+            # NOTE: there used to be a migration here that claimed every orphaned
+            # session (pan_id IS NULL) for the first user created, so existing
+            # uploads survived the introduction of PANs. It has been removed.
+            #
+            # On an ephemeral filesystem the `users` table resets on every restart,
+            # so "the first user" recurred on each deploy - and the next person to
+            # log in inherited a stranger's uploads and could read them through
+            # /history. It was an upgrade shim for a database that no longer
+            # survives restarts.
+            logger.info(f"[AUTH] New user profile created for PAN: {mask_pan(pan)}")
         else:
-            logger.info(f"[AUTH] Existing user logged in: {pan}")
-            
+            logger.info(f"[AUTH] Existing user logged in: {mask_pan(pan)}")
+
     return {"status": "success", "pan": pan}
 
 @router.post("/logout")
@@ -51,5 +51,8 @@ def logout_user(req: LoginRequest):
     sessions = get_sessions_by_pan(pan)
     for s in sessions:
         delete_tax_session(s["session_id"])
-    logger.info(f"[AUTH] Logged out {pan} and cleared {len(sessions)} tax sessions from memory and disk.")
+    logger.info(
+        f"[AUTH] Logged out {mask_pan(pan)} and cleared {len(sessions)} "
+        "tax sessions from memory and disk."
+    )
     return {"status": "success"}

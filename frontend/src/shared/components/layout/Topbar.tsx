@@ -36,13 +36,16 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const sid = useSessionId()
   const pan = usePan()
   const logout = useLogout()
-  const { clearSession } = useAppStore()
+  // Selector form: the destructured `useAppStore()` re-rendered this whole component
+  // (two MUI Menus with large inline sx objects) on every unrelated store write.
+  const clearSession = useAppStore((s) => s.clearSession)
   const navigate = useNavigate()
   const lastSynced = useLastSynced()
   const triggerRefresh = useRefreshTrigger()
   const activeModule = useAppStore((s) => s.activeModule)
 
-  const { data: market } = useMarketSummary()
+  // Only poll while the widget that displays it is actually on screen.
+  const { data: market } = useMarketSummary(activeModule === 'indian_stocks')
   const { data: config } = useMarketConfig()
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)

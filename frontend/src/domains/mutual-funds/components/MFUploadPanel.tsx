@@ -137,7 +137,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState<string | null>(null)
   const [password, setPassword] = useState('')
-  const { setSession }      = useAppStore()
+  const setSession = useAppStore((s) => s.setSession)
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -248,7 +248,8 @@ interface SwitchPopoverProps {
 export function SwitchStatementButton({ sessionId }: SwitchPopoverProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [history, setHistory]   = useState<any[]>([])
-  const { setSessionById, pan } = useAppStore()
+  const setSessionById = useAppStore((s) => s.setSessionById)
+  const pan = useAppStore((s) => s.pan)
   const open = Boolean(anchorEl)
 
   const fetchHistory = useCallback(() => {
@@ -353,7 +354,9 @@ export default function MFUploadPanel() {
   const [error, setError] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [history, setHistory] = useState<any[]>([])
-  const { setSession, setSessionById, pan } = useAppStore()
+  const setSession = useAppStore((s) => s.setSession)
+  const setSessionById = useAppStore((s) => s.setSessionById)
+  const pan = useAppStore((s) => s.pan)
 
   const fetchHistory = useCallback(() => {
     if (!pan) return

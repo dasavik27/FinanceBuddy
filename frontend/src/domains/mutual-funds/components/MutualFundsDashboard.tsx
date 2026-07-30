@@ -1,17 +1,23 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Box, Tabs, Tab, Paper, Typography } from '@mui/material'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import { useMfSessionId, useAppStore } from '../../../shared/store/appStore'
 import MFUploadPanel from './MFUploadPanel'
-import OverviewTab    from './OverviewTab'
-import HoldingsTab    from './HoldingsTab'
-import PerformanceTab from './PerformanceTab'
-import CompareTab     from './CompareTab'
-import InsightsTab    from './InsightsTab'
-import JourneyTab     from './JourneyTab'
-import UploadHistory  from '../../../shared/components/dashboard/UploadHistory'
-import { ErrorBoundary } from '../../../shared/components/ui'
+import { ErrorBoundary, TabFallback } from '../../../shared/components/ui'
+
+// Tabs are lazy so opening Overview does not also download Compare, Performance and
+// Statement History. Route-level splitting already existed one level up, in
+// layout/Dashboard.tsx, but every tab was statically imported here — so the whole
+// module landed in one 45 KB gzipped (177 KB raw) chunk regardless of which tab the
+// user actually visited. CompareTab alone is the largest component in the app.
+const OverviewTab    = lazy(() => import('./OverviewTab'))
+const HoldingsTab    = lazy(() => import('./HoldingsTab'))
+const PerformanceTab = lazy(() => import('./PerformanceTab'))
+const CompareTab     = lazy(() => import('./CompareTab'))
+const InsightsTab    = lazy(() => import('./InsightsTab'))
+const JourneyTab     = lazy(() => import('./JourneyTab'))
+const UploadHistory  = lazy(() => import('../../../shared/components/dashboard/UploadHistory'))
 
 export default function MutualFundsDashboard() {
   const location = useLocation()
@@ -90,17 +96,19 @@ export default function MutualFundsDashboard() {
         </Box>
       </Paper>
 
-      <Routes>
-        <Route index               element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
-        <Route path="overview"     element={<ErrorBoundary fallbackMessage="Overview tab encountered a rendering error."><OverviewTab /></ErrorBoundary>} />
-        <Route path="holdings"     element={<ErrorBoundary fallbackMessage="Holdings tab encountered a rendering error."><HoldingsTab /></ErrorBoundary>} />
-        <Route path="performance"  element={<ErrorBoundary fallbackMessage="Performance tab encountered a rendering error."><PerformanceTab /></ErrorBoundary>} />
-        <Route path="compare"      element={<ErrorBoundary fallbackMessage="Compare tab encountered a rendering error."><CompareTab /></ErrorBoundary>} />
-        <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
-        <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsTab /></ErrorBoundary>} />
-        <Route path="history"      element={<ErrorBoundary fallbackMessage="Statement History encountered a rendering error."><UploadHistory /></ErrorBoundary>} />
-        <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
-      </Routes>
+      <Suspense fallback={<TabFallback />}>
+        <Routes>
+          <Route index               element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
+          <Route path="overview"     element={<ErrorBoundary fallbackMessage="Overview tab encountered a rendering error."><OverviewTab /></ErrorBoundary>} />
+          <Route path="holdings"     element={<ErrorBoundary fallbackMessage="Holdings tab encountered a rendering error."><HoldingsTab /></ErrorBoundary>} />
+          <Route path="performance"  element={<ErrorBoundary fallbackMessage="Performance tab encountered a rendering error."><PerformanceTab /></ErrorBoundary>} />
+          <Route path="compare"      element={<ErrorBoundary fallbackMessage="Compare tab encountered a rendering error."><CompareTab /></ErrorBoundary>} />
+          <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
+          <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsTab /></ErrorBoundary>} />
+          <Route path="history"      element={<ErrorBoundary fallbackMessage="Statement History encountered a rendering error."><UploadHistory /></ErrorBoundary>} />
+          <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
+        </Routes>
+      </Suspense>
     </Box>
   )
 }

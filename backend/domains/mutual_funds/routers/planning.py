@@ -16,6 +16,7 @@ from domains.mutual_funds.finance import (
     simulate_historical_sip,
 )
 from shared.services.market_data import fetch_nav_series_by_code
+from domains.mutual_funds.derived import cached_xirr_by_fy
 from domains.mutual_funds.tax_lots import portfolio_tax_summary
 
 router = APIRouter()
@@ -86,7 +87,7 @@ def get_xirr_by_fy(session_id: str):
     elsewhere, so it can't drift from the headline number.
     """
     portfolio = get_session(session_id)
-    return {"fy_series": compute_xirr_by_fy(portfolio.df_t, portfolio.df_h)}
+    return {"fy_series": cached_xirr_by_fy(portfolio.df_t, portfolio.df_h)}
 
 
 @router.get("/{session_id}/sip-attribution")
