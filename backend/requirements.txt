@@ -35,14 +35,12 @@ requests==2.33.1
 python-dateutil==2.9.0.post0
 
 # ── File parsing ───────────────────────────────────────────────────────────
-# PINNED DELIBERATELY AT 0.8.1, NOT 1.3.0.
-# This file previously pinned 1.3.0 while every local test ran against 0.8.1, so the
-# CAS parser - the app's primary input path - was never exercised at the pinned
-# version. 0.8.1 is what the suite validates, so that is what ships.
-# Upgrading to 1.3.0 is worth doing, but it is a major-version jump on PDF parsing
-# with no test coverage over real CAS documents: treat it as its own change, with a
-# few real statements parsed before and after.
-casparser==0.8.1
+# PINNED DELIBERATELY AT 0.9.1, NOT 1.3.0.
+# This file previously pinned 1.3.0 while every local test ran against 0.8.1.
+# Upgraded to 0.9.1 to resolve a strict pdfminer.six dependency conflict with pdfplumber.
+# Upgrading to 1.3.0 is still a major-version jump on PDF parsing
+# with no test coverage over real CAS documents.
+casparser==0.9.1
 pdfplumber==0.11.10
 pypdf==6.14.2
 # Excel engines for broker P&L uploads: openpyxl handles .xlsx, xlrd handles
