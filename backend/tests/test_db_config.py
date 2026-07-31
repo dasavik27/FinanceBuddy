@@ -1,143 +1,33 @@
 """
-SQLite configuration and index coverage.
+Schema, index coverage and payload round-tripping.
 
-Under the default rollback journal a writer takes an EXCLUSIVE lock on the whole
-database, so a CAS upload blocked every reader and, past the busy timeout, returned
-"database is locked" as a 500. These assert the settings that prevent that, plus the
-indexes that stop each PAN-scoped read being a full table scan.
+The WAL / busy_timeout / synchronous tests that used to live here are gone: they
+asserted SQLite pragmas, which have no Postgres equivalent. What survives is the part
+that was never really about SQLite - that a session lookup is an index seek rather
+than a scan, and that a payload survives the round trip byte-for-byte.
+
+The connection-lifetime tests are gone too. `with db.connect()` now checks a
+connection out of a pool and returns it, so "is it closed" is the pool's invariant
+rather than this module's.
 """
-
-import sqlite3
 
 import pandas as pd
 import pytest
 
-from shared import db as db_module
-from shared import storage
+from shared import db, storage
 
 from tests.conftest import requires_db
 
-# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
-# than failing with a connection error when TEST_DATABASE_URL is unset - see
-# tests/conftest.py.
 pytestmark = requires_db
 
 
-
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "meta.sqlite3"
-    # shared/db.py is the only module that names the database, so one patch redirects
-    # every store. db.connect() reads DB_PATH at call time, not at import.
-    monkeypatch.setattr(db_module, "DB_PATH", str(path))
-    storage._init_db()
-    return str(path)
+def seeded(clean_db):
+    """A saved session to query against."""
+    return clean_db
 
 
-# ── one connection authority ──────────────────────────────────────────────────
-
-def test_only_shared_db_opens_connections():
-    """
-    Every database connection must come from shared/db.py.
-
-    Seven call sites used to open their own. Five of them used a bare
-    `sqlite3.connect` with no busy_timeout, so a concurrent CAS upload - which holds a
-    write transaction for most of a second - made them fail outright with "database is
-    locked" instead of waiting; and `with sqlite3.connect(...)` commits without
-    closing, so each held its locks until garbage collection.
-
-    This also guards the Postgres migration: a connection opened outside shared/db.py
-    is one that will not come from the pool.
-    """
-    import pathlib
-
-    backend = pathlib.Path(__file__).resolve().parent.parent
-    allowed = {backend / "shared" / "db.py"}
-
-    offenders = []
-    for path in backend.rglob("*.py"):
-        if path in allowed or "tests" in path.parts or ".venv" in path.parts:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if "sqlite3.connect(" in text:
-            offenders.append(str(path.relative_to(backend)))
-
-    assert not offenders, (
-        "these modules open their own connection instead of using shared.db.connect(): "
-        f"{offenders}"
-    )
-
-
-# ── pragmas ───────────────────────────────────────────────────────────────────
-
-def test_wal_is_enabled(db):
-    with storage._connect() as conn:
-        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-    assert mode.lower() == "wal", f"journal_mode is {mode!r}; readers will block on writes"
-
-
-def test_busy_timeout_is_set(db):
-    with storage._connect() as conn:
-        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-    assert timeout >= 5000, f"busy_timeout is {timeout}ms; writers will fail instantly under contention"
-
-
-def test_synchronous_is_not_full(db):
-    """FULL fsyncs every commit, which buys nothing on an ephemeral disk."""
-    with storage._connect() as conn:
-        sync = conn.execute("PRAGMA synchronous").fetchone()[0]
-    assert sync == 1, f"synchronous={sync}; expected 1 (NORMAL)"
-
-
-def test_connection_is_closed_even_on_error(db):
-    """`with sqlite3.connect(...)` commits but does not close. This wrapper must."""
-    captured = {}
-
-    class Boom(Exception):
-        pass
-
-    with pytest.raises(Boom):
-        with storage._connect() as conn:
-            captured["conn"] = conn
-            raise Boom()
-
-    # A closed connection raises ProgrammingError on use.
-    with pytest.raises(sqlite3.ProgrammingError):
-        captured["conn"].execute("SELECT 1")
-
-
-def test_transaction_rolls_back_on_error(db):
-    class Boom(Exception):
-        pass
-
-    with pytest.raises(Boom):
-        with storage._connect() as conn:
-            conn.execute("INSERT INTO users (pan_id) VALUES ('ROLLBACK1A')")
-            raise Boom()
-
-    with storage._connect() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM users WHERE pan_id = 'ROLLBACK1A'"
-        ).fetchone()[0]
-    assert count == 0, "failed transaction left its row behind"
-
-
-# ── indexes ───────────────────────────────────────────────────────────────────
-
-def test_pan_scoped_history_query_uses_an_index(db):
-    with storage._connect() as conn:
-        plan = conn.execute(
-            "EXPLAIN QUERY PLAN "
-            "SELECT * FROM sessions WHERE pan_id = ? AND upload_type = ? "
-            "ORDER BY created_at DESC",
-            ("AAAAA1111A", "mutual_funds"),
-        ).fetchall()
-    text = " ".join(str(row) for row in plan)
-    assert "SEARCH" in text, f"expected an index seek, got: {text}"
-    assert "USE TEMP B-TREE" not in text, f"sort not covered by the index: {text}"
-
-
-def test_session_payload_lookup_is_a_primary_key_seek(db):
+def test_session_payload_lookup_is_a_primary_key_seek(clean_db):
     """
     load_session reads the payload with `WHERE session_id=?` on a table holding every
     session's blob, so that lookup must not be a scan.
@@ -153,9 +43,9 @@ def test_session_payload_lookup_is_a_primary_key_seek(db):
     }])
     storage.save_session("sid-index-test", df_h, df_t, pd.DataFrame(), is_partial=False)
 
-    with storage._connect() as conn:
+    with db.connect() as conn:
         plan = conn.execute(
-            "EXPLAIN QUERY PLAN "
+            "EXPLAIN "
             "SELECT holdings, transactions, sips, meta FROM session_payloads "
             "WHERE session_id = ?",
             ("sid-index-test",),
@@ -164,12 +54,12 @@ def test_session_payload_lookup_is_a_primary_key_seek(db):
     assert "SEARCH" in text, f"payload lookup is not an index seek: {text}"
 
 
-def test_session_payload_write_is_one_row_per_session(db):
+def test_session_payload_write_is_one_row_per_session(clean_db):
     """Rehydration is one round trip, where the mf_* version took three."""
     df_h = pd.DataFrame([{"Fund": "F", "Units": 1.0, "Market Value": 100.0, "Invested": 90.0}])
     storage.save_session("sid-one-row", df_h, pd.DataFrame(), pd.DataFrame(), is_partial=False)
 
-    with storage._connect() as conn:
+    with db.connect() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM session_payloads WHERE session_id = ?", ("sid-one-row",)
         ).fetchone()[0]
@@ -178,7 +68,7 @@ def test_session_payload_write_is_one_row_per_session(db):
 
 # ── schema drift ──────────────────────────────────────────────────────────────
 
-def test_parser_drift_does_not_break_uploads(db):
+def test_parser_drift_does_not_break_uploads(clean_db):
     """
     A parser gaining, losing or renaming a field must not break uploads.
 
@@ -214,7 +104,7 @@ def test_parser_drift_does_not_break_uploads(db):
     assert "BrandNewColumn" not in loaded[0].columns
 
 
-def test_payload_round_trip_preserves_datetimes_in_every_frame(db):
+def test_payload_round_trip_preserves_datetimes_in_every_frame(clean_db):
     """
     Both transactions and SIPs carry a Date column that downstream code (FIFO lots,
     XIRR, rolling returns) requires as datetime64.
@@ -244,7 +134,7 @@ def test_payload_round_trip_preserves_datetimes_in_every_frame(db):
 
 
 @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
-def test_payload_preserves_datetime_resolution(db, unit):
+def test_payload_preserves_datetime_resolution(clean_db, unit):
     """
     The codec writes naive datetimes as integer epoch counts, so it must restore them
     at the resolution they were written at.
@@ -274,7 +164,7 @@ def test_payload_preserves_datetime_resolution(db, unit):
     )
 
 
-def test_payload_preserves_missing_datetimes_as_nat(db):
+def test_payload_preserves_missing_datetimes_as_nat(clean_db):
     """NaT must survive the integer epoch encoding rather than becoming 1677-09-21."""
     df_t = pd.DataFrame({
         "Date": pd.to_datetime(["2024-01-01", None]),
@@ -289,7 +179,7 @@ def test_payload_preserves_missing_datetimes_as_nat(db):
     assert pd.isna(out_t["Date"].iloc[1])
 
 
-def test_empty_frames_round_trip_without_losing_their_columns(db):
+def test_empty_frames_round_trip_without_losing_their_columns(clean_db):
     """A session with no SIPs must restore an empty frame, not a malformed one."""
     df_h = pd.DataFrame([{"Fund": "F", "Units": 1.0, "Market Value": 100.0, "Invested": 90.0}])
     storage.save_session("sid-empty", df_h, pd.DataFrame(), pd.DataFrame(), is_partial=False)

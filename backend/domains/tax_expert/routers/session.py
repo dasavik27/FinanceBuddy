@@ -19,7 +19,10 @@ from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownC
 from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.broker_parser import parse_zerodha_tax_pnl
 from domains.tax_expert.reconciliation import reconcile_trades, _normalize
-from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_user, update_ais_data
+from domains.tax_expert.tax_sessions import (
+    create_tax_session, get_tax_session, get_sessions_by_user,
+    delete_tax_session, update_ais_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -279,3 +282,27 @@ def get_tax_history():
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in to view your tax history.")
     return {"sessions": get_sessions_by_user(caller)}
+
+
+@router.delete("/tax-history/{session_id}")
+def delete_tax_history_entry(session_id: str):
+    """
+    Delete one of the caller's own tax sessions.
+
+    Mirrors DELETE /history/{session_id} on the mutual-funds side, which had no tax
+    equivalent - `delete_tax_session` existed but was only ever reached from logout,
+    so a user could accumulate sessions with no way to remove one.
+
+    404 rather than 403 when the session belongs to someone else: a 403 confirms it
+    exists, which turns id guessing into an enumeration oracle.
+    """
+    caller = identity.current_user_id()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    # get_tax_session applies the ownership check and returns None either way.
+    if get_tax_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="Tax session not found.")
+
+    delete_tax_session(session_id)
+    return {"status": "success", "deleted_session_id": session_id}

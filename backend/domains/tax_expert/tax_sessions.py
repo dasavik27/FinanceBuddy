@@ -24,6 +24,7 @@ normal — the API returns 404 and the UI prompts for re-upload.
 
 import uuid
 import json
+import hashlib
 import os
 import logging
 import threading
@@ -254,18 +255,21 @@ def _persist_one(session_id: str):
         user_id = session.get("user_id") or None
         version = session.get("_version", 0)
         summary = _summarise(session)
+        fingerprint = _ais_fingerprint(session.get("ais_data") or {}, user_id)
 
     try:
         with db.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO sessions (session_id, user_id, upload_type, summary, updated_at)
-                VALUES (%s, %s, 'tax_expert', %s, now())
+                INSERT INTO sessions
+                    (session_id, user_id, upload_type, data_hash, summary, updated_at)
+                VALUES (%s, %s, 'tax_expert', %s, %s, now())
                 ON CONFLICT (session_id) DO UPDATE SET
+                    data_hash = EXCLUDED.data_hash,
                     summary = EXCLUDED.summary,
                     updated_at = now()
                 """,
-                (session_id, user_id, Jsonb(summary)),
+                (session_id, user_id, fingerprint, Jsonb(summary)),
             )
             conn.execute(
                 """
@@ -377,6 +381,42 @@ def get_session_version(session_id: str) -> int:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _ais_fingerprint(ais_data: dict, user_id: Optional[str]) -> str:
+    """
+    A deterministic fingerprint of a parsed AIS, scoped to its owner.
+
+    Mirrors what the mutual-funds side does with a transaction ledger. Without it,
+    re-uploading the same AIS made a new session every time - and since the resident
+    store caps at 8, a few re-uploads would evict the session the user was actually
+    working in.
+
+    Owner-scoped for the same reason the ledger hash is: two people must never dedup
+    onto each other's session. sort_keys makes it stable across dict ordering.
+    """
+    body = json.dumps(ais_data, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(f"{user_id or ''}|{body}".encode("utf-8")).hexdigest()
+
+
+def find_duplicate(ais_data: dict, user_id: Optional[str]) -> Optional[str]:
+    """This owner's existing session for an identical AIS, if there is one."""
+    if not user_id:
+        return None
+    try:
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id FROM sessions
+                WHERE data_hash = %s AND user_id = %s AND upload_type = 'tax_expert'
+                """,
+                (_ais_fingerprint(ais_data, user_id), user_id),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception as e:
+        # A dedup miss costs a duplicate session; a raised exception costs the upload.
+        logger.error(f"Tax dedup lookup failed: {e}")
+        return None
+
+
 def create_tax_session(ais_data: dict, flags: Optional[dict] = None) -> str:
     """Create a new tax session from parsed AIS data and persist it.
 
@@ -387,8 +427,18 @@ def create_tax_session(ais_data: dict, flags: Optional[dict] = None) -> str:
     500 after a multi-second parse.
     """
     _ensure_loaded()
-    session_id = str(uuid.uuid4())
     user_id = identity.current_user_id()
+
+    # Re-uploading the same AIS returns the existing session rather than making a new
+    # one. The mutual-funds side has always short-circuited identical ledgers; without
+    # the equivalent here, a few re-uploads would push the session the user is working
+    # in out of the 8-slot resident cap.
+    existing = find_duplicate(ais_data, user_id)
+    if existing:
+        logger.info("Duplicate AIS upload; reusing tax session %s", existing)
+        return existing
+
+    session_id = str(uuid.uuid4())
 
     with _SESSIONS_LOCK:
         _tax_sessions[session_id] = {

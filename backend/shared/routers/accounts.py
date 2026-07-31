@@ -60,6 +60,90 @@ def get_accounts_summary():
     }
 
 
+@router.get("/me/export")
+def export_account_data():
+    """
+    Everything held about the caller, as one JSON document.
+
+    The counterpart to DELETE /me. Storage is durable now and this handles Indian
+    financial data, so the DPDP Act's access and portability rights are in scope -
+    and a delete button without an export is a deletion the user cannot review first.
+
+    Payloads are decompressed and returned as records rather than as opaque blobs,
+    because an export the user cannot read is not portability.
+    """
+    caller = identity.current_caller()
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Sign in to export your data.")
+
+    with db.connect(row_factory=dict_row) as conn:
+        account = conn.execute(
+            """
+            SELECT u.id, u.created_at, u.last_seen_at, p.pan, p.display_name
+            FROM users u
+            LEFT JOIN profiles p ON p.user_id = u.id
+            WHERE u.id = %s
+            """,
+            (caller.user_id,),
+        ).fetchone()
+
+        linked = conn.execute(
+            "SELECT issuer, email, created_at FROM identities WHERE user_id = %s",
+            (caller.user_id,),
+        ).fetchall()
+
+        rows = conn.execute(
+            """
+            SELECT s.session_id, s.upload_type, s.created_at, s.statement_period,
+                   s.total_value, s.total_invested, s.num_funds, s.summary,
+                   p.holdings, p.transactions, p.sips, p.meta,
+                   t.data AS tax_data
+            FROM sessions s
+            LEFT JOIN session_payloads p ON p.session_id = s.session_id
+            LEFT JOIN tax_payloads     t ON t.session_id = s.session_id
+            WHERE s.user_id = %s
+            ORDER BY s.created_at DESC
+            """,
+            (caller.user_id,),
+        ).fetchall()
+
+    exported = []
+    for row in rows:
+        entry = {
+            "session_id": row["session_id"],
+            "module": row["upload_type"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "statement_period": row["statement_period"],
+            "summary": row["summary"],
+        }
+        if row["upload_type"] == "tax_expert":
+            entry["ais_data"] = row["tax_data"]
+        else:
+            df_h, df_t, df_s = storage.decode_payload(row)
+            entry["holdings"] = df_h.to_dict(orient="records")
+            entry["transactions"] = df_t.to_dict(orient="records")
+            entry["sips"] = df_s.to_dict(orient="records")
+        exported.append(entry)
+
+    return {
+        "account": {
+            "user_id": str(account["id"]),
+            "created_at": account["created_at"].isoformat() if account["created_at"] else None,
+            "pan": account["pan"],
+            "display_name": account["display_name"],
+        } if account else None,
+        # Deliberately no `subject`: it is the provider's identifier for this person
+        # and exporting it invites someone to paste it somewhere it becomes a
+        # credential. Issuer and email are enough to say "you signed in with this".
+        "linked_logins": [{
+            "issuer": row["issuer"],
+            "email": row["email"],
+            "linked_at": row["created_at"].isoformat() if row["created_at"] else None,
+        } for row in linked],
+        "sessions": exported,
+    }
+
+
 @router.delete("/me")
 def purge_account_data():
     """
