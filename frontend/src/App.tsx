@@ -1,6 +1,7 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { usePan } from './shared/store/appStore'
+import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
+import authClient from './shared/auth/authClient'
 import Landing   from './shared/components/Landing'
 import { TabFallback } from './shared/components/ui'
 
@@ -12,15 +13,41 @@ const Layout    = lazy(() => import('./shared/components/layout/Layout'))
 const Dashboard = lazy(() => import('./shared/components/layout/Dashboard'))
 
 export default function App() {
-  const pan = usePan()
+  const isAuthenticated = useIsAuthenticated()
+  const setIdentity = useAppStore((s) => s.setIdentity)
+  const clearIdentity = useAppStore((s) => s.clearIdentity)
+
+  // Until the provider has been asked whether a session exists, we do not know
+  // whether this visitor is signed in. Rendering the route table immediately would
+  // bounce a returning user to the landing page for a frame before redirecting them
+  // back - and on a slow load, long enough to click something.
+  const [resolvingSession, setResolvingSession] = useState(authClient.isConfigured)
+
+  useEffect(() => {
+    if (!authClient.isConfigured) return
+
+    // Fires once on mount with the restored session (or null), then on every
+    // sign-in, sign-out and token refresh.
+    const unsubscribe = authClient.onAuthStateChange((user) => {
+      if (user) {
+        setIdentity({ userId: user.id, email: user.email })
+      } else {
+        clearIdentity()
+      }
+      setResolvingSession(false)
+    })
+    return unsubscribe
+  }, [setIdentity, clearIdentity])
+
+  if (resolvingSession) return <TabFallback />
   // A skeleton fallback rather than null: `null` renders a blank white screen for
   // however long the dashboard chunk takes to arrive, which reads as a broken app on a
   // slow connection.
   return (
     <Suspense fallback={<TabFallback />}>
       <Routes>
-        <Route path="/" element={pan ? <Navigate to="/dashboard" replace /> : <Landing />} />
-        <Route path="/dashboard/*" element={pan ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
+        <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Landing />} />
+        <Route path="/dashboard/*" element={isAuthenticated ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   )

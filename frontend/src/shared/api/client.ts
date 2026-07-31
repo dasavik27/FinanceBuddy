@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAppStore } from '../store/appStore'
+import authClient from '../auth/authClient'
 import type {
   ParseResponse, Summary, OverviewData, Holding, FundResult,
   PerformanceData, AllocationData, InsightsData,
@@ -7,13 +8,48 @@ import type {
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
-api.interceptors.request.use((config) => {
+/**
+ * Attach whatever credential we have.
+ *
+ * A verified bearer token when signed in with a provider; otherwise the legacy
+ * X-User-PAN header, which is identification with no proof of possession and exists
+ * only until the migration to real sign-in is finished. The backend accepts both and
+ * resolves them to the same account, so this is the only place that needs to know
+ * which one is in play.
+ *
+ * Async because the token is read from the auth client, which refreshes it when it
+ * is close to expiry. Caching it here would reintroduce the expired-token logout.
+ */
+api.interceptors.request.use(async (config) => {
+  const token = await authClient.getAccessToken()
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`
+    return config
+  }
+
   const pan = useAppStore.getState().pan
   if (pan) {
     config.headers['X-User-PAN'] = pan
   }
   return config
 })
+
+/**
+ * A 401 means the credential is gone or no longer valid, so clear local state
+ * rather than leaving the UI showing a signed-in shell over failing requests.
+ */
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const store = useAppStore.getState()
+      if (store.pan || store.userId) {
+        store.clearIdentity()
+      }
+    }
+    return Promise.reject(error)
+  },
+)
 
 // ── API calls ────────────────────────────────────────────────────────────────
 export const apiClient = {
@@ -192,9 +228,38 @@ export const apiClient = {
     return res.data
   },
   
-  purgeAccount: async (panId: string): Promise<any> => {
-    const res = await api.delete(`/accounts/${panId}`)
+  /** Permanently delete the signed-in account. Takes no target - see DELETE /accounts/me. */
+  purgeAccount: async (): Promise<any> => {
+    const res = await api.delete('/accounts/me')
     return res.data
+  },
+
+  /** Everything the server holds about the caller, as one JSON document. */
+  exportAccount: async (): Promise<any> => {
+    const res = await api.get('/accounts/me/export')
+    return res.data
+  },
+
+  getTaxHistory: async (): Promise<{ sessions: any[] }> => {
+    const { data } = await api.get('/tax-expert/tax-history')
+    return data
+  },
+
+  deleteTaxSession: async (sid: string): Promise<any> => {
+    const { data } = await api.delete(`/tax-expert/tax-history/${sid}`)
+    return data
+  },
+
+  /** The signed-in account, or 401. */
+  getMe: async (): Promise<{ user_id: string; pan: string | null }> => {
+    const { data } = await api.get('/auth/me')
+    return data
+  },
+
+  /** Attach a PAN after signing in - still needed for the CAS password default. */
+  setProfilePan: async (pan: string): Promise<any> => {
+    const { data } = await api.put('/auth/profile/pan', { pan })
+    return data
   },
 
   clearSystemCaches: async (): Promise<any> => {

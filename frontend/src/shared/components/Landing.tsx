@@ -8,6 +8,17 @@ import LockIcon         from '@mui/icons-material/Lock'
 import TrendingUpIcon   from '@mui/icons-material/TrendingUp'
 import api              from '../api/client'
 import { useAppStore }  from '../store/appStore'
+import authClient       from '../auth/authClient'
+
+/** Google's mark, inline so it needs no network request and no extra package. */
+const GoogleMark = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+    <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z" />
+    <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18Z" />
+    <path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33Z" />
+    <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z" />
+  </svg>
+)
 
 // The two entrance animations, as CSS. `prefers-reduced-motion` is honoured, which
 // the framer-motion version did not do.
@@ -27,15 +38,26 @@ export default function Landing() {
   const [loginPan, setLoginPan] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
-  const setPan = useAppStore((s) => s.setPan)
+  const setIdentity = useAppStore((s) => s.setIdentity)
   const navigate = useNavigate()
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true); setError(null)
+    try {
+      // Redirects away; nothing after this runs on success.
+      await authClient.signInWithGoogle()
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not start sign-in.')
+      setLoading(false)
+    }
+  }
 
   const handleLogin = async () => {
     if (!loginPan || loginPan.length !== 10) return setError("Please enter a valid 10-character PAN.")
     setLoading(true); setError(null)
     try {
       const res = await api.post('/auth/login', { pan: loginPan })
-      setPan(res.data.pan)
+      setIdentity({ userId: res.data.user_id, pan: res.data.pan })
       navigate('/dashboard')
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to login.')
@@ -139,6 +161,43 @@ export default function Landing() {
               <Typography variant="overline" sx={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.1em', display: 'block', mb: 1 }}>
                 SECURE ACCESS HUB
               </Typography>
+
+              {/* Only rendered when a provider is configured. Unconfigured, the PAN
+                  field below is the whole sign-in - which is what every existing
+                  deployment does until VITE_SUPABASE_* is set. */}
+              {authClient.isConfigured && (
+                <>
+                  <Button
+                    fullWidth
+                    onClick={handleGoogleSignIn}
+                    disabled={loading}
+                    startIcon={<GoogleMark />}
+                    sx={{
+                      py: 1.75,
+                      mb: 2,
+                      borderRadius: '16px',
+                      bgcolor: '#fff',
+                      color: '#1F2937',
+                      fontSize: '1rem',
+                      fontWeight: 700,
+                      textTransform: 'none',
+                      '&:hover': { bgcolor: '#F1F5F9' },
+                      '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.4)' },
+                    }}
+                  >
+                    Continue with Google
+                  </Button>
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'rgba(255,255,255,0.08)' }} />
+                    <Typography sx={{ color: '#475569', fontSize: '0.75rem', fontWeight: 700 }}>
+                      OR CONTINUE WITH PAN
+                    </Typography>
+                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'rgba(255,255,255,0.08)' }} />
+                  </Box>
+                </>
+              )}
+
               <TextField
                 fullWidth
                 variant="outlined"
