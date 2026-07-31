@@ -30,11 +30,21 @@ def isolated_db(tmp_path, monkeypatch):
     backend/data/metadata.sqlite3 - nor depend on whatever column set its implicit
     mf_* schema happens to be frozen at. Every storage function reads the module
     global at call time, so rebinding it is sufficient.
+
+    tax_sessions has to be rebound separately: it names the *same file* through its
+    own module-level DB_PATH (a Path, where storage's is a str), so patching only
+    storage's leaves the tax tests writing to the developer's real database.
     """
+    from domains.tax_expert import tax_sessions
+
     db = tmp_path / "test_metadata.sqlite3"
     monkeypatch.setattr(storage, "DB_PATH", str(db))
+    monkeypatch.setattr(tax_sessions, "DB_PATH", db)
     storage._init_db()
+    tax_sessions._init_db()
+    tax_sessions.clear_all()
     yield db
+    tax_sessions.clear_all()
 
 
 @pytest.fixture
@@ -367,3 +377,88 @@ def test_mask_pan_keeps_only_the_tail():
     masked = identity.mask_pan(USER_A)
     assert USER_A not in masked
     assert masked.endswith(USER_A[-4:])
+
+
+# ── B3: endpoints that took a PAN from the request instead of from identity ───
+#
+# Both of these read a caller-supplied PAN directly - one from the request body, one
+# from the raw header - rather than from the identity scope. They are grouped because
+# they are the same defect twice: the value deciding *whose* data is touched came from
+# somewhere a caller controls, with no check that it is theirs.
+
+def _make_tax_session(pan: str, name: str = "Test User") -> str:
+    from domains.tax_expert import tax_sessions
+    return tax_sessions.create_tax_session(
+        {"personal": {"pan": pan, "name": name}, "fy": "2025-26",
+         "salary": {"gross": 1200000}},
+        pan_id=pan,
+    )
+
+
+def test_logout_cannot_delete_another_users_tax_sessions(client):
+    """
+    The original bug: POST /auth/logout took the PAN from the request body and
+    delete_tax_session performs no ownership check, so any caller could name a
+    victim's PAN and destroy their tax sessions from memory *and* disk.
+    """
+    from domains.tax_expert import tax_sessions
+
+    victim_sid = _make_tax_session(USER_B, name="Victim")
+
+    resp = client.post(
+        "/auth/logout",
+        json={"pan": USER_B},                 # attacker names the victim
+        headers={"X-User-PAN": USER_A},       # but authenticates as themselves
+    )
+    assert resp.status_code == 200
+
+    assert tax_sessions.get_tax_session(victim_sid) is not None, \
+        "logout honoured a body-supplied PAN and deleted another user's session"
+
+
+def test_logout_requires_identity(client):
+    assert client.post("/auth/logout", json={"pan": USER_A}).status_code == 401
+
+
+def test_logout_still_clears_the_callers_own_sessions(client):
+    """The fix must not turn logout into a no-op."""
+    from domains.tax_expert import tax_sessions
+
+    own_sid = _make_tax_session(USER_A)
+
+    resp = client.post("/auth/logout", json={"pan": USER_A}, headers={"X-User-PAN": USER_A})
+    assert resp.status_code == 200
+
+    with identity.identity_scope(USER_A):
+        assert tax_sessions.get_tax_session(own_sid) is None
+
+
+def test_tax_history_requires_identity(client):
+    """
+    Previously returned {"sessions": []} with no header, which a client cannot
+    distinguish from "you have no saved sessions".
+    """
+    assert client.get("/tax-expert/tax-history").status_code == 401
+
+
+def test_tax_history_does_not_leak_another_users_sessions(client):
+    _make_tax_session(USER_A, name="A")
+    _make_tax_session(USER_B, name="B")
+
+    resp = client.get("/tax-expert/tax-history", headers={"X-User-PAN": USER_A})
+    assert resp.status_code == 200
+
+    pans = {s["pan"].upper() for s in resp.json()["sessions"]}
+    assert pans <= {USER_A}, f"leaked other PANs: {pans - {USER_A}}"
+
+
+def test_tax_history_normalizes_the_header_like_every_other_route(client):
+    """
+    The endpoint used the raw header, so a lower-case PAN matched nothing while the
+    same header authenticated fine everywhere else.
+    """
+    _make_tax_session(USER_A, name="A")
+
+    resp = client.get("/tax-expert/tax-history", headers={"X-User-PAN": USER_A.lower()})
+    assert resp.status_code == 200
+    assert len(resp.json()["sessions"]) == 1

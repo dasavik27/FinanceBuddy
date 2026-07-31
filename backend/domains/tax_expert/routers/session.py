@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Header
 
+from shared import identity
 from domains.tax_expert.ais_parser import parse_ais_pdf
 from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownCodeError
 from domains.tax_expert.computation_cache import get_computation
@@ -265,8 +266,16 @@ def reconcile_broker(
 
 
 @router.get("/tax-history")
-def get_tax_history(x_user_pan: str = Header(None)):
-    """Get all tax sessions for the current user."""
-    if not x_user_pan:
-        return {"sessions": []}
-    return {"sessions": get_sessions_by_pan(x_user_pan)}
+def get_tax_history():
+    """Get all tax sessions for the current user.
+
+    The PAN comes from the request-scoped identity rather than the raw header, so
+    it is normalized the same way every ownership check in the app normalizes it.
+    Reading `x_user_pan` directly meant a lower-case or padded header silently
+    matched nothing, and an absent one returned an empty list rather than a 401 -
+    indistinguishable, to the client, from "you have no saved sessions".
+    """
+    caller = identity.current_pan()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Sign in to view your tax history.")
+    return {"sessions": get_sessions_by_pan(caller)}

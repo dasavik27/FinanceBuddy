@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from typing import Optional
 import sqlite3
 import re
+from shared import identity
 from shared.identity import mask_pan
 from shared.storage import DB_PATH
 import logging
@@ -45,9 +47,26 @@ def login_with_pan(req: LoginRequest):
     return {"status": "success", "pan": pan}
 
 @router.post("/logout")
-def logout_user(req: LoginRequest):
-    pan = req.pan.strip().upper()
+def logout_user(req: Optional[LoginRequest] = None):
+    """
+    Clears the caller's own tax sessions.
+
+    The PAN comes from the request-scoped identity, never from the body. Reading it
+    from `req.pan` made this an unauthenticated destructive endpoint: anyone could
+    POST {"pan": "<someone else's PAN>"} and wipe that user's tax sessions from
+    memory and disk. `delete_tax_session` performs no ownership check of its own,
+    so the request body was the only thing deciding whose data was destroyed.
+
+    The body is still accepted and ignored so that a client sending the old shape
+    does not get a 422 instead of a logout.
+    """
+    pan = identity.current_pan()
+    if not pan:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
     from domains.tax_expert.tax_sessions import get_sessions_by_pan, delete_tax_session
+    # get_sessions_by_pan is already scoped to this PAN, so every id it returns is
+    # one the caller owns.
     sessions = get_sessions_by_pan(pan)
     for s in sessions:
         delete_tax_session(s["session_id"])
