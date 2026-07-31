@@ -12,8 +12,11 @@ import os
 import json
 import sqlite3
 import uuid
+import zlib
+import numpy as np
 import pandas as pd
 import hashlib
+from io import StringIO
 from contextlib import contextmanager
 from typing import Optional, Dict, Any, Tuple
 
@@ -132,25 +135,40 @@ def _init_db():
         # The dedup lookup is now scoped by (data_hash, pan_id). data_hash already has
         # a UNIQUE index, which serves it.
 
+        # One compressed blob per session, replacing the three implicit mf_* tables.
+        # session_id is the PRIMARY KEY, so the lookup load_session() performs is
+        # already indexed - the mf_* tables each needed an explicit index for the
+        # same query, added in two places because to_sql created them lazily.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_payloads (
+                session_id TEXT PRIMARY KEY,
+                codec TEXT NOT NULL,
+                holdings BLOB,
+                transactions BLOB,
+                sips BLOB,
+                meta TEXT NOT NULL DEFAULT '{}',
+                byte_size INTEGER
+            )
+        """)
+
         _ensure_mf_indexes(conn)
 
 
-# The mf_* tables are created implicitly by DataFrame.to_sql, so they may not exist
-# when _init_db runs on a fresh database. Indexes are therefore ensured in two places:
-# here (for databases where the tables already exist) and again after to_sql in
-# save_session (for the first upload). CREATE INDEX IF NOT EXISTS makes both idempotent.
+# LEGACY - the implicitly-created tables that `session_payloads` replaced. Nothing
+# writes them any more; they are still read and deleted so a database predating the
+# payload codec does not report its existing sessions as empty or leak rows past a
+# purge. Remove along with _load_legacy_frames.
 _MF_INDEXED_TABLES = ("mf_holdings", "mf_transactions", "mf_sips")
 
 
 def _ensure_mf_indexes(conn: sqlite3.Connection) -> None:
     """
-    Index the mf_* tables on session_id.
+    Index the legacy mf_* tables on session_id, where they exist.
 
-    Every load_session() runs `SELECT * FROM mf_* WHERE session_id=?`, and these tables
-    hold *every* session's rows until the 24h purge - so without an index each
-    rehydration is three full table scans over unrelated sessions' data. This became a
-    hot path when the in-memory session store gained a resident cap, which makes
-    rehydration routine rather than exceptional.
+    Only matters for a database written before the payload codec: the legacy read
+    path still runs `SELECT * FROM mf_* WHERE session_id=?`, and those tables hold
+    every session's rows, so without the index each such read is a full scan over
+    unrelated sessions' data.
     """
     for table in _MF_INDEXED_TABLES:
         try:
@@ -158,67 +176,188 @@ def _ensure_mf_indexes(conn: sqlite3.Connection) -> None:
                 f"CREATE INDEX IF NOT EXISTS idx_{table}_session_id ON {table}(session_id)"
             )
         except sqlite3.OperationalError:
-            pass  # table not created yet - save_session will index it after to_sql
+            pass  # table does not exist, i.e. this database never used the old format
 
 
 _init_db()
 
-def _quote_ident(name: str) -> str:
+
+# ── Session payload codec ─────────────────────────────────────────────────────
+#
+# A session's three frames are stored as ONE compressed blob rather than as rows in
+# three implicitly-created tables. This replaced `DataFrame.to_sql`, which had three
+# problems that all trace back to the mf_* tables having no explicit DDL:
+#
+#   - Schema was frozen from whatever columns the *first* upload happened to have, so
+#     any parser change made `to_sql(if_exists="append")` fail on every subsequent
+#     upload. The previous mitigation issued `ALTER TABLE ADD COLUMN` at runtime using
+#     *document-controlled* identifiers, which is not a thing to do to a database.
+#   - Rehydration cost four round trips (registry + three frame reads). It is now one.
+#   - Postgres will not tolerate any of it. A strictly-typed database cannot have its
+#     schema mutated by the contents of an uploaded PDF.
+#
+# The format is deliberately boring - JSON, so it is inspectable and portable across
+# both SQLite and Postgres with no driver-specific types. zlib level 1 rather than the
+# default 6: on ~0.1 shared vCPU the extra CPU of higher levels costs more than the
+# bytes it saves, and level 1 still gets roughly 10x on this data. Compressing in the
+# application rather than relying on Postgres TOAST also saves the *wire* bytes, since
+# TOAST decompresses server-side before sending.
+_PAYLOAD_CODEC = "zlib-json-split-v1"
+
+_PAYLOAD_FRAMES = ("holdings", "transactions", "sips")
+
+# Whitelisted so a corrupted or hand-edited `meta` cannot reach astype() with an
+# arbitrary string; anything unrecognised falls back to the ISO parse.
+_EPOCH_UNITS = frozenset(("s", "ms", "us", "ns"))
+
+
+def _datetime_unit(dtype) -> str:
     """
-    Escape a SQL identifier for use inside double quotes.
+    The resolution of a datetime dtype: 's', 'ms', 'us' or 'ns'.
 
-    Table and column names here are not constants: column names come from the CAS/AIS
-    parser and therefore from the uploaded document. Doubling embedded quotes is the
-    SQLite-correct escape.
+    Two accessors are needed because two kinds of dtype reach this. pandas extension
+    dtypes (DatetimeTZDtype) expose `.unit`; a tz-naive column is a plain numpy dtype
+    which does not, and only answers to np.datetime_data. Relying on `.unit` alone
+    silently returned the "ns" default for every naive column - which is exactly the
+    case that matters, and on pandas 3 those columns are datetime64[us], so every
+    timestamp came back divided by 1000.
     """
-    return str(name).replace('"', '""')
+    unit = getattr(dtype, "unit", None)
+    if unit:
+        return unit
+    try:
+        return np.datetime_data(dtype)[0]
+    except (TypeError, ValueError):
+        return "ns"
 
 
-def _align_frame_to_table(conn: sqlite3.Connection, table: str, df: pd.DataFrame) -> pd.DataFrame:
+def _encode_frame(df: Optional[pd.DataFrame]) -> Tuple[bytes, Dict[str, str]]:
     """
-    Reconcile a frame's columns with an existing table's before `to_sql`.
+    Compress one frame, returning (blob, {datetime_column: restore_mode}).
 
-    The mf_* tables have no explicit DDL - their schema is frozen from whatever
-    columns the *first* upload happened to have. So the moment the parser gains,
-    renames or drops a field, `to_sql(if_exists="append")` fails with
-    `DatabaseError: Execution failed`, which says nothing about the real cause. The
-    live schema has already drifted once: `mf_holdings` carries a "CAS NAV" column
-    the current parser no longer emits, and has no "Type" column.
+    Two decisions here are performance-driven, both measured on a 20k-row ledger:
 
-    On ephemeral disk this self-heals (the table is recreated each deploy), which is
-    exactly why it stayed hidden - attach a persistent volume and every upload
-    starts failing after any parser change.
+    Each frame is its own self-contained JSON document rather than a member of a
+    larger one. Nesting them meant `to_json` -> `json.loads` -> `json.dumps`, which
+    serializes every row three times - 2.5 s, or roughly 10-20 s on the deployment's
+    ~0.1 shared vCPU. Standalone frames keep both directions on pandas' C JSON paths
+    and never materialise rows as Python objects.
 
-    Handling, in the additive direction, so no data is silently discarded:
-      - a column the frame has and the table lacks -> ALTER TABLE ADD COLUMN
-      - a column the table has and the frame lacks -> filled with NULL
-    Returns the frame reordered to the table's column order.
+    Naive datetimes are written as integer epoch counts, not ISO strings.
+    `date_format="iso"` spent 334 ms of a 564 ms encode formatting one 20k-row Date
+    column, where `astype("int64")` is free - datetime64 is int64 underneath, so it is
+    a view rather than a conversion - and reads back in 1 ms instead of 25 ms. It is
+    also exact, where an ISO round trip is a lossy format-then-reparse.
+
+    The column's *unit* is recorded alongside it and must be, because it is not
+    always nanoseconds: pandas has supported non-nanosecond resolution since 2.0, and
+    on pandas 3 `pd.to_datetime` yields datetime64[us]. Restoring a microsecond
+    column as datetime64[ns] silently divides every timestamp by 1000 - 2023 becomes
+    1970 - and nothing downstream would flag it as anything but bad data.
+
+    Timezone-aware columns keep the ISO path: their integer value is UTC, so the
+    round trip would drop the zone. No parser emits them today, but the fallback
+    costs nothing and makes the wrong outcome unreachable rather than unlikely.
+
+    orient="split" keeps column order and emits rows as lists, which is much smaller
+    than orient="records" repeating every key on every row.
     """
-    existing = [row[1] for row in conn.execute(f'PRAGMA table_info("{_quote_ident(table)}")').fetchall()]
-    if not existing:
-        return df  # table does not exist yet; to_sql will create it from this frame
+    if df is None:
+        df = pd.DataFrame()
 
+    datetime_columns: Dict[str, str] = {}
+    encodable = df
+    epoch_columns = []
     for column in df.columns:
-        if column in existing:
+        dtype = df[column].dtype
+        if not pd.api.types.is_datetime64_any_dtype(dtype):
             continue
-        # Keep the new field rather than dropping it on the floor. SQLite infers no
-        # type here, which is fine: it is dynamically typed per value.
-        #
-        # The identifier is escaped because column names come from the CAS/AIS parser,
-        # i.e. they are document-controlled. A name containing a double quote used to
-        # produce `OperationalError: unrecognized token` - an unhandled 500 on upload -
-        # and was only prevented from being worse by sqlite3's one-statement-per-execute
-        # rule, which is luck rather than a guard.
-        conn.execute(f'ALTER TABLE "{_quote_ident(table)}" ADD COLUMN "{_quote_ident(column)}"')
-        existing.append(column)
-        logger.info("[STORAGE] added column %r to %s (parser drift)", column, table)
+        if getattr(dtype, "tz", None) is not None:
+            datetime_columns[str(column)] = "iso"
+            continue
+        datetime_columns[str(column)] = f"epoch:{_datetime_unit(dtype)}"
+        epoch_columns.append(column)
 
-    aligned = df.copy()
-    for column in existing:
-        if column not in aligned.columns:
-            aligned[column] = None
+    if epoch_columns:
+        # Shallow copy: only the rewritten columns are replaced, the rest are shared.
+        encodable = df.copy(deep=False)
+        for column in epoch_columns:
+            # NaT becomes iNaT (INT64_MIN) and converts straight back to NaT, so this
+            # emits no nulls at all.
+            encodable[column] = df[column].astype("int64")
 
-    return aligned[existing]
+    encoded = encodable.to_json(orient="split", date_format="iso", index=False)
+    return zlib.compress(encoded.encode("utf-8"), 1), datetime_columns
+
+
+def _decode_frame(blob: Optional[bytes], datetime_columns: Optional[Dict[str, str]]) -> pd.DataFrame:
+    """
+    Inverse of _encode_frame.
+
+    Datetime columns are restored from the recorded names rather than inferred. The
+    old to_sql path wrote ISO strings (SQLite had no datetime type) and restored them
+    with a hardcoded check for a column literally named "Date" - written for
+    transactions, and only later duplicated for SIPs after the missing conversion
+    there was found to misparse ambiguous days via dayfirst=True. Recording the
+    columns makes it general instead of a list of names someone must remember to
+    extend.
+
+    Inference is switched off explicitly: left on, read_json would guess at dates and
+    re-type axes, which is the ambiguity this exists to remove.
+    """
+    if blob is None:
+        return pd.DataFrame()
+
+    text = zlib.decompress(blob).decode("utf-8")
+    df = pd.read_json(
+        StringIO(text), orient="split", convert_dates=False, convert_axes=False
+    )
+    for column, mode in (datetime_columns or {}).items():
+        if column not in df.columns:
+            continue
+        unit = mode.split(":", 1)[1] if mode.startswith("epoch:") else None
+        if unit in _EPOCH_UNITS:
+            df[column] = df[column].astype("int64").astype(f"datetime64[{unit}]")
+        else:
+            # errors="coerce": one unparseable cell should become NaT rather than
+            # failing the whole rehydration and 404-ing a session that exists.
+            df[column] = pd.to_datetime(df[column], errors="coerce")
+    return df
+
+
+def encode_payload(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Serialize a session's three frames.
+
+    Returns the column values for one `session_payloads` row - three blobs plus a
+    small metadata document. Still a single row and a single round trip; the split is
+    only so each frame stays a standalone JSON document (see _encode_frame).
+    """
+    blobs = {}
+    datetime_columns = {}
+    for name, frame in zip(_PAYLOAD_FRAMES, (df_h, df_t, df_s)):
+        blobs[name], datetime_columns[name] = _encode_frame(frame)
+
+    return {
+        "codec": _PAYLOAD_CODEC,
+        "meta": json.dumps({"datetime_columns": datetime_columns}, separators=(",", ":")),
+        "byte_size": sum(len(b) for b in blobs.values()),
+        **blobs,
+    }
+
+
+def decode_payload(row: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Inverse of encode_payload. Returns (holdings, transactions, sips)."""
+    try:
+        meta = json.loads(row.get("meta") or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    datetime_columns = meta.get("datetime_columns") or {}
+
+    return tuple(
+        _decode_frame(row.get(name), datetime_columns.get(name))
+        for name in _PAYLOAD_FRAMES
+    )
 
 
 def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str:
@@ -366,7 +505,7 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
                 return existing[0]
             raise
 
-    # 3. Save DataFrames to SQLite.
+    # 3. Save the frames as one compressed payload row.
     #
     # If this fails, the registry row from step 2 must be removed. Leaving it would be
     # worse than the orphan rows the old ordering produced: the row carries the real
@@ -375,80 +514,89 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
     # permanently bricked upload path rather than a retryable failure. load_session
     # also returns empty frames rather than None for such a row, so it would surface as
     # a portfolio with no holdings instead of a clean 404.
+    #
+    # Unlike the previous to_sql version this is a single INSERT, so the write is
+    # genuinely atomic rather than three self-committing statements that could leave a
+    # session with holdings but no transactions.
     try:
+        payload = encode_payload(df_h, df_t, df_s)
         with _connect() as conn:
-            for frame, table in ((df_h, "mf_holdings"), (df_t, "mf_transactions"), (df_s, "mf_sips")):
-                if frame.empty:
-                    continue
-                frame_copy = frame.copy()
-                frame_copy['session_id'] = session_id
-                frame_copy = _align_frame_to_table(conn, table, frame_copy)
-                frame_copy.to_sql(table, conn, if_exists="append", index=False)
-
-            # to_sql has just created any missing tables, so this is where a fresh
-            # database actually gets its session_id indexes. _init_db cannot do it:
-            # the mf_* tables do not exist yet at import time.
-            _ensure_mf_indexes(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO session_payloads "
+                "(session_id, codec, holdings, transactions, sips, meta, byte_size) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id, payload["codec"], payload["holdings"],
+                    payload["transactions"], payload["sips"],
+                    payload["meta"], payload["byte_size"],
+                ),
+            )
     except Exception:
-        logger.exception("[STORAGE] frame write failed for %s; rolling back registry row", session_id)
+        logger.exception("[STORAGE] payload write failed for %s; rolling back registry row", session_id)
         try:
             delete_session(session_id)
         except Exception:
             logger.exception("[STORAGE] could not roll back registry row for %s", session_id)
         raise
 
-        # to_sql has just created any missing tables, so this is where a fresh
-        # database actually gets its session_id indexes.
-        _ensure_mf_indexes(conn)
-        conn.commit()
-
     return session_id
+
+def _load_legacy_frames(conn: sqlite3.Connection, session_id: str):
+    """
+    Read a session written before the payload codec, from the old mf_* tables.
+
+    LEGACY - remove once no database predating `session_payloads` is in use. In
+    production this is already unreachable (the disk is wiped on every deploy, and
+    nothing survives the 24h sweep), but a developer's local database predates the
+    change and would otherwise report every existing session as empty.
+    """
+    frames = []
+    for table in _MF_INDEXED_TABLES:
+        try:
+            df = pd.read_sql(f"SELECT * FROM {table} WHERE session_id=?", conn, params=(session_id,))
+            df.drop(columns=["session_id"], inplace=True, errors="ignore")
+            # These tables stored datetimes as ISO strings, so restore the dtype every
+            # downstream consumer (FIFO lots, XIRR, rolling returns) expects.
+            if not df.empty and "Date" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["Date"]):
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        except Exception:
+            df = pd.DataFrame()
+        frames.append(df)
+    return tuple(frames)
+
 
 def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]]:
     """
     Reconstructs the portfolio from SQLite using the session_id.
+
+    One round trip for the payload where the previous version took three, on a path
+    that became routine rather than exceptional once the in-memory store gained a
+    resident cap.
     """
     try:
         with _connect() as conn:
-            # Check if session exists
             cursor = conn.execute("SELECT is_partial FROM sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
             if not row:
                 return None
             is_partial = bool(row[0])
-            
-            # Read dataframes (parameterized — session_id is untrusted input)
-            try:
-                df_h = pd.read_sql("SELECT * FROM mf_holdings WHERE session_id=?", conn, params=(session_id,))
-                df_h.drop(columns=['session_id'], inplace=True, errors='ignore')
-            except Exception:
-                df_h = pd.DataFrame()
 
-            try:
-                df_t = pd.read_sql("SELECT * FROM mf_transactions WHERE session_id=?", conn, params=(session_id,))
-                df_t.drop(columns=['session_id'], inplace=True, errors='ignore')
-                # SQLite has no native datetime type — to_sql wrote "Date" as ISO (year-first)
-                # strings, so it comes back as plain object dtype, not datetime64. Every
-                # downstream consumer (FIFO lots, XIRR, rolling returns) expects datetime64;
-                # restore it here once instead of forcing every caller to defend against it.
-                if not df_t.empty and "Date" in df_t.columns and not pd.api.types.is_datetime64_any_dtype(df_t["Date"]):
-                    df_t["Date"] = pd.to_datetime(df_t["Date"])
-            except Exception:
-                df_t = pd.DataFrame()
+            payload_row = conn.execute(
+                "SELECT holdings, transactions, sips, meta FROM session_payloads "
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
 
-            try:
-                df_s = pd.read_sql("SELECT * FROM mf_sips WHERE session_id=?", conn, params=(session_id,))
-                df_s.drop(columns=['session_id'], inplace=True, errors='ignore')
-                # Same restore as df_t above. mf_sips.Date is stored as the identical
-                # ISO string, but only df_t was being converted back - so downstream
-                # code got object dtype and papered over it with
-                # `pd.to_datetime(..., dayfirst=True)`, which misparses a
-                # "YYYY-MM-DD HH:MM:SS" string the moment the day is ambiguous.
-                if not df_s.empty and "Date" in df_s.columns and not pd.api.types.is_datetime64_any_dtype(df_s["Date"]):
-                    df_s["Date"] = pd.to_datetime(df_s["Date"])
-            except Exception:
-                df_s = pd.DataFrame()
-                
+            if payload_row is None:
+                df_h, df_t, df_s = _load_legacy_frames(conn, session_id)
+            else:
+                df_h, df_t, df_s = decode_payload({
+                    "holdings": payload_row[0],
+                    "transactions": payload_row[1],
+                    "sips": payload_row[2],
+                    "meta": payload_row[3],
+                })
+
         return df_h, df_t, df_s, is_partial
     except Exception as e:
         logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
@@ -484,12 +632,14 @@ def delete_session(session_id: str) -> bool:
     try:
         with _connect() as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            try:
-                conn.execute("DELETE FROM mf_holdings WHERE session_id = ?", (session_id,))
-                conn.execute("DELETE FROM mf_transactions WHERE session_id = ?", (session_id,))
-                conn.execute("DELETE FROM mf_sips WHERE session_id = ?", (session_id,))
-            except sqlite3.OperationalError:
-                pass # Tables might not exist yet
+            conn.execute("DELETE FROM session_payloads WHERE session_id = ?", (session_id,))
+            # LEGACY - see _load_legacy_frames. Rows only exist in databases that
+            # predate the payload codec, but a purge must not leave them behind.
+            for table in _MF_INDEXED_TABLES:
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
+                except sqlite3.OperationalError:
+                    pass  # table never created
             conn.commit()
         return True
     except Exception as e:
@@ -518,6 +668,8 @@ def delete_all_for_pan(pan_id: str) -> int:
 
         if session_ids:
             rows = [(sid,) for sid in session_ids]
+            conn.executemany("DELETE FROM session_payloads WHERE session_id = ?", rows)
+            # LEGACY - see _load_legacy_frames.
             for table in _MF_INDEXED_TABLES:
                 try:
                     conn.executemany(f"DELETE FROM {table} WHERE session_id = ?", rows)
