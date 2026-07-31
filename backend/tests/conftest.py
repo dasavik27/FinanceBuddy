@@ -54,7 +54,7 @@ if not TEST_DATABASE_URL:
 
 requires_db = pytest.mark.skipif(
     not TEST_DATABASE_URL,
-    reason="needs Postgres - set TEST_DATABASE_URL (see DEPLOYMENT.md)",
+    reason="needs Postgres - set TEST_DATABASE_URL (see ONBOARDING.md)",
 )
 
 

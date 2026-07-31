@@ -130,7 +130,7 @@ def _load() -> None:
         raise EncryptionNotConfigured(
             "FINANCEBUDDY_ENCRYPTION_KEYS is not set. Generate one with:\n"
             "  python -c \"import base64,os;print('k1:'+base64.b64encode(os.urandom(32)).decode())\"\n"
-            "See DEPLOYMENT.md. This is required - the application stores PAN, salary "
+            "See ONBOARDING.md. This is required - the application stores PAN, salary "
             "and holdings, and will not write them in plaintext."
         )
 

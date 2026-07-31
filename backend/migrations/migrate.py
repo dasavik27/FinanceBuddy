@@ -161,7 +161,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not db.database_url():
-        logger.error("DATABASE_URL is not set - see DEPLOYMENT.md")
+        logger.error("DATABASE_URL is not set - see ONBOARDING.md")
         return 2
     try:
         return status() if args.status else upgrade()

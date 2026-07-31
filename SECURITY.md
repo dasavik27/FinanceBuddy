@@ -143,7 +143,7 @@ RLS leave open, because the database decrypts for anyone who authenticates and t
 application connects as the table owner.
 
 The remaining operational item is key custody: a backup taken alongside the key is a
-backup with the lock and the key in the same box. See DEPLOYMENT.md.
+backup with the lock and the key in the same box. See ONBOARDING.md.
 
 ## Logging
 

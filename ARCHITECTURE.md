@@ -7,8 +7,8 @@ This describes the system as it is. Where a design looks unusual, the reason is
 stated — most of the unusual choices trace back to one constraint (below) and are
 wrong to "clean up" without removing that constraint first.
 
-Companion documents: **DEPLOYMENT.md** (running it), **SECURITY.md** (threat model and
-what is still open), **SETUP_GUIDE.md** (local development).
+Companion documents: **ONBOARDING.md** (setting it up, locally and in production) and
+**SECURITY.md** (threat model, and what is still open).
 
 ---
 
@@ -27,6 +27,38 @@ pool sizing, the absence of an ORM, and the threadpool cap.
 | No Redis | With one worker the in-process caches *are* shared caches; Redis would cost resident memory and buy nothing until there are several workers |
 | Sync `def` endpoints, threadpool capped at 8 | 51 of 54 handlers are blocking pandas work. anyio's default of 40 lets them thrash one shared vCPU while each holds its own DataFrames |
 | Payloads compressed in the app, not left to TOAST | TOAST decompresses server-side, so it saves storage but not wire bytes. 3.06 MB → 0.81 MB on a 20k-row ledger |
+
+### `--workers 1` is a requirement, not a default
+
+Several parts of the design are *incorrect* with more than one worker, so this is
+worth stating plainly before someone raises it to improve throughput:
+
+- **In-process caches stop being shared caches.** L1 lives in process memory. With N
+  workers there are N independent copies: N× the resident memory, and a hit rate that
+  falls because each worker warms its own.
+- **Single-flight stops working across workers.** `get_or_compute` collapses
+  concurrent misses into one computation *within* a process. With 4 workers, 4
+  simultaneous requests for the same uncached AMFI bundle become 4 downloads again —
+  exactly what the caching work removed.
+- **512 MB becomes a hard ceiling.** Baseline is ~50 MB per process before any
+  portfolio loads, and the L1 budgets (32 + 24 MB) are per-process.
+- **Session caps multiply.** 3 and 8 resident sessions become 12 and 32 across four
+  workers.
+
+The correct order, if the traffic ever justifies it: move L1 to a shared store,
+re-verify the memory budget, *then* add workers. Adding workers alone trades a latency
+problem for an OOM.
+
+### Concurrency inside the one worker
+
+51 of 54 endpoints are sync `def`, which FastAPI runs in anyio's threadpool. That pool
+defaults to **40** — so up to 40 GIL-bound pandas handlers can contend for ~0.1 shared
+vCPU, adding context-switch thrash without any parallelism while each holds its own
+intermediate DataFrames.
+
+`main.py` caps it at 8 (`FINANCEBUDDY_SYNC_CONCURRENCY`). Excess requests queue instead
+of thrash: slower to *start* serving under burst, faster to finish, and bounded in
+memory.
 
 ---
 

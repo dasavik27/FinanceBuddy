@@ -128,7 +128,7 @@ def get_pool() -> ConnectionPool:
         dsn = database_url()
         if not dsn:
             raise RuntimeError(
-                "DATABASE_URL is not set. Postgres is required - see DEPLOYMENT.md."
+                "DATABASE_URL is not set. Postgres is required - see ONBOARDING.md."
             )
 
         _pool = ConnectionPool(
