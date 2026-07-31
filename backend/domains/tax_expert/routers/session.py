@@ -37,7 +37,7 @@ def parse_ais(
     """Parse an AIS PDF and create a tax computation session.
 
     Deliberately a sync `def`, not `async def`: every call below (camelot table
-    extraction, broker parsing, reconciliation, the SQLite write) is blocking
+    extraction, broker parsing, reconciliation, the database write) is blocking
     CPU-bound work taking seconds. Under `async def` it ran directly on the
     event loop and froze the entire single-worker API — including /health, which
     could fail Render's health check mid-upload. As a sync def, FastAPI runs it

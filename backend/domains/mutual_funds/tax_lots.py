@@ -58,7 +58,7 @@ def compute_fund_lots(df_t: pd.DataFrame, fund_name: str) -> List[Dict]:
     if ft.empty:
         return []
     if not pd.api.types.is_datetime64_any_dtype(ft["Date"]):
-        # Sessions restored from disk come back from SQLite as ISO (year-first) strings —
+        # Sessions restored from an older store came back as ISO (year-first) strings —
         # dayfirst=True would misparse them, so only apply it to raw CAS dd-mm-yyyy strings,
         # which never reach this function in the normal (in-memory) flow.
         ft["Date"] = pd.to_datetime(ft["Date"])

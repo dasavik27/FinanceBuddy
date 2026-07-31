@@ -1,14 +1,70 @@
 # Finance Buddy - Setup Guide
 
-**Version:** 8.0.0 | **Last Updated:** 2026-07-27
-
-This guide ensures a robust setup of the Finance Buddy project for development and deployment.
+Local development setup. For deploying, see **DEPLOYMENT.md**; for how the pieces fit
+together, **ARCHITECTURE.md**.
 
 ## Prerequisites
 
 - Python 3.10+ (tested with 3.13.3)
 - Node.js 18+ and npm
 - Git
+- **PostgreSQL 11+**, running locally
+
+Postgres is required — there is no file-backed fallback. The app stores user data
+across restarts, which SQLite on an ephemeral container could not do.
+
+## Database and environment
+
+### 1. Create the databases
+
+```sql
+CREATE DATABASE financebuddy;
+CREATE DATABASE financebuddy_test;
+```
+
+Two, deliberately: the test suite creates and drops schemas, so it must never point at
+the database holding your real uploads.
+
+### 2. Generate an encryption key
+
+PAN, salary, holdings and portfolio value are encrypted before they reach the
+database. This is required — the app raises rather than writing them in plaintext.
+
+```bash
+python -c "import base64,os;print('k1:'+base64.b64encode(os.urandom(32)).decode())"
+```
+
+**Losing this key loses the data.** That is the design: the database alone is not
+enough to read it.
+
+### 3. Write `backend/.env`
+
+```ini
+DATABASE_URL=postgresql://postgres:<password>@localhost:5432/financebuddy
+FINANCEBUDDY_ENCRYPTION_KEYS=k1:<the key you just generated>
+
+# Sign-in. Without these every request is anonymous and the app is unusable.
+SUPABASE_URL=https://<your-project-ref>.supabase.co
+```
+
+Gitignored, and must stay so — it holds a database password and an encryption key.
+
+### 4. Apply migrations
+
+```bash
+cd backend && python -m migrations.migrate
+```
+
+Idempotent and advisory-locked: safe to re-run, and it skips anything already applied.
+`--status` shows what would run without changing anything.
+
+### 5. Frontend environment — `frontend/.env.local`
+
+```ini
+VITE_API_URL=http://localhost:8000
+VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<the publishable key, never the secret one>
+```
 
 ## Automatic Setup (Recommended)
 
@@ -123,7 +179,32 @@ python -m uvicorn main:app --reload
 - Rebalancing recommendations
 - Peer fund comparison
 
+## Running the tests
+
+```bash
+cd backend
+TEST_DATABASE_URL=postgresql://postgres:<password>@localhost:5432/financebuddy_test   python -m pytest tests/ -q
+```
+
+Without `TEST_DATABASE_URL` the database-backed tests skip rather than fail, and the
+rest still run — useful for a quick check, but not a full pass. The variable is
+deliberately not `DATABASE_URL`: these tests create and drop schemas.
+
 ## Troubleshooting
+
+### `couldn't get a connection after 10.00 sec`
+
+The pool could not reach Postgres. Check the server is running and that `DATABASE_URL`
+is correct — the message is about the pool giving up, not about credentials.
+
+### `FINANCEBUDDY_ENCRYPTION_KEYS is not set`
+
+Working as intended: the app refuses to store PAN and salary unencrypted. See step 2.
+
+### `function gen_random_uuid() does not exist`
+
+Postgres below 13 needs the pgcrypto extension. Migration `0001` creates it, so this
+means migrations have not been applied — run step 4.
 
 ### Backend dependencies not installing
 ```bash

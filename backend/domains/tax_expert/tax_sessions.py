@@ -2,7 +2,7 @@
 core/tax_sessions.py
 
 Session store for Tax Expert AIS data: an in-memory dict of record, written
-through to SQLite per session.
+through to Postgres per session.
 
 Design notes
 ------------
@@ -16,10 +16,10 @@ and `_load_from_disk` pulled every session of every user into RAM on first
 access and kept them resident forever — unusable on a 512 MB instance. Sessions
 now expire by idle age and the store is capped, evicting least-recently-used.
 
-Persistence is best-effort. On Render's free tier the filesystem is ephemeral
-(wiped on redeploy and on spin-down), so SQLite is a within-process-lifetime
-convenience, not durable storage. Callers must treat a missing session as
-normal — the API returns 404 and the UI prompts for re-upload.
+Persistence is durable. Rows live in Postgres and survive restarts, so an evicted
+session is a cache miss rather than data loss — _rehydrate() restores it. The
+document is encrypted at rest (shared/crypto.py); only the session_id, owner and
+timestamps are readable in the database.
 """
 
 import uuid
@@ -37,10 +37,9 @@ from shared.identity import mask_pan
 
 logger = logging.getLogger(__name__)
 
-# Storage location and connection handling live in shared/db.py. This module used to
-# name the same file through its own DB_PATH constant - as a Path, where storage's was
-# a str - which meant a test redirecting storage.DB_PATH to a temp database left this
-# store writing to the real one.
+# Connection handling lives in shared/db.py. This module used to open its own, via a
+# second DB_PATH constant naming the same SQLite file - so a test redirecting
+# storage.DB_PATH to a throwaway database left this store writing to the real one.
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 # Each session holds a full parsed AIS (potentially thousands of trade dicts at
@@ -50,7 +49,7 @@ logger = logging.getLogger(__name__)
 # varies this much.
 #
 # Lowered to 8 now that eviction is non-destructive: _rehydrate() restores an evicted
-# session from SQLite on the next request, so a low cap costs a disk read rather than
+# session from the database on the next request, so a low cap costs a read rather than
 # the user's uploaded data. Do not raise this without checking that rehydration still
 # works. The mutual-funds store caps at 3 for the same reason.
 MAX_SESSIONS = int(os.getenv("FINANCEBUDDY_MAX_TAX_SESSIONS", "8"))
@@ -61,7 +60,7 @@ SESSION_TTL_SECONDS = int(os.getenv("FINANCEBUDDY_TAX_SESSION_TTL", str(24 * 360
 #
 # Guarded by _SESSIONS_LOCK. Every endpoint in this domain is a sync `def`, which
 # FastAPI runs in a threadpool, so these globals are genuinely touched concurrently.
-# Without the lock, _evict()/get_sessions_by_pan()/list_sessions() iterate while
+# Without the lock, _evict()/list_sessions() iterate while
 # another thread inserts or calls move_to_end - and because move_to_end mutates
 # OrderedDict's internal link state, CPython raises
 # "RuntimeError: OrderedDict mutated during iteration" with no size change at all.
@@ -78,7 +77,7 @@ _SESSIONS_LOCK = threading.RLock()
 
 def _load_from_disk_locked():
     """
-    Populate the in-memory store from SQLite. Caller must hold _SESSIONS_LOCK.
+    Populate the in-memory store from the database. Caller must hold _SESSIONS_LOCK.
 
     Two fixes over the original:
 
@@ -139,7 +138,7 @@ def _load_from_disk_locked():
 
 def _rehydrate(session_id: str) -> Optional[dict]:
     """
-    Load a single session from SQLite after an in-memory miss.
+    Load a single session from the database after an in-memory miss.
 
     This is what makes LRU eviction non-destructive. Eviction used to call
     _delete_many(), deleting the only durable copy - so an evicted session was
@@ -147,7 +146,7 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     could safely evict precisely because rehydration already existed; this is the
     equivalent.
 
-    The SQLite read happens outside the lock; only the insert is guarded.
+    The read happens outside the lock; only the insert is guarded.
     """
     try:
         with db.connect() as conn:
@@ -187,7 +186,7 @@ def _rehydrate(session_id: str) -> Optional[dict]:
             return _tax_sessions[session_id]
         _tax_sessions[session_id] = session
         _evict_locked()
-    logger.info(f"Rehydrated tax session {session_id} from SQLite.")
+    logger.info(f"Rehydrated tax session {session_id} from the database.")
     return session
 
 
@@ -326,7 +325,7 @@ def _evict_locked():
     Drop idle-expired sessions, then LRU-trim to MAX_SESSIONS.
     Caller must hold _SESSIONS_LOCK.
 
-    Deliberately does NOT delete from SQLite. It used to, which made eviction
+    Deliberately does NOT delete the stored row. It used to, which made eviction
     destructive: the row was the only durable copy, so an LRU-evicted session was
     unrecoverable and the user's uploaded AIS was simply gone. Disk rows are instead
     bounded by purge_expired_from_disk() on the GC sweep, and an evicted session is
@@ -347,7 +346,7 @@ def _evict_locked():
     if dropped:
         logger.info(
             f"Evicted {len(dropped)} tax session(s) from memory "
-            f"(idle TTL / LRU cap {MAX_SESSIONS}); recoverable from SQLite."
+            f"(idle TTL / LRU cap {MAX_SESSIONS}); recoverable from the database."
         )
 
 
@@ -502,14 +501,14 @@ def _mutate(session_id: str, apply) -> bool:
     Shared read-modify-write path for the update_* functions.
 
     `apply(session)` mutates the session dict under the lock. Persistence happens
-    after the lock is released, so SQLite I/O does not serialize every other reader.
+    after the lock is released, so database I/O does not serialize every other reader.
 
     Deliberately does NOT re-insert the session into the store before writing. An
     earlier version did, to close a lost-update window (evicted between the read and
     the write, after which `_persist_one` finds nothing and silently skips). That guard
     was wrong on balance: it turned a concurrent delete into an **undelete** - an
     in-flight override racing `DELETE /accounts/{pan}` or `/auth/logout` re-persisted
-    the whole AIS blob and the PAN back to SQLite, defeating a purge the user was told
+    the whole AIS blob and the PAN back to the database, defeating a purge the user was told
     was permanent. Silently dropping one edit is bad; silently resurrecting data
     someone asked to have deleted is worse.
 
@@ -566,7 +565,7 @@ def update_overrides(session_id: str, overrides: dict) -> bool:
 
 
 def delete_tax_session(session_id: str) -> bool:
-    """Delete a tax session from memory and SQLite."""
+    """Delete a tax session from memory and the database."""
     _ensure_loaded()
     with _SESSIONS_LOCK:
         present = session_id in _tax_sessions
@@ -592,7 +591,7 @@ def _drop_cached_computations(session_id: str):
 
 
 def clear_all():
-    """Drop every in-memory session (does not touch SQLite).
+    """Drop every in-memory session (does not touch stored rows).
 
     Resets `_sessions_loaded` too. Without that, this bricked the store: the flag
     stayed True, so _ensure_loaded() never reloaded and every tax session 404'd

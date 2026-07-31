@@ -29,8 +29,8 @@ def parse_cas(
     Parse a CAS PDF and create a portfolio session.
 
     Deliberately a sync `def`, not `async def`: parse_cas_file (casparser + PDF
-    extraction) and create_session (ledger hash + three SQLite writes) are blocking
-    work measured in seconds. Under `async def` they ran directly on the event loop
+    extraction) and create_session (ledger hash, compression, encryption, the write)
+    are blocking work measured in seconds. Under `async def` they ran directly on the event loop
     of a single-worker deployment, which froze the whole API for the duration -
     including /health, which can fail the platform health check mid-upload. As a
     sync def, FastAPI runs this in the threadpool and the loop stays responsive.

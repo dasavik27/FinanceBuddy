@@ -10,8 +10,6 @@ build/
 __pycache__/
 .cache/
 .pytest_cache/
-backend/data/
-backend/domains/data/
 test-results/
 
 # Environment & IDE

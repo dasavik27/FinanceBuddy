@@ -97,9 +97,11 @@ filesystem was wiped on every deploy — the sweep bounded a table that could no
 outlive a restart anyway. Against durable storage the same sweep is a scheduled
 deletion of the user's own statements, so it is gone and retention is theirs.
 
-`ARCHITECTURE.md` describes the product as having "zero-persistence privacy". That was
-never accurate and is now clearly wrong. The accurate claim is: *the uploaded document
-is never retained; derived data persists until the user deletes it.*
+`ARCHITECTURE.md` used to describe the product as having "zero-persistence privacy"
+and a "Zero-Database Architecture". Neither was ever accurate — SQLite was already
+writing to disk — and both are now the opposite of true. Corrected there. The accurate
+claim is: *the uploaded document is never retained; derived data persists until the
+user deletes it.*
 
 ## Data at rest
 

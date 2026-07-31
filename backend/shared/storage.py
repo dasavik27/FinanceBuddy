@@ -59,7 +59,7 @@ _connect = db.connect
 #     schema mutated by the contents of an uploaded PDF.
 #
 # The format is deliberately boring - JSON, so it is inspectable and portable across
-# both SQLite and Postgres with no driver-specific types. zlib level 1 rather than the
+# any engine with no driver-specific types. zlib level 1 rather than the
 # default 6: on ~0.1 shared vCPU the extra CPU of higher levels costs more than the
 # bytes it saves, and level 1 still gets roughly 10x on this data. Compressing in the
 # application rather than relying on Postgres TOAST also saves the *wire* bytes, since
@@ -297,7 +297,7 @@ class OwnerLookupFailed(Exception):
 
     Deliberately distinct from "no such session". This used to be swallowed into
     `(False, None)`, which the caller read as "nothing to authorize" and then served
-    the data - so the authorization check silently became a no-op whenever SQLite
+    the data - so the authorization check silently became a no-op whenever the database
     errored. "database is locked" is precisely the condition WAL and busy_timeout were
     added to handle, so that path was reachable rather than theoretical.
 

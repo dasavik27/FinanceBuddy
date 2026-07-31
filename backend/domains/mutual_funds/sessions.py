@@ -11,12 +11,12 @@ Memory model
 A session holds three live DataFrames (holdings, the full transaction ledger, SIPs).
 The ledger is the large one and cannot be trimmed: XIRR and FIFO cost basis both
 need every transaction. So instead of shrinking a session, we bound how many are
-resident at once (MAX_RESIDENT_SESSIONS) and let SQLite be the overflow. Eviction is
+resident at once (MAX_RESIDENT_SESSIONS) and let Postgres be the overflow. Eviction is
 cheap because get_session() already rehydrates from disk on a miss.
 
 Retention note
 --------------
-Sessions ARE written to disk (SQLite, via shared/storage.py) for dedup, history and
+Sessions ARE persisted (Postgres, via shared/storage.py) for dedup, history and
 rehydration. An earlier version of this docstring claimed "zero disk retention...
 institutional privacy compliance", which was not true and is a claim worth being
 accurate about. What is true: the uploaded PDF itself is never retained (the parser
@@ -54,7 +54,7 @@ _SESSIONS_LOCK = threading.RLock()
 SESSION_TTL_HOURS = 4
 
 # How many portfolios may be resident simultaneously. Small on purpose: the working
-# set for a single user is 1, and anything evicted is rebuilt from SQLite on demand.
+# set for a single user is 1, and anything evicted is rebuilt from the database.
 MAX_RESIDENT_SESSIONS = int(os.getenv("FINANCEBUDDY_MAX_RESIDENT_SESSIONS", "3"))
 
 
@@ -105,7 +105,7 @@ def _remember(session_id: str, portfolio: Portfolio, owner: Optional[str] = None
     Insert a session as most-recently-used and evict beyond the budget.
 
     The owner is stored alongside the portfolio so ownership can be checked from
-    memory. That matters for two reasons: a resident hit must not depend on SQLite
+    memory. That matters for two reasons: a resident hit must not depend on the database
     being reachable, and a session whose registry row has been deleted (by
     /history/{sid} DELETE or an account purge) must not become readable by anyone
     just because the registry can no longer say who owns it.
@@ -163,7 +163,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
             )
 
     # Persist BEFORE compacting: to_sql writes categoricals as their codes in some
-    # pandas/SQLite combinations, and the round-trip must preserve the label.
+    # pandas versions, and the round-trip must preserve the label.
     final_session_id = storage.save_session(
         session_id, df_h, df_t, df_s, is_partial, statement_period, user_id, upload_type,
         ledger_hash=ledger_hash,
@@ -188,7 +188,7 @@ def _session_purge_worker():
     """
     Daemon thread executing periodic background purges of abandoned sessions.
     Evaluates expiration against last active API interaction heartbeat.
-    Also sweeps SQLite for disk-level retention limit (24 hours).
+    Memory only: stored rows are the user's data and are never swept on a timer.
     """
     while True:
         try:
@@ -271,7 +271,7 @@ def get_session(session_id: str) -> Portfolio:
 
     Ownership is resolved from whichever source is authoritative for the path taken:
 
-    - **Resident hit** - from the entry itself. Not from SQLite, because a resident
+    - **Resident hit** - from the entry itself. Not from the database, because a resident
       session must stay usable when the database is unreachable, and because a
       session whose registry row was deleted must not become readable by everyone
       merely because the registry can no longer name its owner.

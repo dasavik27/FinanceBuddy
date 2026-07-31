@@ -42,7 +42,7 @@ def get_market_config():
 
 # A TTL of 0 or less disabled every cache tier, turning each request into a full
 # upstream fan-out - including the AMFI downloads. On ~0.1 vCPU that is a trivial
-# denial of service, and it persisted to SQLite so it survived a restart. Floored so
+# denial of service, and it is persisted so it survives a restart. Floored so
 # the endpoint can tune caching but not switch it off.
 MIN_CACHE_TTL_MINUTES = 1
 
