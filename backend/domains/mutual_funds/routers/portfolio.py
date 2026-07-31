@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Header
 from domains.mutual_funds.parser import parse_cas_file
 from domains.mutual_funds.sessions import create_session, get_session
-from shared import identity
+from shared import identity, users
 from shared.config import BENCHMARKS
 from shared.cache import MarketCache
 from shared.services.market_indices import clear_benchmark_cache
@@ -51,6 +51,10 @@ def parse_cas(
         raise HTTPException(status_code=422, detail=err)
     if df_h.empty:
         raise HTTPException(status_code=422, detail="No active holdings found in CAS.")
+
+    caller = identity.current_caller()
+    if caller and actual_pw and actual_pw != caller.pan:
+        users.set_pan(caller.user_id, actual_pw)
 
     session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, upload_type=x_upload_type)
     

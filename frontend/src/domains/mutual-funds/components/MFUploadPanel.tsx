@@ -138,6 +138,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
   const [error, setError]   = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const setSession = useAppStore((s) => s.setSession)
+  const setIdentity = useAppStore((s) => s.setIdentity)
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -154,6 +155,9 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
     try {
       const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
+      if (password.trim()) {
+        setIdentity({ userId: useAppStore.getState().userId, pan: password.trim().toUpperCase() })
+      }
       onUploaded()
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to parse. Please check the file.')
@@ -357,6 +361,7 @@ export default function MFUploadPanel() {
   const setSession = useAppStore((s) => s.setSession)
   const setSessionById = useAppStore((s) => s.setSessionById)
   const pan = useAppStore((s) => s.pan)
+  const setIdentity = useAppStore((s) => s.setIdentity)
 
   const fetchHistory = useCallback(() => {
     if (!pan) return
@@ -381,6 +386,9 @@ export default function MFUploadPanel() {
     try {
       const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
+      if (password.trim()) {
+        setIdentity({ userId: useAppStore.getState().userId, pan: password.trim().toUpperCase() })
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Failed to parse. Please check the file.')
     } finally {
