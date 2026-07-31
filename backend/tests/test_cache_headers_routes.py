@@ -32,10 +32,12 @@ def client():
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
-    db = tmp_path / "headers_test.sqlite3"
-    monkeypatch.setattr(storage, "DB_PATH", str(db))
+    from shared import db as db_module
+
+    path = tmp_path / "headers_test.sqlite3"
+    monkeypatch.setattr(db_module, "DB_PATH", str(path))
     storage._init_db()
-    yield db
+    yield path
 
 
 @pytest.fixture

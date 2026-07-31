@@ -15,16 +15,19 @@ import json
 # Time-To-Live (TTL) for in-memory and disk persistence layers (NAV & CAS Records)
 # Set via environment variable 'FINANCEBUDDY_CACHE_TTL' (Default: 60 minutes).
 # A value <= 0 triggers real-time direct fetching across all network providers.
-import sqlite3
+from shared import db
 
 def _get_ttl_from_db():
+    # Went through shared.db rather than a bare sqlite3.connect on a path assembled
+    # here: that third spelling of the database location could drift from the other
+    # two, and it opened without the busy timeout, so this ran at import time with no
+    # tolerance for a concurrent write holding the lock.
     try:
-        db_path = os.path.join(os.path.dirname(__file__), "..", "data", "metadata.sqlite3")
-        with sqlite3.connect(db_path) as conn:
+        with db.connect() as conn:
             conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
             cursor = conn.execute("SELECT value FROM app_settings WHERE key='cache_ttl'")
             row = cursor.fetchone()
-            if row: 
+            if row:
                 return int(row[0])
     except Exception:
         pass

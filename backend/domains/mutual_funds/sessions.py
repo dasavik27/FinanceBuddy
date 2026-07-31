@@ -209,13 +209,19 @@ def _session_purge_worker():
                     _SESSIONS.pop(sid, None)
 
             # 2. Disk-Level Purge (24 hours) for CAS
-            from shared.storage import DB_PATH, delete_session
-            import sqlite3
-            if storage.os.path.exists(DB_PATH):
-                with sqlite3.connect(DB_PATH) as conn:
-                    cursor = conn.execute("SELECT session_id FROM sessions WHERE created_at < datetime('now', '-24 hours')")
-                    for row in cursor.fetchall():
-                        delete_session(row[0])
+            from shared import db
+            from shared.storage import delete_session
+            with db.connect() as conn:
+                cursor = conn.execute(
+                    "SELECT session_id FROM sessions "
+                    "WHERE created_at < datetime('now', '-24 hours')"
+                )
+                expired_ids = [row[0] for row in cursor.fetchall()]
+            # Deleted outside the read connection: delete_session opens its own, and
+            # nesting a writer inside an open reader is the shape that produces
+            # "database is locked" under WAL.
+            for session_id in expired_ids:
+                delete_session(session_id)
 
             # 3. Trim the disk cache alongside sessions, so the .cache directory
             #    cannot outgrow its budget on a long-lived instance.

@@ -1,11 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
-import sqlite3
 import re
-from shared import identity
+from shared import db, identity
 from shared.identity import mask_pan
-from shared.storage import DB_PATH
 import logging
 logger = logging.getLogger(__name__)
 
@@ -24,13 +22,12 @@ def login_with_pan(req: LoginRequest):
     if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan):
         raise HTTPException(status_code=400, detail="Invalid PAN format. Must be 10 characters (e.g. ABCDE1234F).")
         
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT pan_id FROM users WHERE pan_id = ?", (pan,))
+    with db.connect() as conn:
+        cursor = conn.execute(db.sql("SELECT pan_id FROM users WHERE pan_id = ?"), (pan,))
         user = cursor.fetchone()
 
         if not user:
-            conn.execute("INSERT INTO users (pan_id) VALUES (?)", (pan,))
-            conn.commit()
+            conn.execute(db.sql("INSERT INTO users (pan_id) VALUES (?)"), (pan,))
             # NOTE: there used to be a migration here that claimed every orphaned
             # session (pan_id IS NULL) for the first user created, so existing
             # uploads survived the introduction of PANs. It has been removed.

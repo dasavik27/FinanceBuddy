@@ -17,71 +17,24 @@ import numpy as np
 import pandas as pd
 import hashlib
 from io import StringIO
-from contextlib import contextmanager
 from typing import Optional, Dict, Any, Tuple
 
+from shared import db
 from shared.identity import mask_pan as _mask_pan
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-DB_PATH = os.path.join(DATA_DIR, "metadata.sqlite3")
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-
-def _apply_pragmas(conn: sqlite3.Connection) -> None:
-    """
-    Configure a connection for a concurrent web server.
-
-    Under the default rollback journal a writer takes an EXCLUSIVE lock over the whole
-    database, so a 20k-row CAS upload (~0.7 s, plus fsyncs) blocked every reader - and
-    past the busy timeout those requests failed with "database is locked" as a 500.
-    WAL lets readers proceed during a write, which is the single most important setting
-    here.
-
-    - journal_mode=WAL is persistent (stored in the file header), so setting it on any
-      connection is enough; it is applied per-connection anyway because a fresh
-      database needs it once and this is the cheapest place to guarantee it.
-    - synchronous=NORMAL rather than FULL: FULL fsyncs on every commit, and on a
-      deployment whose disk is wiped on restart that durability buys nothing.
-    - busy_timeout gives a blocked writer time to wait rather than failing instantly.
-
-    WAL needs shared-memory mmap on the database's filesystem. That is fine on a
-    container's local disk but can fail on some network mounts, so a failure here is
-    logged and tolerated rather than fatal.
-    """
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=15000")
-    except sqlite3.DatabaseError as e:
-        logger.warning("[STORAGE] could not apply pragmas (WAL unsupported here?): %s", e)
-
-
-@contextmanager
-def _connect():
-    """
-    A configured connection that is always closed.
-
-    `with sqlite3.connect(...)` commits but does NOT close - it is a transaction
-    context, not a resource context. On an exception path the traceback keeps the
-    frame (and therefore the connection) alive for an indeterminate time, holding
-    locks. This wrapper commits on success, rolls back on failure, and closes either
-    way.
-    """
-    conn = sqlite3.connect(DB_PATH, timeout=15.0)
-    _apply_pragmas(conn)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+# Connection management, the database location and the pragmas all live in shared/db.py
+# now - it is the one place that knows which engine this is, so the Postgres migration
+# is a change there rather than in every module that persists something.
+#
+# Re-exported because callers (and tests) refer to storage._connect / storage.DATA_DIR.
+# _connect is a genuine alias, not a copy: rebinding db.DB_PATH redirects it, since
+# db.connect() reads the path at call time.
+_connect = db.connect
+DATA_DIR = db.DATA_DIR
 
 
 def _init_db():

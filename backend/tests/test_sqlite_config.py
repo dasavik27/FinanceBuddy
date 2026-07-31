@@ -12,15 +12,52 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from shared import db as db_module
 from shared import storage
 
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     path = tmp_path / "meta.sqlite3"
-    monkeypatch.setattr(storage, "DB_PATH", str(path))
+    # shared/db.py is the only module that names the database, so one patch redirects
+    # every store. db.connect() reads DB_PATH at call time, not at import.
+    monkeypatch.setattr(db_module, "DB_PATH", str(path))
     storage._init_db()
     return str(path)
+
+
+# ── one connection authority ──────────────────────────────────────────────────
+
+def test_only_shared_db_opens_connections():
+    """
+    Every database connection must come from shared/db.py.
+
+    Seven call sites used to open their own. Five of them used a bare
+    `sqlite3.connect` with no busy_timeout, so a concurrent CAS upload - which holds a
+    write transaction for most of a second - made them fail outright with "database is
+    locked" instead of waiting; and `with sqlite3.connect(...)` commits without
+    closing, so each held its locks until garbage collection.
+
+    This also guards the Postgres migration: a connection opened outside shared/db.py
+    is one that will not come from the pool.
+    """
+    import pathlib
+
+    backend = pathlib.Path(__file__).resolve().parent.parent
+    allowed = {backend / "shared" / "db.py"}
+
+    offenders = []
+    for path in backend.rglob("*.py"):
+        if path in allowed or "tests" in path.parts or ".venv" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "sqlite3.connect(" in text:
+            offenders.append(str(path.relative_to(backend)))
+
+    assert not offenders, (
+        "these modules open their own connection instead of using shared.db.connect(): "
+        f"{offenders}"
+    )
 
 
 # ── pragmas ───────────────────────────────────────────────────────────────────

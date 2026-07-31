@@ -12,8 +12,8 @@ import sqlite3
 import os
 
 import domains.tax_expert.tax_sessions
-from shared import identity
-from shared.storage import DB_PATH, delete_all_for_pan
+from shared import db, identity
+from shared.storage import delete_all_for_pan
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +36,18 @@ def get_accounts_summary():
             detail="Sign in with your PAN to view your accounts.",
         )
 
-    # 1. Fetch this caller's CAS sessions from SQLite
+    # 1. Fetch this caller's CAS sessions from the database
     cas_sessions = []
-    if os.path.exists(DB_PATH):
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
+    with db.connect() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            db.sql(
                 "SELECT session_id, pan_id, upload_type, created_at FROM sessions "
-                "WHERE pan_id = ?",
-                (caller,),
-            )
-            cas_sessions = [dict(row) for row in cursor.fetchall()]
+                "WHERE pan_id = ?"
+            ),
+            (caller,),
+        )
+        cas_sessions = [dict(row) for row in cursor.fetchall()]
 
     # 2. Fetch Tax sessions via the store's public accessor rather than reaching
     # into its private _tax_sessions global (which also skipped LRU bookkeeping).

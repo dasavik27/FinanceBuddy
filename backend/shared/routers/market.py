@@ -49,19 +49,19 @@ MIN_CACHE_TTL_MINUTES = 1
 
 @router.post("/config")
 def update_market_config(ttl: int):
-    from shared import config
-    from shared.storage import DB_PATH
-    import sqlite3
+    from shared import config, db
 
     ttl = max(MIN_CACHE_TTL_MINUTES, ttl)
     config.CACHE_TTL_MINUTES = ttl
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.connect() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute(
-            "INSERT INTO app_settings (key, value) VALUES ('cache_ttl', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            db.sql(
+                "INSERT INTO app_settings (key, value) VALUES ('cache_ttl', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+            ),
             (str(ttl),)
         )
-        conn.commit()
         
     return {"status": "ok", "cache_ttl": config.CACHE_TTL_MINUTES}

@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from shared import identity, storage
+from shared import db, identity, storage
 
 USER_A = "AAAAA1111A"
 USER_B = "BBBBB2222B"
@@ -31,19 +31,19 @@ def isolated_db(tmp_path, monkeypatch):
     mf_* schema happens to be frozen at. Every storage function reads the module
     global at call time, so rebinding it is sufficient.
 
-    tax_sessions has to be rebound separately: it names the *same file* through its
-    own module-level DB_PATH (a Path, where storage's is a str), so patching only
-    storage's leaves the tax tests writing to the developer's real database.
+    One patch covers every store, including the tax one: shared/db.py is the only
+    module that names the database. It used to take two, because tax_sessions had its
+    own DB_PATH constant pointing at the same file - so patching storage's alone left
+    the tax tests writing to the developer's real database.
     """
     from domains.tax_expert import tax_sessions
 
-    db = tmp_path / "test_metadata.sqlite3"
-    monkeypatch.setattr(storage, "DB_PATH", str(db))
-    monkeypatch.setattr(tax_sessions, "DB_PATH", db)
+    path = tmp_path / "test_metadata.sqlite3"
+    monkeypatch.setattr(db, "DB_PATH", str(path))
     storage._init_db()
     tax_sessions._init_db()
     tax_sessions.clear_all()
-    yield db
+    yield path
     tax_sessions.clear_all()
 
 
@@ -292,14 +292,14 @@ def test_purge_rejects_another_pan(client):
 
 def test_purge_removes_the_user_row_too():
     """A purge that leaves the PAN behind has not deleted "all data"."""
-    with sqlite3.connect(storage.DB_PATH) as conn:
+    with sqlite3.connect(db.DB_PATH) as conn:
         conn.execute("INSERT OR REPLACE INTO users (pan_id) VALUES (?)", (USER_A,))
         conn.commit()
 
     _save(USER_A, pd.DataFrame())
     storage.delete_all_for_pan(USER_A)
 
-    with sqlite3.connect(storage.DB_PATH) as conn:
+    with sqlite3.connect(db.DB_PATH) as conn:
         assert conn.execute(
             "SELECT COUNT(*) FROM users WHERE pan_id = ?", (USER_A,)
         ).fetchone()[0] == 0

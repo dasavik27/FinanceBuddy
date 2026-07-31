@@ -25,24 +25,21 @@ normal — the API returns 404 and the UI prompts for re-upload.
 import uuid
 import json
 import os
-import sqlite3
 import logging
 import threading
 import time
 from collections import OrderedDict
 from typing import Optional
-from pathlib import Path
 
-from shared import identity
+from shared import db, identity
 from shared.identity import mask_pan
-from shared.storage import _apply_pragmas
 
 logger = logging.getLogger(__name__)
 
-# ── Storage Path ──────────────────────────────────────────────────────────────
-_DATA_DIR = Path(__file__).parent.parent.parent / "data"
-_DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = _DATA_DIR / "metadata.sqlite3"
+# Storage location and connection handling live in shared/db.py. This module used to
+# name the same file through its own DB_PATH constant - as a Path, where storage's was
+# a str - which meant a test redirecting storage.DB_PATH to a temp database left this
+# store writing to the real one.
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 # Each session holds a full parsed AIS (potentially thousands of trade dicts at
@@ -59,45 +56,27 @@ MAX_SESSIONS = int(os.getenv("FINANCEBUDDY_MAX_TAX_SESSIONS", "8"))
 SESSION_TTL_SECONDS = int(os.getenv("FINANCEBUDDY_TAX_SESSION_TTL", str(24 * 3600)))
 
 
-def _connect():
-    """Open a SQLite connection. Callers must close it.
-
-    `with sqlite3.connect(...)` commits but does NOT close, so the previous code
-    leaked a connection object and fd per operation until GC.
-
-    Shares the same pragmas as shared/storage.py - this is the *same database file*,
-    so WAL and the busy timeout have to be consistent or a tax write can still block
-    mutual-fund readers.
-    """
-    conn = sqlite3.connect(DB_PATH, timeout=15.0)
-    _apply_pragmas(conn)
-    return conn
-
-
 def _init_db():
-    conn = _connect()
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tax_sessions (
-                session_id TEXT PRIMARY KEY,
-                pan TEXT,
-                data TEXT
-            )
-        """)
-        # Migrate older databases that predate the timestamp columns. Without a
-        # created_at/updated_at nothing could ever expire by age, which is why
-        # the store grew without bound.
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(tax_sessions)")}
-        if "created_at" not in existing:
-            conn.execute("ALTER TABLE tax_sessions ADD COLUMN created_at REAL DEFAULT 0")
-        if "updated_at" not in existing:
-            conn.execute("ALTER TABLE tax_sessions ADD COLUMN updated_at REAL DEFAULT 0")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_tax_sessions_pan ON tax_sessions(pan)")
-        conn.commit()
+        with db.connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tax_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    pan TEXT,
+                    data TEXT
+                )
+            """)
+            # Migrate older databases that predate the timestamp columns. Without a
+            # created_at/updated_at nothing could ever expire by age, which is why
+            # the store grew without bound.
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(tax_sessions)")}
+            if "created_at" not in existing:
+                conn.execute("ALTER TABLE tax_sessions ADD COLUMN created_at REAL DEFAULT 0")
+            if "updated_at" not in existing:
+                conn.execute("ALTER TABLE tax_sessions ADD COLUMN updated_at REAL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tax_sessions_pan ON tax_sessions(pan)")
     except Exception as e:
         logger.error(f"Failed to initialize tax_sessions schema: {e}")
-    finally:
-        conn.close()
 
 
 _init_db()
@@ -140,41 +119,39 @@ def _load_from_disk_locked():
     global _sessions_loaded
     _tax_sessions.clear()
     cutoff = time.time() - SESSION_TTL_SECONDS
-    conn = None
     try:
-        conn = _connect()
-        rows = conn.execute(
-            "SELECT session_id, data, updated_at FROM tax_sessions "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (MAX_SESSIONS,),
-        ).fetchall()
-        expired = []
-        # Oldest-first insertion => most-recently-used ends up last.
-        for sid, blob, updated_at in reversed(rows):
-            if updated_at and updated_at < cutoff:
-                expired.append(sid)
-                continue
-            try:
-                session = json.loads(blob)
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Discarding unreadable tax session {sid}: {e}")
-                expired.append(sid)
-                continue
-            session.setdefault("_version", 0)
-            session["_last_access"] = updated_at or time.time()
-            _tax_sessions[sid] = session
-        if expired:
-            conn.executemany(
-                "DELETE FROM tax_sessions WHERE session_id = ?", [(s,) for s in expired]
-            )
-            conn.commit()
-            logger.info(f"Purged {len(expired)} expired/unreadable tax session(s).")
-        logger.info(f"Loaded {len(_tax_sessions)} tax session(s) from SQLite.")
+        with db.connect() as conn:
+            rows = conn.execute(
+                db.sql(
+                    "SELECT session_id, data, updated_at FROM tax_sessions "
+                    "ORDER BY updated_at DESC LIMIT ?"
+                ),
+                (MAX_SESSIONS,),
+            ).fetchall()
+            expired = []
+            # Oldest-first insertion => most-recently-used ends up last.
+            for sid, blob, updated_at in reversed(rows):
+                if updated_at and updated_at < cutoff:
+                    expired.append(sid)
+                    continue
+                try:
+                    session = json.loads(blob)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Discarding unreadable tax session {sid}: {e}")
+                    expired.append(sid)
+                    continue
+                session.setdefault("_version", 0)
+                session["_last_access"] = updated_at or time.time()
+                _tax_sessions[sid] = session
+            if expired:
+                conn.executemany(
+                    db.sql("DELETE FROM tax_sessions WHERE session_id = ?"),
+                    [(s,) for s in expired],
+                )
+                logger.info(f"Purged {len(expired)} expired/unreadable tax session(s).")
+        logger.info(f"Loaded {len(_tax_sessions)} tax session(s) from the database.")
     except Exception as e:
-        logger.error(f"Failed to load tax sessions from SQLite: {e}")
-    finally:
-        if conn:
-            conn.close()
+        logger.error(f"Failed to load tax sessions: {e}")
     _sessions_loaded = True
 
 
@@ -190,19 +167,15 @@ def _rehydrate(session_id: str) -> Optional[dict]:
 
     The SQLite read happens outside the lock; only the insert is guarded.
     """
-    conn = None
     try:
-        conn = _connect()
-        row = conn.execute(
-            "SELECT data, updated_at FROM tax_sessions WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
+        with db.connect() as conn:
+            row = conn.execute(
+                db.sql("SELECT data, updated_at FROM tax_sessions WHERE session_id = ?"),
+                (session_id,),
+            ).fetchone()
     except Exception as e:
         logger.error(f"Failed to rehydrate tax session {session_id}: {e}")
         return None
-    finally:
-        if conn:
-            conn.close()
 
     if row is None:
         return None
@@ -240,23 +213,19 @@ def purge_expired_from_disk() -> int:
     daemon in domains/mutual_funds/sessions.py, which already runs every 10 minutes.
     """
     cutoff = time.time() - SESSION_TTL_SECONDS
-    conn = None
     try:
-        conn = _connect()
-        cursor = conn.execute(
-            "DELETE FROM tax_sessions WHERE updated_at > 0 AND updated_at < ?", (cutoff,)
-        )
-        conn.commit()
-        removed = cursor.rowcount or 0
+        with db.connect() as conn:
+            cursor = conn.execute(
+                db.sql("DELETE FROM tax_sessions WHERE updated_at > 0 AND updated_at < ?"),
+                (cutoff,),
+            )
+            removed = cursor.rowcount or 0
         if removed:
             logger.info(f"Swept {removed} expired tax session row(s) from disk.")
         return removed
     except Exception as e:
         logger.error(f"Failed to sweep expired tax sessions: {e}")
         return 0
-    finally:
-        if conn:
-            conn.close()
 
 
 def _persist_one(session_id: str):
@@ -282,43 +251,34 @@ def _persist_one(session_id: str):
         snapshot = {k: v for k, v in session.items() if k != "_last_access"}
         pan = session.get("pan", "")
 
-    conn = None
     try:
         now = time.time()
         blob = json.dumps(snapshot, ensure_ascii=False, default=str)
-        conn = _connect()
-        conn.execute(
-            """
-            INSERT INTO tax_sessions (session_id, pan, data, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-                data=excluded.data, pan=excluded.pan, updated_at=excluded.updated_at
-            """,
-            (session_id, pan, blob, now, now),
-        )
-        conn.commit()
+        with db.connect() as conn:
+            conn.execute(
+                db.sql("""
+                    INSERT INTO tax_sessions (session_id, pan, data, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        data=excluded.data, pan=excluded.pan, updated_at=excluded.updated_at
+                """),
+                (session_id, pan, blob, now, now),
+            )
     except Exception as e:
         logger.error(f"Failed to persist tax session {session_id}: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 
 def _delete_many(session_ids: list):
     if not session_ids:
         return
-    conn = None
     try:
-        conn = _connect()
-        conn.executemany(
-            "DELETE FROM tax_sessions WHERE session_id = ?", [(s,) for s in session_ids]
-        )
-        conn.commit()
+        with db.connect() as conn:
+            conn.executemany(
+                db.sql("DELETE FROM tax_sessions WHERE session_id = ?"),
+                [(s,) for s in session_ids],
+            )
     except Exception as e:
         logger.error(f"Failed to delete tax sessions {session_ids}: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 
 def _ensure_loaded():
@@ -647,16 +607,13 @@ def delete_all_for_pan(pan: str) -> int:
     for sid in keys_to_delete:
         _drop_cached_computations(sid)
 
-    conn = None
     try:
-        conn = _connect()
-        cursor = conn.execute("DELETE FROM tax_sessions WHERE UPPER(pan) = ?", (target,))
-        conn.commit()
-        removed = max(cursor.rowcount or 0, len(keys_to_delete))
+        with db.connect() as conn:
+            cursor = conn.execute(
+                db.sql("DELETE FROM tax_sessions WHERE UPPER(pan) = ?"), (target,)
+            )
+            removed = max(cursor.rowcount or 0, len(keys_to_delete))
     except Exception as e:
         logger.error(f"Failed to delete tax sessions for PAN {mask_pan(pan)}: {e}")
         removed = len(keys_to_delete)
-    finally:
-        if conn:
-            conn.close()
     return removed
