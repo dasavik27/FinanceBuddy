@@ -25,3 +25,4 @@ venv/
 .venv/
 env/
 venv_finance/
+.env
