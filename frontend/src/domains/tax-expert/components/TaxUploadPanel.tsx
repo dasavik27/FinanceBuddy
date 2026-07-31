@@ -28,7 +28,7 @@ import CloudUploadIcon    from '@mui/icons-material/CloudUpload'
 import CloseIcon          from '@mui/icons-material/Close'
 import DescriptionIcon    from '@mui/icons-material/Description'
 import { apiClient }      from '../../../shared/api/client'
-import { useAppStore }    from '../../../shared/store/appStore'
+import { useAppStore, useIsAuthenticated } from '../../../shared/store/appStore'
 
 // ────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -59,6 +59,25 @@ interface TaxHistoryItem {
   name: string
   gross_salary: number
   created_at: string
+}
+
+/**
+ * Assessment Year from Financial Year, e.g. "2024-25" -> "2025-26".
+ *
+ * The backend doesn't send this - it never has, on either branch's version of
+ * get_sessions_by_user. Computed here rather than added server-side because it's a
+ * pure display transform of a value the response already carries, and every other
+ * caller of that endpoint (TaxHistoryTab, the summary screens) has no use for it.
+ */
+function deriveAY(fy: string): string {
+  if (!fy || !fy.includes('-')) return ''
+  const startYear = parseInt(fy.split('-')[0], 10)
+  if (Number.isNaN(startYear)) return ''
+  return `${startYear + 1}-${String(startYear + 2).slice(-2)}`
+}
+
+function withAY(sessions: any[]): TaxHistoryItem[] {
+  return sessions.map((s) => ({ ...s, ay: s.ay || deriveAY(s.fy) }))
 }
 
 interface HistoryListProps {
@@ -265,15 +284,15 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [history, setHistory]   = useState<TaxHistoryItem[]>([])
   const setSessionById = useAppStore((s) => s.setSessionById)
-  const pan = useAppStore((s) => s.pan)
+  const isAuthenticated = useIsAuthenticated()
   const open = Boolean(anchorEl)
 
   const fetchHistory = useCallback(() => {
-    if (!pan) return
+    if (!isAuthenticated) return
     apiClient.getTaxHistory()
-      .then((res) => { if (res?.sessions) setHistory(res.sessions) })
+      .then((res) => { if (res?.sessions) setHistory(withAY(res.sessions)) })
       .catch(console.error)
-  }, [pan])
+  }, [isAuthenticated])
 
   useEffect(() => {
     if (open) fetchHistory()
@@ -366,14 +385,14 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
   const [error, setError]     = useState<string | null>(null)
   const [history, setHistory] = useState<TaxHistoryItem[]>([])
   const setSessionById = useAppStore((s) => s.setSessionById)
-  const pan = useAppStore((s) => s.pan)
+  const isAuthenticated = useIsAuthenticated()
 
   const fetchHistory = useCallback(() => {
-    if (!pan) return
+    if (!isAuthenticated) return
     apiClient.getTaxHistory()
-      .then((res) => { if (res?.sessions) setHistory(res.sessions) })
+      .then((res) => { if (res?.sessions) setHistory(withAY(res.sessions)) })
       .catch(console.error)
-  }, [pan])
+  }, [isAuthenticated])
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
 

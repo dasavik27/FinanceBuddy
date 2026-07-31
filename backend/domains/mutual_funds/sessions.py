@@ -11,12 +11,12 @@ Memory model
 A session holds three live DataFrames (holdings, the full transaction ledger, SIPs).
 The ledger is the large one and cannot be trimmed: XIRR and FIFO cost basis both
 need every transaction. So instead of shrinking a session, we bound how many are
-resident at once (MAX_RESIDENT_SESSIONS) and let SQLite be the overflow. Eviction is
+resident at once (MAX_RESIDENT_SESSIONS) and let Postgres be the overflow. Eviction is
 cheap because get_session() already rehydrates from disk on a miss.
 
 Retention note
 --------------
-Sessions ARE written to disk (SQLite, via shared/storage.py) for dedup, history and
+Sessions ARE persisted (Postgres, via shared/storage.py) for dedup, history and
 rehydration. An earlier version of this docstring claimed "zero disk retention...
 institutional privacy compliance", which was not true and is a claim worth being
 accurate about. What is true: the uploaded PDF itself is never retained (the parser
@@ -54,7 +54,7 @@ _SESSIONS_LOCK = threading.RLock()
 SESSION_TTL_HOURS = 4
 
 # How many portfolios may be resident simultaneously. Small on purpose: the working
-# set for a single user is 1, and anything evicted is rebuilt from SQLite on demand.
+# set for a single user is 1, and anything evicted is rebuilt from the database.
 MAX_RESIDENT_SESSIONS = int(os.getenv("FINANCEBUDDY_MAX_RESIDENT_SESSIONS", "3"))
 
 
@@ -100,12 +100,12 @@ def _compact_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 # Session lifecycle
 # ---------------------------------------------------------------------------
 
-def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = None) -> None:
+def _remember(session_id: str, portfolio: Portfolio, owner: Optional[str] = None) -> None:
     """
     Insert a session as most-recently-used and evict beyond the budget.
 
     The owner is stored alongside the portfolio so ownership can be checked from
-    memory. That matters for two reasons: a resident hit must not depend on SQLite
+    memory. That matters for two reasons: a resident hit must not depend on the database
     being reachable, and a session whose registry row has been deleted (by
     /history/{sid} DELETE or an account purge) must not become readable by anyone
     just because the registry can no longer say who owns it.
@@ -114,7 +114,7 @@ def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = 
     with _SESSIONS_LOCK:
         _SESSIONS[session_id] = {
             "portfolio": portfolio,
-            "owner": owner_pan,
+            "owner": owner,
             "created_at": now,
             "last_accessed": now,
         }
@@ -129,25 +129,21 @@ def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = 
             )
 
 
-def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
+def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", upload_type: str = 'mutual_funds') -> str:
     """
     Initializes a new portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with AMFI & Morningstar categorization.
     """
-    # Normalize the owner exactly as every read does. The write path used to store the
-    # raw X-User-PAN header while identity.normalize_pan() upper-cases on the way in,
-    # so a lowercase header made a session its own owner could not read: reads compared
-    # "ABCDE1234F" against a stored "abcde1234f" and 404'd. Masked logs rendered both
-    # sides identically, which would have made it undiagnosable in production.
-    pan_id = identity.normalize_pan(pan_id)
+    # The owner is the authenticated caller, never a value the request supplied.
+    user_id = identity.current_user_id()
 
     # Deduplication check: if this owner already uploaded this exact ledger, reuse
     # the existing session. The hash is computed once here and threaded into
     # save_session, both because the dedup lookup and the registry row must agree
     # and because computing it twice ran a row-wise `df.apply` over the whole ledger
     # twice per upload.
-    ledger_hash = storage.compute_ledger_hash(df_t, pan_id)
-    duplicate_id = storage.check_duplicate_upload(ledger_hash, pan_id)
+    ledger_hash = storage.compute_ledger_hash(df_t, user_id)
+    duplicate_id = storage.check_duplicate_upload(ledger_hash, user_id)
     if duplicate_id:
         return duplicate_id
 
@@ -167,9 +163,9 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
             )
 
     # Persist BEFORE compacting: to_sql writes categoricals as their codes in some
-    # pandas/SQLite combinations, and the round-trip must preserve the label.
+    # pandas versions, and the round-trip must preserve the label.
     final_session_id = storage.save_session(
-        session_id, df_h, df_t, df_s, is_partial, statement_period, pan_id, upload_type,
+        session_id, df_h, df_t, df_s, is_partial, statement_period, user_id, upload_type,
         ledger_hash=ledger_hash,
     )
     # save_session returns a different id if it adopted a concurrent duplicate.
@@ -182,7 +178,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     portfolio = Portfolio(df_h, df_t, df_s, is_partial)
     portfolio.update_live_navs()
 
-    _remember(session_id, portfolio, owner_pan=pan_id)
+    _remember(session_id, portfolio, owner=user_id)
     return session_id
 
 
@@ -192,7 +188,7 @@ def _session_purge_worker():
     """
     Daemon thread executing periodic background purges of abandoned sessions.
     Evaluates expiration against last active API interaction heartbeat.
-    Also sweeps SQLite for disk-level retention limit (24 hours).
+    Memory only: stored rows are the user's data and are never swept on a timer.
     """
     while True:
         try:
@@ -208,14 +204,21 @@ def _session_purge_worker():
                 for sid in expired:
                     _SESSIONS.pop(sid, None)
 
-            # 2. Disk-Level Purge (24 hours) for CAS
-            from shared.storage import DB_PATH, delete_session
-            import sqlite3
-            if storage.os.path.exists(DB_PATH):
-                with sqlite3.connect(DB_PATH) as conn:
-                    cursor = conn.execute("SELECT session_id FROM sessions WHERE created_at < datetime('now', '-24 hours')")
-                    for row in cursor.fetchall():
-                        delete_session(row[0])
+            # 2. No disk purge.
+            #
+            # This used to delete every session older than 24 hours. That existed
+            # because the filesystem was ephemeral and the database was a
+            # within-process convenience - keeping rows past a deploy was pointless,
+            # and bounding the table was free.
+            #
+            # Storage is durable now, and a user's uploaded statements are their
+            # data. Deleting them on a timer would mean signing in tomorrow to an
+            # empty dashboard. Retention is a product decision and belongs to the
+            # user: DELETE /accounts/me removes everything, DELETE /history/{id}
+            # removes one statement.
+            #
+            # In-memory eviction above is unaffected - it is a cache bound, and an
+            # evicted session is rehydrated from the database on next access.
 
             # 3. Trim the disk cache alongside sessions, so the .cache directory
             #    cannot outgrow its budget on a long-lived instance.
@@ -251,7 +254,7 @@ def _deny(session_id: str, owner: Optional[str]) -> "HTTPException":
     Build the denial. 404 rather than 403 on purpose: a 403 confirms the session
     exists, which is exactly the signal an id-guessing caller is looking for.
     """
-    caller = identity.current_pan()
+    caller = identity.current_user_id()
     logger.warning(
         "[AUTHZ] caller=%s denied access to session %s owned=%s (same PAN in different "
         "case is a bug, not an attack - both mask identically here)",
@@ -268,7 +271,7 @@ def get_session(session_id: str) -> Portfolio:
 
     Ownership is resolved from whichever source is authoritative for the path taken:
 
-    - **Resident hit** - from the entry itself. Not from SQLite, because a resident
+    - **Resident hit** - from the entry itself. Not from the database, because a resident
       session must stay usable when the database is unreachable, and because a
       session whose registry row was deleted must not become readable by everyone
       merely because the registry can no longer name its owner.
@@ -320,7 +323,7 @@ def get_session(session_id: str) -> Portfolio:
     except Exception as e:
         logger.warning(f"[SESSION REHYDRATE] live NAV refresh failed for {session_id}: {e}")
 
-    _remember(session_id, portfolio, owner_pan=owner)
+    _remember(session_id, portfolio, owner=owner)
     return portfolio
 
 
@@ -330,26 +333,32 @@ def forget(session_id: str) -> bool:
         return _SESSIONS.pop(session_id, None) is not None
 
 
-def evict_for_pan(pan_id: str) -> int:
+def evict_for_user(user_id: str) -> int:
     """
-    Drop a PAN's resident sessions. Returns how many were dropped.
+    Drop a user's resident sessions. Returns how many were dropped.
 
-    Required by the purge path: deleting the SQLite rows left the portfolios sitting
-    in memory, so data the user asked to have permanently deleted stayed readable for
-    up to the session TTL by anyone holding the id - and, with the registry row gone,
-    the registry could no longer say who owned it. The tax store already did this; the
-    mutual-fund store did not.
+    Required by the purge path: deleting the rows left the portfolios sitting in
+    memory, so data the user asked to have permanently deleted stayed readable for up
+    to the session TTL by anyone holding the id - and, with the registry row gone, the
+    registry could no longer say who owned it.
+
+    Compared exactly, with no case folding. The owner used to be a PAN, which is
+    conventionally upper-case, so this upper-cased before comparing; it is now a
+    lower-case uuid, and that leftover `.upper()` made the comparison never match.
+    Eviction silently became a no-op that still reported success - so a purge left
+    every portfolio resident and readable, which is precisely the bug this function
+    exists to prevent.
     """
-    target = (pan_id or "").upper()
+    target = str(user_id or "")
     with _SESSIONS_LOCK:
         doomed = [
             sid for sid, entry in _SESSIONS.items()
-            if (entry.get("owner") or "").upper() == target
+            if str(entry.get("owner") or "") == target
         ]
         for sid in doomed:
             _SESSIONS.pop(sid, None)
     if doomed:
-        logger.info("[SESSION] evicted %d resident session(s) for %s", len(doomed), identity.mask_pan(pan_id))
+        logger.info("[SESSION] evicted %d resident session(s) for %s", len(doomed), user_id)
     return len(doomed)
 
 

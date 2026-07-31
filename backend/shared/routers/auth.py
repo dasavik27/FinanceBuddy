@@ -1,58 +1,64 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import sqlite3
-import re
-from shared.identity import mask_pan
-from shared.storage import DB_PATH
+
+from shared import identity, users
+
 import logging
 logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
 
-class LoginRequest(BaseModel):
+
+class ProfileRequest(BaseModel):
     pan: str
 
-@router.post("/login")
-def login_with_pan(req: LoginRequest):
-    pan = req.pan.strip().upper()
-    
-    # Basic PAN validation (5 letters, 4 numbers, 1 letter)
-    # Some users might have slightly different PANs, but this is standard.
-    if not re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan):
-        raise HTTPException(status_code=400, detail="Invalid PAN format. Must be 10 characters (e.g. ABCDE1234F).")
-        
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.execute("SELECT pan_id FROM users WHERE pan_id = ?", (pan,))
-        user = cursor.fetchone()
 
-        if not user:
-            conn.execute("INSERT INTO users (pan_id) VALUES (?)", (pan,))
-            conn.commit()
-            # NOTE: there used to be a migration here that claimed every orphaned
-            # session (pan_id IS NULL) for the first user created, so existing
-            # uploads survived the introduction of PANs. It has been removed.
-            #
-            # On an ephemeral filesystem the `users` table resets on every restart,
-            # so "the first user" recurred on each deploy - and the next person to
-            # log in inherited a stranger's uploads and could read them through
-            # /history. It was an upgrade shim for a database that no longer
-            # survives restarts.
-            logger.info(f"[AUTH] New user profile created for PAN: {mask_pan(pan)}")
-        else:
-            logger.info(f"[AUTH] Existing user logged in: {mask_pan(pan)}")
+@router.get("/me")
+def whoami():
+    """The current account. The frontend uses this to decide if a session is live."""
+    caller = identity.current_caller()
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    return {"user_id": caller.user_id, "pan": caller.pan}
 
+
+@router.put("/profile/pan")
+def set_profile_pan(req: ProfileRequest):
+    """
+    Attach a PAN to the signed-in account.
+
+    Sign-in is by Google token; a PAN is not identity here, it is profile data the
+    user supplies afterwards because the CAS PDF password default and AIS matching
+    still want one.
+    """
+    caller = identity.current_caller()
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    pan = users.set_pan(caller.user_id, req.pan)
+    if not pan:
+        raise HTTPException(status_code=400, detail="Invalid PAN format.")
     return {"status": "success", "pan": pan}
 
+
 @router.post("/logout")
-def logout_user(req: LoginRequest):
-    pan = req.pan.strip().upper()
-    from domains.tax_expert.tax_sessions import get_sessions_by_pan, delete_tax_session
-    sessions = get_sessions_by_pan(pan)
-    for s in sessions:
-        delete_tax_session(s["session_id"])
+def logout_user():
+    """
+    Clears the caller's own resident tax sessions.
+
+    Stored data is untouched - this only drops the in-memory cache, which is
+    rehydrated from the database on next access.
+    """
+    caller = identity.current_caller()
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    from domains.tax_expert.tax_sessions import evict_for_user
+
+    evicted = evict_for_user(caller.user_id)
     logger.info(
-        f"[AUTH] Logged out {mask_pan(pan)} and cleared {len(sessions)} "
-        "tax sessions from memory and disk."
+        "[AUTH] signed out %s; evicted %d resident tax session(s)",
+        caller.user_id, evicted,
     )
     return {"status": "success"}

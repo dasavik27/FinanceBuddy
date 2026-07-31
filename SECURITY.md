@@ -5,31 +5,58 @@ that a reader can tell the difference between "handled" and "accepted for now" �
 several things below are the latter, and writing them down is what stops them being
 mistaken for done.
 
-## Authentication: PAN is an identifier, not a credential
+## Authentication
 
-`POST /auth/login` accepts any syntactically valid PAN and returns success. The
-frontend then sends it as `X-User-PAN` on every request, and the backend treats it as
-the caller's identity (`shared/identity.py`).
+One credential: `Authorization: Bearer <OIDC id token>`, verified against the
+provider's JWKS in `shared/oidc.py`. There is no PAN-based sign-in and no PAN header
+accepted anywhere — `POST /auth/login`, `users.resolve_legacy_pan` and the
+middleware's PAN branch were removed rather than deprecated, since there is no
+existing session or stored login to keep working.
 
-**PAN is printed on documents. It is not a secret.** Anyone who knows a user's PAN can
-present it and read that user's data. This is the largest open item in this file.
+Verification: signature against a cached JWKS, pinned asymmetric algorithms, and
+required `exp` / `iss` / `aud`. Each of those is a live attack if omitted, and each
+has a test (`tests/test_oidc_verifier.py`). Provider-agnostic — a JWKS URL, an issuer
+and an audience — so Google, Supabase, Auth0 and Cognito are configuration, not code.
 
-What the identity layer does buy, and what it does not:
+An account with no token cannot reach anything: every route below the middleware
+either 401s on an anonymous caller or treats the request as unowned data with nobody
+to protect (`identity.owns_record`).
+
+### PAN is no longer identity
+
+Ownership is `users.id`, a uuid this application issues. PAN moved to `profiles.pan_encrypted`
+— still the CAS PDF password default and the AIS matching key, set once by the user
+after signing in via `PUT /auth/profile/pan` — but it decides nothing about access.
+
+The consequence worth stating plainly: **two accounts may hold the same PAN and
+cannot see each other's data.** `test_pan_is_not_identity` pins it.
 
 | | Status |
 |---|---|
 | One user reading another's session by holding a `session_id` | Closed |
-| `/accounts/summary` enumerating every PAN on the deployment | Closed |
-| Purging another user's data via `DELETE /accounts/{pan}` | Closed |
-| A caller who knows a PAN impersonating its owner | **Open** |
-| Brute-forcing the PAN space (10 chars, structured) | **Open** |
+| `/accounts/summary` enumerating every user on the deployment | Closed |
+| Purging another user's data | Closed — `DELETE /accounts/me` takes no target |
+| A caller who knows a PAN impersonating its owner | Closed — there is no PAN credential to present |
 
-Closing the open rows needs a real credential — a signed token issued after
-authenticating something the user can keep secret. That is a product decision about
-onboarding, not a bug fix, which is why it is documented rather than patched.
+## Storage is durable, and what that changed
 
-Until then: do not deploy this with real customer data on a public origin without
-putting an authenticating proxy in front of it.
+User data now persists in Postgres. This is a deliberate change and it moved risk
+rather than removing it: sessions hold holdings, capital gains, income and PAN, and
+they no longer evaporate when the container restarts.
+
+| | Status |
+|---|---|
+| Retention is user-controlled, not a timer | Closed — the 24h sweep is gone; `DELETE /accounts/me` and `DELETE /history/{id}` |
+| Logout destroying stored history | Closed — logout evicts memory only |
+| Access / portability (DPDP) | Closed — `GET /accounts/me/export` |
+| Erasure (DPDP) | Closed — one `DELETE`, cascading to every child table |
+| RLS as a backstop | Closed — enabled with no permissive policy (migration 0002) |
+| Encryption at rest for PAN, income, holdings and portfolio value | Closed — see below |
+| **Operational: backups, and who holds the key** | **Open** |
+
+Handling Indian financial data makes the DPDP Act 2023 applicable. Access, erasure
+and portability are implemented above; consent capture and breach notification are
+process, not code, and are not addressed here.
 
 ### Why enforcement lives in the data layer
 
@@ -42,8 +69,8 @@ portfolio without going through those two functions.
 
 - **not in a request** — an in-process caller (GC daemon, migration, test suite).
   Trusted, because it did not arrive over HTTP.
-- **in a request, no valid PAN** — anonymous HTTP caller. Denied any owned record.
-- **in a request with a PAN** — allowed on exact match only.
+- **in a request, no verified token** — anonymous HTTP caller. Denied any owned record.
+- **in a request as a user** — allowed on exact `user_id` match only.
 
 The first rule is safe *only* because `IdentityMiddleware` wraps every HTTP request,
 so no request can observe that state. `tests/test_authorization.py` asserts the
@@ -58,40 +85,65 @@ piece of information an id-guessing caller wants.
 | Data | Lives | Enforced by |
 |---|---|---|
 | Uploaded PDF (CAS / AIS / ITR) | Never retained | Parser deletes its temp file in a `finally` |
-| Mutual-fund session in memory | 4 h idle | `sessions.SESSION_TTL_HOURS` |
-| Mutual-fund rows in SQLite | 24 h | GC sweep, every 10 min |
+| Mutual-fund session in memory | 4 h idle, resident cap 3 | `sessions.SESSION_TTL_HOURS` |
 | Tax session in memory | 24 h idle, LRU cap 8 | `tax_sessions._evict_locked` |
-| Tax session rows in SQLite | 24 h | `purge_expired_from_disk`, on the same sweep |
-| `users.pan_id` | Until purge | `DELETE /accounts/{pan}` |
+| Everything stored | **Until the user deletes it** | `DELETE /accounts/me`, `DELETE /history/{id}`, `DELETE /tax-expert/tax-history/{id}` |
 
-Two corrections worth noting, because both were previously wrong in a way that
-mattered:
+The in-memory bounds are cache sizing, not retention: an evicted session is rehydrated
+from the database on next access. Nothing expires on a timer.
 
-- **Tax-session eviction used to delete the SQLite row**, which made LRU eviction
-  destructive — the user's uploaded AIS was gone and they had to re-upload. Eviction
-  is now memory-only and `_rehydrate()` restores from disk, with the disk sweep
-  providing the bound instead.
-- **`users` rows were never deleted**, including by the endpoint whose docstring says
-  it "permanently deletes all data" for a PAN. `delete_all_for_pan` now removes the
-  user row too.
+That is a change. Rows used to be swept after 24 hours, which was reasonable when the
+filesystem was wiped on every deploy — the sweep bounded a table that could not
+outlive a restart anyway. Against durable storage the same sweep is a scheduled
+deletion of the user's own statements, so it is gone and retention is theirs.
 
-`ARCHITECTURE.md` describes the product as having "zero-persistence privacy". That is
-not accurate as written — data persists for up to 24 hours by design, because dedup,
-upload history and session rehydration all need it. The accurate claim is: *the
-uploaded document is never retained, and derived data is purged within 24 hours.*
+`ARCHITECTURE.md` used to describe the product as having "zero-persistence privacy"
+and a "Zero-Database Architecture". Neither was ever accurate — SQLite was already
+writing to disk — and both are now the opposite of true. Corrected there. The accurate
+claim is: *the uploaded document is never retained; derived data persists until the
+user deletes it.*
 
-## Data at rest is not encrypted
+## Data at rest
 
-`tax_sessions.data` is plaintext JSON containing salary, capital gains, deductions and
-PAN. `mf_holdings` / `mf_transactions` hold the portfolio in cleartext.
+Encrypted by the application before it reaches the database — AES-256-GCM in
+`shared/crypto.py`, keyed from `FINANCEBUDDY_ENCRYPTION_KEYS`. Required, with no
+plaintext fallback: unconfigured, the app raises rather than writing this data in the
+clear, because encryption that silently no-ops is worse than none — the deployment
+reports itself as encrypted and is not.
 
-This is currently acceptable **because the deployment disk is ephemeral** — it is wiped
-on restart and spin-down, and the file is gitignored. That is a property of the
-hosting tier, not of the code.
+| Column | Holds |
+|---|---|
+| `profiles.pan_encrypted` | PAN |
+| `sessions.metrics` | net worth, amount invested, fund count, tax summary incl. gross salary |
+| `session_payloads.holdings/transactions/sips` | the full CAS portfolio and ledger |
+| `tax_payloads.data` | the parsed AIS: salary, capital gains, deductions |
 
-**Attaching a persistent volume or enabling backups turns this into a data-at-rest
-finding.** If you do either, encrypt the `data` blob with a key from the environment
-first. See `DEPLOYMENT.md`.
+Deliberately left plaintext, because each is either non-reversible or needed for
+queries the encryption would break: `sessions.data_hash` (a SHA-256 salted with
+user_id, needed for dedup equality lookups), `created_at` and `upload_type` (every
+WHERE and ORDER BY), `session_payloads.meta` (column names and datetime units —
+schema, not data), and `identities.email` (already known to the identity provider).
+
+Two properties worth stating because they are not automatic:
+
+- **Randomised.** A fresh nonce per write, so equal plaintexts give different
+  ciphertexts. A deterministic scheme would leak equality — an observer could tell
+  which accounts share a PAN, or which sessions hold an identical portfolio, without
+  decrypting anything.
+- **Bound to its row.** Every ciphertext is authenticated against its `session_id` or
+  `user_id` as GCM associated data. This closes an attack encryption alone does not:
+  someone with write access but no key could otherwise copy one user's encrypted
+  holdings into another user's row, and the application would decrypt and serve it.
+  Covered by `test_a_payload_moved_to_another_session_will_not_decrypt`.
+
+What this does **not** cover: an attacker who has compromised the running application
+has the key by definition. It protects a leaked connection string, a stolen backup,
+or read access at the hosting provider — precisely the cases volume encryption and
+RLS leave open, because the database decrypts for anyone who authenticates and this
+application connects as the table owner.
+
+The remaining operational item is key custody: a backup taken alongside the key is a
+backup with the lock and the key in the same box. See ONBOARDING.md.
 
 ## Logging
 
@@ -122,18 +174,18 @@ user-derived payload with a market-data type.
 
 ## Known-open items
 
-1. **PAN-only authentication** (above). Largest item, and the one that gates using
-   this with real data on a public origin.
-2. **`POST /market/config` is still unauthenticated.** It can no longer disable
-   caching outright — the TTL is floored at 1 minute — but any caller can still lower
-   it and increase upstream load. It should require whatever credential item 1
-   introduces.
-3. **`/health/cache` and `/tax-expert/tax/cache-stats` are unauthenticated.** They leak
-   no user data — counters only — but do reveal activity volume.
+1. **Key custody and backups.** The encryption key must not live where the database
+   backups do, and losing it loses the data. This is process, not code.
+2. **Consent capture and breach notification** (DPDP). Access, erasure and
+   portability are implemented; these two are not, and are also process.
 
 Closed during the pre-production pass, listed so the history is visible: the
 `"empty_ledger"` shared dedup hash, unscoped `/accounts/summary`, unauthenticated
 account purge, `Cache-Control: public` on portfolio data, the unlocked tax session
 store, destructive tax-session eviction, unpurged `users` rows, unmasked PAN logging,
-and the `auth.py` first-login migration that claimed orphaned sessions for whoever
-logged in first after a restart.
+the `auth.py` first-login migration that claimed orphaned sessions for whoever logged
+in first after a restart, the body-supplied PAN on `POST /auth/logout` that let anyone
+destroy a named user's tax sessions, PAN itself being the owner column, the
+`X-User-PAN` header and `POST /auth/login` entirely once Google sign-in was in place,
+unauthenticated `POST /market/config` and cache-stats endpoints, and plaintext
+storage of PAN, salary, holdings and portfolio value.

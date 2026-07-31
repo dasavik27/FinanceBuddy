@@ -9,11 +9,10 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import CachedIcon from '@mui/icons-material/Cached'
 
 import { apiClient } from '../../api/client'
-import { useClearAllSessionsByPan, useLogout } from '../../store/appStore'
+import { useLogout } from '../../store/appStore'
 
 export default function AccountsDashboard() {
   const queryClient = useQueryClient()
-  const clearSessions = useClearAllSessionsByPan()
   const logout = useLogout()
   const [deletePan, setDeletePan] = useState<string | null>(null)
 
@@ -25,12 +24,15 @@ export default function AccountsDashboard() {
     // requests/minute at a single-worker backend for data that cannot change on its own.
   })
 
+  // Takes no target. The endpoint is DELETE /accounts/me and always acts on the
+  // signed-in account - naming one was what let a caller purge somebody else's.
+  // A purge removes the account itself, so there is nothing left to sign in to.
   const purgeMutation = useMutation({
-    mutationFn: (panId: string) => apiClient.purgeAccount(panId),
-    onSuccess: (_, variables) => {
-      clearSessions(variables)
-      queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
+    mutationFn: () => apiClient.purgeAccount(),
+    onSuccess: () => {
+      queryClient.clear()
       setDeletePan(null)
+      logout()
     }
   })
 
@@ -44,7 +46,7 @@ export default function AccountsDashboard() {
 
   const handleConfirmDelete = () => {
     if (deletePan) {
-      purgeMutation.mutate(deletePan)
+      purgeMutation.mutate()
     }
   }
 

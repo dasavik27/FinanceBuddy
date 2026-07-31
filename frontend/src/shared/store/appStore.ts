@@ -1,45 +1,19 @@
 import api from '../api/client'
+import authClient from '../auth/authClient'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-// Deep imports, not the `CryptoJS` default barrel. crypto-js is CommonJS, so the
-// barrel form defeats tree-shaking and pulls in every cipher, hash and mode — and
-// this module is in the entry graph via App.tsx, so it lands in the first-paint
-// chunk.
-import AES from 'crypto-js/aes'
-import Utf8 from 'crypto-js/enc-utf8'
-
-// NOTE: this is obfuscation, not encryption. The key ships in the JavaScript bundle,
-// so anyone with access to the device can decrypt the persisted slice in one line.
-// It is kept only so the PAN is not sitting in localStorage as clear text for casual
-// inspection; do not treat it as at-rest protection. See SECURITY.md.
-const SECRET_KEY = 'FINANCE_BUDDY_SECURE_STORAGE_KEY_2026'
-
-const encryptedStorage = {
-  getItem: (name: string): string | null => {
-    const encrypted = localStorage.getItem(name)
-    if (!encrypted) return null
-    try {
-      const decrypted = AES.decrypt(encrypted, SECRET_KEY).toString(Utf8)
-      return decrypted || null
-    } catch {
-      return null
-    }
-  },
-  setItem: (name: string, value: string): void => {
-    const encrypted = AES.encrypt(value, SECRET_KEY).toString()
-    localStorage.setItem(name, encrypted)
-  },
-  removeItem: (name: string): void => {
-    localStorage.removeItem(name)
-  }
-}
-
-
-interface GoogleUser {
-  email: string
-  name: string
-  picture_url: string
-}
+/**
+ * Persisted state is plain localStorage.
+ *
+ * It used to be AES-wrapped with a key hardcoded in this file - obfuscation, not
+ * encryption, since the key shipped in the bundle and anyone with the device could
+ * undo it in one line. It bought nothing and cost the whole crypto-js library in the
+ * first-paint chunk.
+ *
+ * What actually changed the risk: a PAN is no longer a credential. It identified
+ * users, so leaving it readable mattered; it is now profile data, and the thing worth
+ * protecting is the access token - which the auth client stores and refreshes itself.
+ */
 
 interface Filters {
   benchmark: string
@@ -50,20 +24,13 @@ interface Filters {
 }
 
 interface AppState {
-  // ── Google OAuth ──────────────────────────────────────────────────────────
-  googleUser: GoogleUser | null
-  /** Short-lived JWT. Stored in memory only — never persisted to disk/localStorage. */
-  accessToken: string | null
-  /** Opaque refresh token. Persisted (encrypted) to survive page reloads. */
-  refreshToken: string | null
-  setGoogleAuth: (user: GoogleUser, accessToken: string, refreshToken: string, pan: string | null) => void
-  clearGoogleAuth: () => void
-  setAccessToken: (token: string) => void
-  isAuthenticated: boolean
-
-  // ── Identity ──────────────────────────────────────────────────────────────
   pan: string | null
-  setPan: (pan: string | null) => void
+
+  /** The account id the server issued. Null when signed out. */
+  userId: string | null
+  email: string | null
+  setIdentity: (identity: { userId: string | null; email?: string | null; pan?: string | null }) => void
+  clearIdentity: () => void
 
   taxSlab: number
   setTaxSlab: (slab: number) => void
@@ -85,7 +52,6 @@ interface AppState {
   setSession: (id: string, type: string, data: any) => void
   setSessionById: (id: string, type: string) => void
   clearSession: (type?: string) => void
-  clearAllSessionsByPan: (pan: string) => void
   setFilters: (f: Partial<Filters>) => void
   triggerRefresh: () => void
   logout: () => void
@@ -99,23 +65,33 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
-      // ── Google OAuth ────────────────────────────────────────────────────
-      googleUser: null,
-      accessToken: null,   // in memory only
-      refreshToken: null,  // persisted (encrypted)
-      isAuthenticated: false,
-
-      setGoogleAuth: (user, accessToken, refreshToken, pan) =>
-        set({ googleUser: user, accessToken, refreshToken, pan, isAuthenticated: true }),
-
-      clearGoogleAuth: () =>
-        set({ googleUser: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
-
-      setAccessToken: (token) => set({ accessToken: token }),
-
-      // ── PAN (legacy + linked via Google) ───────────────────────────────
       pan: null,
-      setPan: (pan) => set({ pan, isAuthenticated: true }),
+
+      userId: null,
+      email: null,
+      setIdentity: ({ userId, email, pan }) =>
+        set((state) => ({
+          userId,
+          email: email !== undefined ? email : state.email,
+          pan: pan !== undefined ? pan : state.pan,
+        })),
+
+      /**
+       * Drop local identity without calling the server.
+       *
+       * Used by the 401 interceptor, where the credential is already invalid - and
+       * where calling logout() would recurse through another failing request.
+       */
+      clearIdentity: () =>
+        set({
+          userId: null,
+          email: null,
+          pan: null,
+          mfSessionId: null,
+          taxSessionId: null,
+          parseData: null,
+          isPartial: false,
+        }),
 
       taxSlab: 30,
       setTaxSlab: (slab) => set({ taxSlab: slab }),
@@ -192,41 +168,28 @@ export const useAppStore = create<AppState>()(
           }
         }),
         
-      clearAllSessionsByPan: (panToClear: string) => {
-        const state = get()
-        if (state.pan?.toUpperCase() === panToClear.toUpperCase()) {
-            set({
-                pan: null,
-                mfSessionId: null,
-                taxSessionId: null,
-                parseData: null,
-                isPartial: false,
-                lastSynced: Date.now()
-            })
-        }
-      },
-
       logout: () => {
         try {
-          const { pan, refreshToken } = get();
-          // Revoke refresh token on backend if we have one (Google flow)
-          if (refreshToken) {
-            api.post('/auth/google/logout', { refresh_token: refreshToken }).catch(console.error);
-          } else if (pan) {
-            // Legacy PAN-only logout
-            api.post('/auth/logout', { pan }).catch(console.error);
+          // Body intentionally empty: the server takes the account from the request
+          // identity. It used to read the PAN from here, which made logout an
+          // unauthenticated way to destroy any named user's sessions.
+          if (get().userId || get().pan) {
+            api.post('/auth/logout').catch(console.error)
           }
-          localStorage.clear()
+          // Ends the provider session too, so the next visit does not silently
+          // resume via a still-valid refresh token.
+          void authClient.signOut()
+          // Only our own key. localStorage.clear() also wiped the auth client's
+          // session and anything else on the origin.
+          localStorage.removeItem('finance-buddy-storage')
           sessionStorage.clear()
         } catch (e) {
           console.error(e)
         }
         set({
+          userId: null,
+          email: null,
           pan: null,
-          googleUser: null,
-          accessToken: null,
-          refreshToken: null,
-          isAuthenticated: false,
           mfSessionId: null,
           taxSessionId: null,
           parseData: null,
@@ -246,13 +209,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'finance-buddy-storage',
-      storage: createJSONStorage(() => encryptedStorage),
+      storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        pan: state.pan,
-        // Refresh token persisted so sessions survive page reload.
-        // Access token is intentionally NOT persisted (stays in memory only).
-        refreshToken: state.refreshToken,
-        taxRegime: state.taxRegime,
+        // Not the access token - the auth client owns that, including refresh.
+        userId: state.userId,
+        email: state.email,
+        pan: state.pan, 
+        taxRegime: state.taxRegime, 
         taxSessionId: state.taxSessionId,
         compareFunds: state.compareFunds,
         compareBench: state.compareBench
@@ -275,13 +238,11 @@ export const useIsPartial = () => useAppStore((s) => s.isPartial)
 export const useLastSynced = () => useAppStore((s) => s.lastSynced)
 export const useRefreshTrigger = () => useAppStore((s) => s.triggerRefresh)
 export const usePan = () => useAppStore((s) => s.pan)
+export const useUserId = () => useAppStore((s) => s.userId)
+/** Signed in either way - provider token or the legacy PAN. */
+export const useIsAuthenticated = () => useAppStore((s) => Boolean(s.userId || s.pan))
 export const useLogout = () => useAppStore(s => s.logout)
 export const useTaxSlab = () => useAppStore(s => s.taxSlab)
 export const useSetTaxSlab = () => useAppStore(s => s.setTaxSlab)
 export const useTaxRegime = () => useAppStore(s => s.taxRegime)
 export const useSetTaxRegime = () => useAppStore(s => s.setTaxRegime)
-export const useClearAllSessionsByPan = () => useAppStore(s => s.clearAllSessionsByPan)
-export const useGoogleUser = () => useAppStore(s => s.googleUser)
-export const useIsAuthenticated = () => useAppStore(s => s.isAuthenticated)
-export const useAccessToken = () => useAppStore(s => s.accessToken)
-export const useRefreshToken = () => useAppStore(s => s.refreshToken)

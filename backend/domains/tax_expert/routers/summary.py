@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from shared import identity
 
 from domains.tax_expert.computation_cache import get_computation, cache_stats
 from domains.tax_expert.tax_sessions import get_tax_session, update_overrides
@@ -195,5 +196,12 @@ def get_detail_rows(
 
 @router.get("/tax/cache-stats")
 def get_cache_stats():
-    """Computation cache hit/miss counters, for verifying memoization in production."""
+    """
+    Computation cache hit/miss counters, for verifying memoization in production.
+
+    Authenticated: the counters carry no user data, but they do reveal how much
+    traffic the deployment handles and when.
+    """
+    if not identity.current_user_id():
+        raise HTTPException(status_code=401, detail="Authentication required.")
     return cache_stats()

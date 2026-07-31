@@ -1,392 +1,394 @@
-# 💠 Finance Buddy Architecture (v8.0.0)
+# Finance Buddy — Architecture
 
-**Status:** ✅ Production Ready | All Systems Operational (2026-07-28)
+Mutual-fund portfolio analytics and Indian income-tax computation, from uploaded CAS
+and AIS documents.
 
-Finance Buddy is an institutional-grade Mutual Fund Intelligence platform engineered for **absolute numerical precision**, **pure live market data tracking**, and **zero-persistence privacy**. This document outlines the technical scaffolding that enables real-time, audit-quality portfolio analytics.
+This describes the system as it is. Where a design looks unusual, the reason is
+stated — most of the unusual choices trace back to one constraint (below) and are
+wrong to "clean up" without removing that constraint first.
 
----
-
-## 🏛️ Design Philosophy: "Stateless Intelligence"
-Unlike retail investment trackers, Finance Buddy operates on a **Stateless Analytical Model**.
-*   **Zero-Database Architecture**: Sensitive financial data exists only in-memory (volatile RAM) during a session and is purged upon termination or timeout.
-*   **Pure Live Data Tracking**: Calculations operate on 100% authentic real-time market data fetched via AMFI, NSELib, and Yahoo Finance without synthetic drift or fabricated data.
-*   **FIFO Integrity**: Every calculation—from XIRR to Tax—is derived from the raw transaction ledger using strict First-In-First-Out (FIFO) matching.
-*   **Institutional Audit Parity**: Calculations are calibrated to match the reconciliation standards of professional portfolio management services (PMS).
-*   **Robust Dependency Management**: Implemented isolated Python virtual environment (`venv_finance`) with all 25+ dependencies properly installed and verified. Non-blocking lazy imports for optional packages (pdfplumber, camelot-py, opencv-python-headless).
+Companion documents: **ONBOARDING.md** (setting it up, locally and in production) and
+**SECURITY.md** (threat model, and what is still open).
 
 ---
 
-## 🏗️ System Topology
+## The constraint everything else follows from
 
-Finance Buddy utilizes a **Decoupled Monolith** architecture with a FastAPI-driven analytical core and a high-fidelity React dashboard.
+One uvicorn worker, ~512 MB RAM, ~0.1 shared vCPU, with the database on the far side
+of a network hop.
+
+That single fact explains the caching tiers, the payload compression, the connection
+pool sizing, the absence of an ORM, and the threadpool cap.
+
+| Decision | Because |
+|---|---|
+| No ORM — hand-written SQL on psycopg 3 | SQLAlchemy is ~30 MB RSS against a ~50 MB baseline, for a 7-table schema whose payloads are opaque blobs it could not map anyway |
+| No Alembic | It requires SQLAlchemy, and autogenerate diffs declarative models — with no models there is nothing to diff, so migrations would be `op.execute()` around this same SQL |
+| No Redis | With one worker the in-process caches *are* shared caches; Redis would cost resident memory and buy nothing until there are several workers |
+| Sync `def` endpoints, threadpool capped at 8 | 51 of 54 handlers are blocking pandas work. anyio's default of 40 lets them thrash one shared vCPU while each holds its own DataFrames |
+| Payloads compressed in the app, not left to TOAST | TOAST decompresses server-side, so it saves storage but not wire bytes. 3.06 MB → 0.81 MB on a 20k-row ledger |
+
+### `--workers 1` is a requirement, not a default
+
+Several parts of the design are *incorrect* with more than one worker, so this is
+worth stating plainly before someone raises it to improve throughput:
+
+- **In-process caches stop being shared caches.** L1 lives in process memory. With N
+  workers there are N independent copies: N× the resident memory, and a hit rate that
+  falls because each worker warms its own.
+- **Single-flight stops working across workers.** `get_or_compute` collapses
+  concurrent misses into one computation *within* a process. With 4 workers, 4
+  simultaneous requests for the same uncached AMFI bundle become 4 downloads again —
+  exactly what the caching work removed.
+- **512 MB becomes a hard ceiling.** Baseline is ~50 MB per process before any
+  portfolio loads, and the L1 budgets (32 + 24 MB) are per-process.
+- **Session caps multiply.** 3 and 8 resident sessions become 12 and 32 across four
+  workers.
+
+The correct order, if the traffic ever justifies it: move L1 to a shared store,
+re-verify the memory budget, *then* add workers. Adding workers alone trades a latency
+problem for an OOM.
+
+### Concurrency inside the one worker
+
+51 of 54 endpoints are sync `def`, which FastAPI runs in anyio's threadpool. That pool
+defaults to **40** — so up to 40 GIL-bound pandas handlers can contend for ~0.1 shared
+vCPU, adding context-switch thrash without any parallelism while each holds its own
+intermediate DataFrames.
+
+`main.py` caps it at 8 (`FINANCEBUDDY_SYNC_CONCURRENCY`). Excess requests queue instead
+of thrash: slower to *start* serving under burst, faster to finish, and bounded in
+memory.
+
+---
+
+## System topology
 
 ```mermaid
-graph TD
-    subgraph "The Cockpit (React 18 / Vite / MUI)"
-        UI["UI Layer (Glassmorphism / Bento Grid)"]
-        Store["State Engine (Zustand & AppStore)"]
-        Sync["Data Bridge (React Query & Axios)"]
-        Vis["Visualizer (Recharts)"]
-        Account["Account & Recon UI (Transaction Deltas)"]
+graph TB
+    User(("User"))
+
+    subgraph Browser["Browser — React 18 / Vite / MUI"]
+        Landing["Landing<br/>Google sign-in only"]
+        AuthC["authClient.ts<br/><i>the only module importing supabase-js</i>"]
+        Axios["axios client<br/><i>attaches Bearer token</i>"]
+        Store["Zustand store<br/>session ids, filters"]
+        Tabs["Domain tabs<br/>MF · Tax · Equity"]
     end
 
-    subgraph "The Analytical Core (FastAPI v0.136.1)"
-        Gateway["Main Routing Gateway (main.py)"]
-        Tabs["1:1 Tab Micro-Routers"]
-        Logic["Finance Engine (PyXirr & Quant Analysis)"]
-        Ledger["Cryptographic Ledger Reconciliation"]
-        Market["Market Data Gateway (AMFI / NSELib / YF)"]
-        RAM["Thread-Safe In-Memory Session Cache"]
+    subgraph Edge["Identity provider — Supabase Auth"]
+        Google["Google OAuth"]
+        JWKS["JWKS endpoint"]
     end
 
-    subgraph "Virtual Environment (venv_finance)"
-        Core["Core Dependencies ✅"]
-        Data["Data Processing ✅"]
-        Files["File Parsing ✅"]
-        Market2["Market Data ✅"]
-        Optional["Optional Packages (Lazy)"]
+    subgraph API["FastAPI — single uvicorn worker"]
+        direction TB
+        MW["Middleware stack<br/>Timing → CacheControl → GZip → CORS<br/>→ <b>Identity</b> → RequestCache"]
+        Routers["Routers<br/>/auth /market /accounts /history<br/>/mutual-funds/* /tax-expert/* /equity"]
+        Engines["Compute<br/>finance.py · tax_engine.py<br/>parsers · reconciliation"]
+
+        subgraph Mem["In-process state"]
+            L0["L0 request memo<br/><i>ContextVar, per request</i>"]
+            L1M["L1 market — 32 MB"]
+            L1D["L1 derived — 24 MB"]
+            MFS["MF sessions — cap 3"]
+            TXS["Tax sessions — cap 8"]
+            IDC["Identity cache — 300 s"]
+        end
+
+        L2["L2 disk cache — 64 MB<br/><i>backend/.cache, regenerable</i>"]
     end
 
-    User((User)) -->|Secure Upload| UI
-    User -->|Compare Uploads| Account
-    UI -->|REST Bridge| Gateway
-    Account -->|Diff Request| Gateway
-    Gateway --> Tabs
-    Tabs --> Logic
-    Tabs --> Ledger
-    Logic <--> RAM
-    Ledger <--> RAM
-    Logic <--> Market
-    Sync -->|Aggregated JSON| Store
-    Store --> Vis
-    Gateway -.-> venv_finance
+    subgraph Data["PostgreSQL — any host"]
+        direction TB
+        Ident["users · identities · profiles"]
+        Sess["sessions<br/><i>registry + encrypted metrics</i>"]
+        Pay["session_payloads · tax_payloads<br/><i>encrypted bytea</i>"]
+    end
+
+    Ext["Market data<br/>AMFI · mfapi.in · Yahoo Finance"]
+
+    User --> Landing --> AuthC --> Google
+    Google -.->|"id token"| AuthC
+    AuthC --> Axios
+    Tabs --> Axios
+    Axios -->|"Authorization: Bearer"| MW
+    MW -->|"verify signature"| JWKS
+    MW --> Routers --> Engines
+    Engines <--> Mem
+    Engines <--> L2
+    L2 -.->|"miss"| Ext
+    Routers <-->|"psycopg3 pool<br/>max 6"| Data
+    Store <--> Tabs
+
+    classDef enc fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    class Pay,Sess enc
 ```
 
----
-
-## 🔧 Setup & Environment (FIXED & VERIFIED)
-
-### Virtual Environment & Dependency Management
-**Issue Fixed:** Initial setup failed with timeout errors on complex packages. 
-**Solution Implemented:**
-1. **Isolated venv_finance**: Python 3.11+ virtual environment with complete isolation
-2. **Batch Installation**: Dependencies installed in logical groups to avoid timeout cascades
-3. **Lazy Loading**: Optional packages (pdfplumber, camelot-py, opencv-python-headless) marked as lazy imports with graceful fallbacks
-4. **Verification**: All core imports tested before backend startup
-
-**Current Status:**
-- ✅ FastAPI, Uvicorn, Pydantic (Web Framework)
-- ✅ Pandas, NumPy, PyXirr, Yfinance (Data Processing)
-- ✅ Casparser, PyPDF (File Parsing)
-- ✅ NSEPython, NSELib (Market Data)
-- ✅ Fuzzywuzzy, python-Levenshtein, python-dateutil (Text Processing)
-- ✅ PyArrow, FastParquet (Advanced Processing)
-- ✅ Pytest (Testing Framework)
-
-### Automated Setup Scripts
-**Windows:** `SETUP_ENV.bat` - Single-click setup with progress tracking
-**Linux/macOS:** `SETUP_ENV.sh` - Shell script with error handling
-Both scripts:
-- Create virtual environment
-- Install dependencies in batches
-- Verify critical imports
-- Report installation status
+Highlighted nodes hold application-encrypted data — the database never sees plaintext
+for them.
 
 ---
 
-## 🐍 Backend Engineering (Python)
+## Request lifecycle
 
-### 0. Domain-Driven Structure (`backend/domains/`)
-The backend is partitioned into three independent feature domains plus a shared infrastructure layer, each with its own `routers/` subpackage (one file per feature group) and its own URL prefix — see the Domain URL Prefixes table below.
+A `GET /mutual-funds/overview/{sid}/summary`:
+
+```mermaid
+sequenceDiagram
+    participant C as Browser
+    participant M as IdentityMiddleware
+    participant R as Router
+    participant S as Session store
+    participant D as Postgres
+
+    C->>M: GET + Bearer token
+    M->>M: verify against cached JWKS (~50 µs, no network)
+    M->>M: resolve (issuer, subject) → user_id
+    Note over M: identity cache hit — otherwise one round trip
+    M->>R: bind Caller to ContextVar
+
+    R->>S: get_session(sid)
+    alt resident
+        S-->>R: portfolio from memory
+    else evicted
+        S->>D: SELECT payload WHERE session_id
+        D-->>S: encrypted bytea
+        S->>S: decrypt → decompress → DataFrames
+        S-->>R: rehydrated portfolio
+    end
+
+    Note over S: owns_record(owner) — 404, never 403
+    R->>R: compute (L1-derived memoised)
+    R-->>C: JSON + Cache-Control
+```
+
+Two things worth noting because they are easy to break:
+
+- **Ownership is checked in the data layer**, inside `get_session()` and
+  `get_tax_session()` — not per route. A forgotten `Depends()` on one of ~26 routes is
+  a silent hole; there is no way to reach a portfolio without passing through those
+  two functions.
+- **Denials return 404, not 403.** A 403 confirms the record exists, which is the one
+  thing an id-guessing caller wants.
+
+---
+
+## Storage model
+
+```mermaid
+erDiagram
+    users ||--o{ identities : "one account, many providers"
+    users ||--o| profiles : ""
+    users ||--o{ sessions : owns
+    sessions ||--o| session_payloads : "mutual funds"
+    sessions ||--o| tax_payloads : "tax expert"
+
+    users {
+        uuid id PK "ours, not the provider's"
+        timestamptz created_at
+        timestamptz last_seen_at
+    }
+    identities {
+        text issuer PK "https://…"
+        text subject PK "provider's user id"
+        uuid user_id FK
+        text email
+    }
+    profiles {
+        uuid user_id PK
+        bytea pan_encrypted "AES-256-GCM"
+        text display_name
+    }
+    sessions {
+        text session_id PK
+        uuid user_id FK
+        text upload_type "mutual_funds | tax_expert"
+        text data_hash "SHA-256, salted with user_id"
+        bytea metrics "encrypted: net worth, salary"
+        timestamptz created_at
+    }
+    session_payloads {
+        text session_id PK
+        bytea holdings "encrypted zlib JSON"
+        bytea transactions "encrypted zlib JSON"
+        bytea sips "encrypted zlib JSON"
+        jsonb meta "column names, dtypes"
+    }
+    tax_payloads {
+        text session_id PK
+        bytea data "encrypted parsed AIS"
+        integer version
+    }
+```
+
+### Why identity looks like this
+
+`users.id` is issued by this application, and providers map to it through
+`identities(issuer, subject)`. Switching or adding an identity provider is then an
+INSERT, not a re-key of every table that carries an owner column.
+
+Nothing references a provider-managed table — no foreign key to Supabase's
+`auth.users`. That is the hardest kind of coupling to undo later, and avoiding it is
+why the schema applies unchanged to Supabase, Neon, RDS or a local server.
+
+**PAN is not identity.** It used to be the login credential *and* the owner column,
+and it is printed on financial documents — so knowing one was enough to read that
+user's data. It is now an attribute on `profiles`, used as the CAS PDF password
+default and the AIS matching key, deciding nothing about access.
+
+### Why payloads are blobs
+
+The three mutual-fund frames were once three tables created implicitly by
+`DataFrame.to_sql`, with schema frozen from whatever columns the first upload
+happened to have — and parser drift absorbed by runtime `ALTER TABLE` using
+identifiers taken from the uploaded PDF. Postgres would not tolerate that, and it
+should not have to.
+
+One row per session, measured on a 20k-row ledger:
+
+| | old (3 tables) | now (1 row) |
+|---|---|---|
+| write | 391 ms | **324 ms** |
+| read | 200 ms | **134 ms** |
+| stored | 2.66 MB | **0.81 MB** |
+| round trips | 3 | **1** |
+
+Datetimes are stored as integer epoch counts with their **unit** recorded. That
+detail is load-bearing: pandas 3 yields `datetime64[us]`, and restoring it as `[ns]`
+divides every timestamp by 1000 — turning 2023 into 1970 with nothing raised
+anywhere.
+
+---
+
+## Caching
+
+Five tiers, each earning its place:
+
+| Tier | Scope | Size | Holds |
+|---|---|---|---|
+| **L0** | one request | — | Memoised within a single request, via ContextVar |
+| **L1 market** | process | 32 MB | AMFI bundle, NAV series |
+| **L1 derived** | process | 24 MB | Computed analytics keyed on input fingerprints |
+| **L2 disk** | container | 64 MB | Market data — regenerable, deliberately *not* in Postgres |
+| **Sessions** | process | 3 MF / 8 tax | Live portfolios; overflow rehydrates from the database |
+
+Session caps are **cache sizing, not retention**. An evicted session is a read, not
+data loss — eviction became safe only once rehydration existed.
+
+L2 stays on disk on purpose: it holds market data any refetch replaces, so putting it
+in Postgres would spend the connection and IO budget on something worthless.
+
+---
+
+## Backend layout
 
 ```
 backend/
-├── main.py                        # Gateway — mounts every domain + shared router
-├── shared/                        # Cross-domain infrastructure
-│   ├── routers/                   # auth, market, accounts, history
-│   └── services/                  # market data providers, fallback cascade, cache
-├── domains/
-│   ├── mutual_funds/
-│   │   ├── routers/               # portfolio, overview, holdings, performance,
-│   │   │                          # compare, insights, rebalance, journey
-│   │   ├── finance.py, logic.py, models.py, parser.py, sessions.py
-│   ├── tax_expert/
-│   │   ├── routers/               # session, income, capital_gains, summary, itr
-│   │   ├── tax_engine.py, ais_parser.py, itr_parser.py, broker_parser.py,
-│   │   │   reconciliation.py, tax_sessions.py
-│   └── equity/
-│       └── router.py              # placeholder — "Coming Soon", no live endpoints
-└── tests/                         # pytest scaffold (TestClient-based)
+├── main.py                     # middleware stack, router mounting, lifespan
+├── migrations/                 # numbered .sql + migrate.py (advisory-locked)
+├── shared/
+│   ├── db.py                   # the ONLY module that opens a connection
+│   ├── crypto.py               # AES-256-GCM, row-bound, keyring with rotation
+│   ├── oidc.py                 # provider-agnostic token verification
+│   ├── identity.py             # Caller ContextVar, owns_record()
+│   ├── users.py                # credential → account, cached
+│   ├── storage.py              # sessions, payload codec
+│   ├── routers/                # auth, market, accounts, history
+│   └── services/               # market providers, cache tiers
+└── domains/
+    ├── mutual_funds/           # 9 routers, finance.py, parser.py, sessions.py
+    ├── tax_expert/             # 6 routers, tax_engine.py, AIS/ITR/broker parsers
+    └── equity/                 # placeholder
 ```
 
-### 1. Mutual Funds — 1:1 Tab Micro-Router Architecture (`domains/mutual_funds/routers/`)
-To maximize modularity and maintain clear separation of concerns, this domain is partitioned into dedicated micro-routers that correspond exactly 1:1 with frontend UI tabs:
-*   **`overview.py`**: Orchestrates portfolio vs benchmark XIRR, asset allocation, and multi-period comparative performance charts.
-*   **`holdings.py`**: Manages individual fund holdings, asset classification, and concentration risk metrics.
-*   **`performance.py`**: Computes Jensen's Alpha, Sharpe & Sortino ratios, Maximum Drawdown, market capture ratios, and rolling returns.
-*   **`compare.py`**: Multi-dimensional head-to-head comparison engine across historical returns, drawdowns, and expense ratios.
-*   **`insights.py`**: Generates institutional AI quantitative insights and rebalancing signals based on asset drift.
-*   **`rebalance.py`**: Formulates step-by-step transaction roadmaps to restore target asset allocation weights.
-*   **`portfolio.py`**: Session lifecycle — CAS PDF parsing and session sync/invalidation.
-*   **`journey.py`**: Wealth journey timeline.
+Two invariants are enforced by tests rather than convention:
 
-### 1b. Tax Expert — Feature-Group Routers (`domains/tax_expert/routers/`)
-Mirrors the same one-file-per-feature-group pattern:
-*   **`session.py`**: AIS PDF upload/session creation, broker reconciliation, per-user session history.
-*   **`income.py`**: Income breakdown (salary, dividends, interest, misc) from AIS data.
-*   **`capital_gains.py`**: Per-transaction capital gains detail and manual cost-basis correction.
-*   **`summary.py`**: Full tax computation summary, manual override recalculation, Old vs New regime comparison.
-*   **`itr.py`**: Filed ITR PDF upload and post-filing comparison.
-
-### 2. Extensible Provider Architecture & Fallback Engine (`services/providers/`)
-Finance Buddy relies strictly on real-time market data resolved through a highly resilient, provider-agnostic abstraction layer designed for maximum uptime:
-*   **Provider Interface (`base.py`)**: Defines a rigid `MarketDataProvider` contract for fetching NAV, TER, indices, and searching funds. This guarantees "future-proof" design, allowing seamless migration to other data vendors.
-*   **Concrete Implementations (`mfapi.py`)**: Current primary data pipeline leveraging `mfapi.in` and `amfiindia.com` for precise institutional mutual fund metrics.
-*   **Factory Pattern (`factory.py`)**: Dynamically resolves the active data provider, decoupling business logic from underlying API specifics.
-
-### 3. The Deterministic Fallback Cascade
-To guarantee 100% uptime for index proxy benchmarking and portfolio insights, Finance Buddy implements a strict, multi-tiered fallback architecture. If upstream APIs (e.g., AMFI or Yahoo Finance) drop, the system gracefully degrades:
-*   **Market Data Routing (The 3-Tier Net)**: Resolves benchmarks via: 1) AMFI/`mfapi.in` -> 2) Yahoo Finance (NSE tickers) -> 3) Yahoo Finance (BSE tickers). If all three fail, the engine triggers a graceful `HTTP 503 Service Unavailable` fail-safe that the React UI catches, deliberately avoiding fragile 4th-tier web scraping.
-*   **Category Peer Degradation**: If a highly niche category search returns `0` peers on the Compare Tab, the system automatically degrades the query to a baseline `"Large Cap"` query to populate 15 industry-standard peers, preventing UI crashes.
-*   **Deterministic Insights Engine**: If deep fund metadata drops:
-    *   **AUM / Risk / Exit Load**: AUM is approximated via market-cap baselines (e.g., ~25,000 Cr for Large Cap), Risk is inferred from taxonomy, and Exit Loads default to SEBI standards.
-    *   **Expense Ratio Penalty Markup**: Applies deterministic category bands (e.g., `0.15% - 0.40%` for Debt). If the engine detects a `"REGULAR"` plan name, it intelligently applies an industry-standard `~0.80%` penalty markup to expose high expense drag.
-*   **UI Transparency**: All heuristic fallbacks are flagged by the backend (`fallback_triggered: true`). The frontend detects this and instantly renders an Amber Warning Tooltip (`⚠️`) next to the specific metric, ensuring 100% institutional data transparency.
-
-### 4. Tax Intelligence Engine & Parsers (`domains/tax_expert/tax_engine.py`, `domains/tax_expert/*_parser.py`)
-Finance Buddy features a completely autonomous, offline-first Tax Intelligence Engine designed to audit and simulate Indian Income Tax (AY 2026-27). It guarantees mathematical alignment with the official ITR portal rules.
-
-*   **Tax Engine (`tax_engine.py`)**: Implements strict Section 80CCE rules (the ₹1.5L cap), 80CCD(1B) logic, standard deductions, and the progressive tax slab math for both Old and New regimes simultaneously. It automatically selects the optimal regime.
-*   **AIS Parser (`ais_parser.py`)**: Uses multi-line, case-insensitive regular expressions (`re.DOTALL | re.IGNORECASE`) to extract Specified Financial Transactions (SFT). Perfectly parses SFT-015 (Dividends), SFT-016 (Savings/TD Interest), and Capital Gains while filtering out duplicate SFT entries reported by multiple depositories.
-*   **ITR Parser (`itr_parser.py`)**: Specifically tailored for ITR-1, ITR-2, and ITR-3 PDF layouts. Parses Schedule S (Salaries) to mathematically reconstruct Net Salary from Gross Salary minus Section 10 exemptions and Section 16 deductions.
-*   **Broker Reconciliation (`broker_parser.py`)**: Converts raw broker Excel exports into a standardized JSON ledger, enabling cross-verification against the Income Tax Department's AIS values.
-
-### 5. Unified Finance Core (`domains/mutual_funds/finance.py`)
-Powered by vectorised processing via Pandas and NumPy, calculating unitized daily accounting ledgers, rolling return averages, and accurate money-weighted XIRR compounding.
-
-**Institutional Accounting Standards**: 
-To prevent mathematical distortion and comply with standard SEBI reporting practices, the core finance engine applies a strict threshold:
-*   **Annualized Return (XIRR)**: Used exclusively for portfolios and investments held for **greater than 365 days**.
-*   **Absolute Return**: Automatically triggered for investments held for **less than 365 days**. The UI dynamically updates tooltips and badges (`ABS`) to transparently communicate this standard to the user.
+- **Only `shared/db.py` opens a connection.** Seven modules used to open their own;
+  five without the busy timeout, so a concurrent upload made them fail outright.
+  `test_only_shared_db_opens_connections` fails the build if that returns — and under
+  Postgres a stray connection is one that bypasses the pool.
+- **Every SQL literal parses as Postgres.** `test_sql_is_valid_postgres` walks the AST
+  of every module, parses each statement with sqlglot, and rejects leftover SQLite
+  syntax or `?` placeholders. No database required.
 
 ---
 
-## ⚛️ Frontend Engineering (React)
+## Frontend layout
 
-### 1. The "AlphaTrack Pro" Design Language
-The UI follows a professional financial interface standard inspired by institutional quantitative terminals:
-*   **Bento Grid Layouts**: High-contrast, self-contained executive KPI cards with distinct status accents.
-*   **Glassmorphic Surfaces**: Deep navy backdrops (`#0B1326`) with 32px Gaussian blur overlays and 1px hairline borders.
-*   **Kinetic Micro-Interactions**: Framer Motion transitions and responsive micro-animations for an immersive cockpit feel.
-
-### 2. Specialized UI Modules
-*   **Interactive Multi-Series Charts**: Recharts-powered graphs displaying portfolio vs benchmark NAV histories with dynamic tooltip attribution.
-*   **Institutional Audit Modals**: Granular drill-downs revealing precise purchase dates, NAV at buy, and tax exemption accounting.
-
-### 3. Frontend Structure (`frontend/src/`)
 ```
-src/
+frontend/src/
 ├── domains/
-│   ├── mutual-funds/    # components/, hooks/useData.ts, rules/tabCommon.ts
-│   ├── tax-expert/      # components/, hooks/useTaxExpert.ts, rules/taxRules.ts
-│   └── equity/          # "Coming Soon" placeholder
+│   ├── mutual-funds/           # components/, hooks/useData.ts
+│   ├── tax-expert/             # components/, hooks/useTaxExpert.ts
+│   └── equity/                 # placeholder
 └── shared/
-    ├── api/             # client.ts (HTTP calls), types.ts (data contracts)
-    ├── utils/           # fmt.ts (currency/number formatting)
-    ├── store/           # appStore.ts (Zustand)
-    ├── components/      # layout/, dashboard/, charts/, ui/
+    ├── auth/authClient.ts      # the only file importing supabase-js
+    ├── api/client.ts           # axios + Bearer interceptor + 401 handling
+    ├── store/appStore.ts       # Zustand, persisted
+    ├── components/             # layout/, dashboard/, charts/, ui/
     └── theme/
 ```
 
+`authClient.ts` is a deliberate chokepoint. Components call `signIn` / `signOut` /
+`getAccessToken`; none import the vendor SDK. Swapping provider is a rewrite of that
+one file, because the backend already accepts any OIDC issuer.
+
 ---
 
-## 🗺️ Domain URL Prefixes
+## URL prefixes
 
 | Domain | Prefix | Example |
-| :--- | :--- | :--- |
-| Shared Infrastructure | `/auth`, `/market`, `/accounts`, `/history` | `GET /accounts/summary` |
-| Mutual Funds | `/mutual-funds/{portfolio,overview,holdings,performance,compare,insights,rebalance,journey}` | `GET /mutual-funds/overview/{sid}/summary` |
-| Tax Expert | `/tax-expert` (single canonical namespace across all 5 routers) | `GET /tax-expert/{sid}/tax/summary` |
-| Equity | `/equity` (placeholder — "Coming Soon") | `GET /equity/status` |
+|---|---|---|
+| Infrastructure | `/auth` `/market` `/accounts` `/history` | `GET /accounts/summary` |
+| Mutual funds | `/mutual-funds/{portfolio,overview,holdings,performance,compare,insights,rebalance,journey,planning}` | `GET /mutual-funds/overview/{sid}/summary` |
+| Tax expert | `/tax-expert` (one namespace, six routers) | `GET /tax-expert/{sid}/tax/summary` |
+| Equity | `/equity` (placeholder) | `GET /equity/status` |
 
 ---
 
-## 📈 Technical Specifications (Verified & Working)
+## Data handling
 
-| Layer | Technology | Version | Status | Role |
-| :--- | :--- | :--- | :--- | :--- |
-| **Backend API** | FastAPI | 0.136.1 | ✅ Running | High-concurrency analytical API server |
-| **Web Server** | Uvicorn | 0.46.0 | ✅ Running | ASGI server with auto-reload |
-| **Computation** | Pandas | 3.0.2 | ✅ Installed | Vectorized financial ledger processing |
-| **Numerics** | NumPy | 2.4.4 | ✅ Installed | Fast array operations |
-| **Math Engine** | PyXirr | 0.10.8 | ✅ Installed | SEC-compliant XIRR compounding |
-| **Data Validation** | Pydantic | 2.13.3 | ✅ Installed | Request/response schemas |
-| **CAS Parsing** | Casparser | 0.8.1 | ✅ Installed | Mutual fund CAS extraction |
-| **Market Data** | Yfinance | 1.3.0 | ✅ Installed | Real-time market quotes |
-| **NSE Integration** | NSEPython | 2.97 | ✅ Installed | NSE stock data |
-| **NSE Library** | NSELib | 2.5.1 | ✅ Installed | NSE market utilities |
-| **Frontend Framework** | React | 18.3.1 | ✅ Running | Component-based UI |
-| **Build Tool** | Vite | 5.2.13 | ✅ Running | Ultra-fast dev server |
-| **Language** | TypeScript | 5.4.5 | ✅ Installed | Strong typing |
-| **UI Components** | MUI | 5.15.20 | ✅ Installed | Material Design system |
-| **Charts** | Recharts | 2.12.7 | ✅ Installed | React charting library |
-| **State Management** | Zustand | 4.5.2 | ✅ Installed | Lightweight state store |
-| **Data Fetching** | React Query | 5.40.0 | ✅ Installed | Server state management |
-| **Environment** | Python venv | 3.11+ | ✅ Active | `venv_finance` |
-| **Process Manager** | Concurrently | 9.2.4 | ✅ Installed | Run multiple servers |
+The uploaded PDF is never retained — parsers work on `io.BytesIO` and delete any temp
+file in a `finally`. Derived data persists until the user deletes it.
+
+An earlier version of this document claimed "zero-persistence privacy" and a
+"Zero-Database Architecture". Neither was true then — SQLite was already writing to
+disk — and both are the opposite of true now. The accurate statement is above;
+SECURITY.md carries the full posture, including what is still open.
+
+Everything sensitive is encrypted by the application before it reaches the database —
+not by pgcrypto, whose key travels in the SQL statement and lands in
+`pg_stat_statements` and the server log. Each ciphertext is bound to its row via GCM
+associated data, so a blob copied into another user's row fails to decrypt rather
+than being served to the wrong person.
 
 ---
 
-## 🛡️ Security & Privacy Mandate
-1.  **Thread-Safe RAM Locking**: Portfolios are stored in thread-safe RAM segments during the active session.
-2.  **Transient Buffering**: No file writes to disk. CAS PDFs are processed entirely via `io.BytesIO` streams.
-3.  **Local Isolation**: Designed for zero-telemetry operation; data never leaves the local session environment.
+## Market data
+
+A provider interface (`services/providers/base.py`) with `mfapi.in` as the current
+implementation, resolved through a factory so business logic never names a vendor.
+
+Benchmarks resolve through a three-tier cascade — AMFI/mfapi → Yahoo Finance (NSE) →
+Yahoo Finance (BSE) — and then stop. If all three fail the API returns 503 rather
+than falling back to scraping, and the UI surfaces it. Where a heuristic *is* used
+(category peer fallback, expense-ratio bands), the response carries
+`fallback_triggered: true` and the UI marks the figure rather than presenting an
+estimate as measured.
 
 ---
 
-## 🎯 Deployment & Testing Readiness
+## Stack
 
-### Current Status: ✅ PRODUCTION READY
-- **Frontend Server**: http://localhost:5173 (Running)
-- **Backend API**: http://localhost:8000 (Running)
-- **API Documentation**: http://localhost:8000/docs (Swagger UI)
-- **Health Check**: http://localhost:8000/health (Status: OK)
+| Layer | Choice | Notes |
+|---|---|---|
+| API | FastAPI + uvicorn | one worker — see the constraint above |
+| Database | PostgreSQL 11+ via psycopg 3 | `gen_random_uuid()` needs pgcrypto below 13; migration 0001 creates it |
+| Compute | pandas, NumPy, PyXirr | vectorised; XIRR above 365 days, absolute return below |
+| Parsing | casparser, pdfplumber, pypdf, camelot | camelot lazy-imported — it pulls ~60 MB of OpenCV |
+| Auth | OIDC id tokens, PyJWT + cryptography | asymmetric algorithms only, pinned |
+| Frontend | React 18, Vite, MUI, Zustand, React Query, Recharts | |
 
-### Fixes Implemented During Setup
-
-#### 1. **Dependency Installation Timeouts** ✅ FIXED
-- **Problem**: pip install was timing out on complex packages (camelot-py, opencv-python-headless)
-- **Solution**: 
-  - Implemented batch installation strategy
-  - Made heavy packages lazy imports with graceful fallbacks
-  - Added verification steps before backend startup
-  - Created automated setup scripts with timeout handling
-
-#### 2. **Module Import Failures** ✅ FIXED
-- **Problem**: Backend couldn't import core modules (casparser, pdfplumber)
-- **Solution**:
-  - Modified `core/ais_parser.py` to use optional imports
-  - Added try/except blocks for non-critical features
-  - Ensured backend starts even without optional packages
-
-#### 3. **Virtual Environment Path Issues** ✅ FIXED
-- **Problem**: Python subprocess couldn't find virtual environment packages
-- **Solution**:
-  - Created isolated `venv_finance` at project root
-  - Updated `.claude/launch.json` with correct venv path
-  - Verified all imports in isolated environment
-
-#### 4. **Port Conflicts** ✅ FIXED
-- **Problem**: Port 8000 remained bound after process termination
-- **Solution**:
-  - Implemented proper process cleanup
-  - Added graceful port release detection
-  - Created startup verification checks
-
-#### 5. **Frontend Dependencies** ✅ FIXED
-- **Problem**: npm packages weren't installed
-- **Solution**:
-  - Installed all frontend dependencies
-  - Added `concurrently` for parallel server execution
-  - Updated package.json with proper dev scripts
-
-#### 6. **Tax Expert Endpoint Duplication** ✅ FIXED (2026-07-27)
-- **Problem**: Same tax router mounted at both `/portfolio` and `/tax-expert` prefixes, creating duplicate endpoints in Swagger
-- **Solution**:
-  - Removed duplicate router mount from `backend/main.py` (line 54)
-  - Consolidated to single canonical namespace: `/tax-expert`
-  - Updated router tag to "Tax Expert - Comprehensive"
-  - Frontend already calls correct `/tax-expert/*` paths (backward compatible)
-  - **Verification**: All 11 tax endpoints now appear once in Swagger UI under single section
-
-#### 7. **Domain-Wide URL Segregation & Repo Hygiene** ✅ DONE (2026-07-28)
-- **Problem**: All 5 mutual-funds tab routers shared a single `/portfolio` prefix; `tax_expert` was one 550-line monolithic router while `mutual_funds` was already split per feature group; runtime artifacts (`.cache/`, `data/metadata.sqlite3`) and stale `.DS_Store` entries were committed to git; 3 duplicate Python venvs on disk; dead one-off scripts left over from the pre-domain migration.
-- **Solution**:
-  - Every mutual-funds tab router now has its own prefix under `/mutual-funds/*` (see Domain URL Prefixes table above)
-  - Split `domains/tax_expert/router.py` into `domains/tax_expert/routers/{session,income,capital_gains,summary,itr}.py`, mirroring the `mutual_funds` pattern — same `/tax-expert/*` paths, now with 5 distinct Swagger tags instead of 1
-  - Removed `fix_logger2.py`, `backend/verify_api.py`, and the unused `shared/services/holdings_mock.py`
-  - Added a real test scaffold: `backend/tests/` (pytest + FastAPI `TestClient`) and `frontend/src/**/*.test.ts` (vitest)
-  - Untracked `backend/.cache/`, `backend/data/`, and all `.DS_Store` files from git; updated `.gitignore` accordingly
-  - Consolidated to a single `venv_finance/` at project root (removed duplicate `.venv/` and `backend/venv_finance/`)
-  - Relocated `shared/api/fmt.ts` → `shared/utils/fmt.ts` and extracted API response types out of `client.ts` into `shared/api/types.ts`
-
-### Quality Assurance
-
-**Automated Tests Passing:**
-```bash
-✅ Backend imports verified
-✅ Core dependencies loaded
-✅ API endpoints responding
-✅ Swagger UI accessible
-✅ Health check returning status
-✅ Frontend hot-reload working
-✅ Both servers running simultaneously
-```
-
-**Manual Verification:**
-- ✅ Frontend UI loads at http://localhost:5173
-- ✅ Backend API responds at http://localhost:8000
-- ✅ API documentation available at /docs
-- ✅ All routers properly initialized
-- ✅ Data models validated with Pydantic
-
-### Operational Procedures
-
-**Start Development:**
-```bash
-npm run dev:all
-```
-
-**Stop Servers:**
-```bash
-# Ctrl+C in terminal running npm run dev:all
-```
-
-**Restart After Changes:**
-```bash
-# Both servers auto-reload on file changes
-# Manual restart: Kill all Python processes and re-run npm run dev:all
-```
-
----
-
-## 📚 Documentation & Configuration
-
-### Setup & Reference
-1. **SETUP_GUIDE.md** - Primary setup guide with troubleshooting and feature overview
-2. **ARCHITECTURE.md** - This document (comprehensive technical reference)
-
-### Configuration
-1. **.claude/launch.json** - Pre-configured server launch configuration (Backend port 8000, Frontend port 5173)
-
-### Deleted (Redundant/Stale)
-- Removed: SETUP.md, BACKEND_STATUS.md, SETUP_COMPLETE.md (superseded by SETUP_GUIDE.md and current status)
-- Removed: Deployment verification docs (redundant with current README)
-- Removed: Tax Expert specific docs (implementation details live in code)
-
----
-
-## 🎯 Quick Reference
-
-### Running the Application
-```bash
-npm run dev:all
-```
-
-### Accessing Services
-- **Frontend**: http://localhost:5173
-- **Backend API**: http://localhost:8000
-- **API Docs (Swagger)**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
-
-### Key Files
-- Backend Gateway: `backend/main.py`
-- Tax Expert Routers: `backend/domains/tax_expert/routers/*.py` → `/tax-expert` endpoints
-- Frontend Store: `frontend/src/shared/store/appStore.ts`
-- API Client: `frontend/src/shared/api/client.ts` (types in `frontend/src/shared/api/types.ts`)
-
----
-
-*Finance Buddy v8.0.0*  
-*Last Updated: 2026-07-28 (Domain-wide URL segregation, tax_expert router split, repo hygiene)*  
-*Status: ✅ FULLY OPERATIONAL - Production Ready*
+Pinned versions live in `backend/requirements.txt` and `frontend/package.json`, which
+are the source of truth — a table here would drift.

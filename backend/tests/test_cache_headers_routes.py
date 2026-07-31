@@ -11,7 +11,6 @@ So these tests assert on the header a route really emits, which is the property
 that matters to a CDN.
 """
 
-import sqlite3
 import uuid
 
 import pandas as pd
@@ -19,10 +18,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from shared import storage
+from shared import storage, users
 from shared.services.cache import CACHE_CONFIG, get_cache_headers
 
-OWNER_PAN = "CCCCC3333C"
+from tests.conftest import requires_db, TEST_ISSUER
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
+
+OWNER_SUBJECT = "cache-header-owner"
 
 
 @pytest.fixture
@@ -31,15 +38,7 @@ def client():
 
 
 @pytest.fixture
-def isolated_db(tmp_path, monkeypatch):
-    db = tmp_path / "headers_test.sqlite3"
-    monkeypatch.setattr(storage, "DB_PATH", str(db))
-    storage._init_db()
-    yield db
-
-
-@pytest.fixture
-def real_session(isolated_db, monkeypatch):
+def real_session(clean_db, monkeypatch):
     """
     A session the overview route can actually render, with the network stubbed.
 
@@ -48,6 +47,8 @@ def real_session(isolated_db, monkeypatch):
     """
     from domains.mutual_funds import sessions as mf_sessions
     from shared.services import market_indices
+
+    owner = users.resolve(TEST_ISSUER, OWNER_SUBJECT, pan="CCCCC3333C")
 
     # No outbound calls from a test: an empty benchmark series is a valid input and
     # keeps the route on its normal code path.
@@ -70,10 +71,10 @@ def real_session(isolated_db, monkeypatch):
     }])
 
     sid = str(uuid.uuid4())
-    ledger_hash = storage.compute_ledger_hash(df_t, OWNER_PAN)
+    ledger_hash = storage.compute_ledger_hash(df_t, owner.user_id)
     storage.save_session(
         sid, df_h, df_t, pd.DataFrame(), is_partial=False,
-        pan_id=OWNER_PAN, ledger_hash=ledger_hash,
+        user_id=owner.user_id, ledger_hash=ledger_hash,
     )
     mf_sessions.clear_all()
     yield sid
@@ -86,7 +87,7 @@ def _cache_control(resp) -> str:
 
 # ── B3: the mislabelled benchmark-overlay response ────────────────────────────
 
-def test_benchmark_overlay_is_not_publicly_cacheable(client, real_session):
+def test_benchmark_overlay_is_not_publicly_cacheable(client, real_session, fake_bearer_auth):
     """
     /benchmark-overlay returns result["series"]["Portfolio"] - the user's own
     CAS-derived value series. It was labelled `comparison_data` and therefore shipped
@@ -100,7 +101,7 @@ def test_benchmark_overlay_is_not_publicly_cacheable(client, real_session):
     """
     resp = client.get(
         f"/mutual-funds/overview/{real_session}/benchmark-overlay",
-        headers={"X-User-PAN": OWNER_PAN},
+        headers=fake_bearer_auth(OWNER_SUBJECT),
     )
     assert resp.status_code == 200, f"expected the route to actually execute, got {resp.status_code}"
     cc = _cache_control(resp).lower()

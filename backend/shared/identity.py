@@ -14,71 +14,55 @@ middleware sets a ContextVar, and anyio copies the context into the threadpool
 worker that runs sync endpoints, so the value is visible to both `def` and
 `async def` handlers.
 
-What this is and is not
------------------------
-This is *identification*, not authentication. `X-User-PAN` is asserted by the
-client and carries no proof of possession, so anyone who knows a PAN can present
-it. What this layer buys:
+What identifies a caller
+------------------------
+A `user_id` - a uuid this application issues and stores in `users.id`. Not a PAN.
 
-  - one user can no longer read another's session by holding a session_id
-  - /accounts/summary no longer enumerates every PAN on the deployment
-  - a purge request cannot target someone else's PAN
+PAN used to be all three of the login credential, the owner column on every table,
+and the default CAS PDF password. It is a ten-character string printed on financial
+documents, so "anyone who knows a PAN can read that user's data" was the actual
+posture. It is now an attribute hanging off the account (`profiles.pan`), still
+needed for AIS matching and as the CAS password default, but no longer deciding
+who anyone is.
 
-What it does not buy: resistance to a caller who simply sends a PAN that is not
-theirs. PAN is a 10-character identifier printed on documents, not a secret.
-Closing that gap needs a real credential (a signed token from an authenticated
-login), which is a product decision rather than a bug fix - recorded in
-SECURITY.md so it is not mistaken for done.
+The user_id is resolved by the middleware from whatever credential arrived - a
+verified OIDC token, or the legacy PAN header - via `identities`. Nothing below
+this layer knows or cares which.
 """
 
 import re
 from contextlib import contextmanager
+from dataclasses import dataclass
 from contextvars import ContextVar
 from typing import Iterator, Optional
 
 # Standard Indian PAN: 5 letters, 4 digits, 1 letter.
 PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
+
+@dataclass(frozen=True)
+class Caller:
+    """The authenticated caller. `pan` is profile data, never the identity."""
+
+    user_id: str
+    pan: Optional[str] = None
+
+
 # Three states are distinguishable, and the distinction is load-bearing:
 #
 #   _UNSET  - not inside a request at all. Scripts, the GC daemon, the test suite.
 #             These are trusted internal callers running in-process.
-#   None    - inside a request that presented no usable PAN. An anonymous HTTP
-#             caller. Must NOT reach an owned record.
-#   "ABC...\" - inside a request asserting that PAN.
+#   None    - inside a request that presented no usable credential. An anonymous
+#             HTTP caller. Must NOT reach an owned record.
+#   Caller  - inside a request authenticated as that user.
 #
 # Collapsing the first two would mean either locking internal callers out of their
 # own data or letting an anonymous HTTP request read anybody's. IdentityMiddleware
-# always enters identity_scope(), even when the header is missing, so an HTTP request
-# can never observe _UNSET.
+# always enters identity_scope(), even with no credential, so an HTTP request can
+# never observe _UNSET.
 _UNSET = "\x00__no_request__"
 
-_current_pan: ContextVar[str] = ContextVar("current_pan", default=_UNSET)
-
-
-def decode_jwt_pan(authorization_header: Optional[str]) -> Optional[str]:
-    """
-    Extract and verify the PAN from a Bearer JWT issued by google_auth.py.
-
-    Returns the PAN string on success, None if the header is absent, malformed,
-    expired, or has no PAN claim.  Intentionally does NOT raise so that callers
-    with a missing/invalid token fall through to the legacy X-User-PAN path.
-
-    Import is deferred to avoid a circular import: google_auth imports identity,
-    and jose is only available if python-jose is installed.
-    """
-    if not authorization_header or not authorization_header.startswith("Bearer "):
-        return None
-    token = authorization_header[len("Bearer "):]
-    try:
-        from shared.routers.google_auth import decode_access_token
-        payload = decode_access_token(token)
-        if payload is None:
-            return None
-        return normalize_pan(payload.get("pan"))
-    except Exception:
-        return None
-
+_current_caller: ContextVar = ContextVar("current_caller", default=_UNSET)
 
 
 def normalize_pan(raw: Optional[str]) -> Optional[str]:
@@ -94,9 +78,9 @@ def mask_pan(raw: Optional[str]) -> str:
     A PAN safe to write to a log, keeping only the last 4 characters.
 
     Render (and any hosted log aggregator) retains stdout, so an unmasked PAN in a
-    log line is durable personal data sitting outside the 24h retention the rest of
-    the system honours. Enough of the tail is kept to correlate two lines about the
-    same user during an incident.
+    log line is durable personal data sitting outside the retention the rest of the
+    system honours. Enough of the tail is kept to correlate two lines about the same
+    user during an incident.
     """
     if not raw:
         return "<none>"
@@ -105,56 +89,74 @@ def mask_pan(raw: Optional[str]) -> str:
 
 
 @contextmanager
-def identity_scope(pan: Optional[str]) -> Iterator[Optional[str]]:
-    """Bind the caller's PAN for the duration of a request."""
-    token = _current_pan.set(pan)
+def identity_scope(caller: Optional[Caller]) -> Iterator[Optional[Caller]]:
+    """Bind the caller for the duration of a request."""
+    token = _current_caller.set(caller)
     try:
-        yield pan
+        yield caller
     finally:
-        _current_pan.reset(token)
+        _current_caller.reset(token)
 
 
-def current_pan() -> Optional[str]:
+def current_caller() -> Optional[Caller]:
+    """The authenticated caller, or None if anonymous / outside a request."""
+    value = _current_caller.get()
+    return None if value is _UNSET else value
+
+
+def current_user_id() -> Optional[str]:
     """
-    The PAN this request asserted, or None if it asserted none / there is no request.
+    The user_id this request authenticated as, or None.
 
     Callers must treat None as "unauthenticated", never as "authorized for
     everything" - use owns_record() to make access decisions rather than comparing
     this yourself.
     """
-    value = _current_pan.get()
-    return None if value is _UNSET else value
+    caller = current_caller()
+    return caller.user_id if caller else None
+
+
+def current_pan() -> Optional[str]:
+    """
+    The caller's PAN, where their profile has one.
+
+    This is profile data. It is the CAS PDF password default and the AIS matching
+    key; it is *not* an authorization input. Never compare it to decide access -
+    that is what owns_record() is for.
+    """
+    caller = current_caller()
+    return caller.pan if caller else None
 
 
 def in_request() -> bool:
     """True when running inside a request scope (i.e. behind IdentityMiddleware)."""
-    return _current_pan.get() is not _UNSET
+    return _current_caller.get() is not _UNSET
 
 
-def owns_record(owner_pan: Optional[str]) -> bool:
+def owns_record(owner_user_id: Optional[str]) -> bool:
     """
-    May the current caller access a record owned by `owner_pan`?
+    May the current caller access a record owned by `owner_user_id`?
 
     The rules, in order:
 
     - not inside a request - allowed. An in-process caller (the GC daemon, a
       migration script, the test suite) is trusted; it did not arrive over HTTP.
-    - `owner_pan` falsy - the record is unowned, e.g. uploaded before any PAN was
-      associated with it. There is nobody to protect it from. Allowed.
-    - owned, but the request asserted no PAN - denied. An anonymous caller holding
-      a session_id must not be able to read a portfolio that belongs to someone.
+    - `owner_user_id` falsy - the record is unowned. There is nobody to protect it
+      from. Allowed.
+    - owned, but the request authenticated as nobody - denied. An anonymous caller
+      holding a session_id must not read a portfolio that belongs to someone.
     - otherwise - allowed only on an exact match.
 
     The first rule is safe specifically because IdentityMiddleware wraps every HTTP
-    request in identity_scope(), so no request can reach it - see the note on
-    _UNSET above. If that middleware is ever removed, every route silently becomes
-    a trusted internal caller, so it is covered by a test.
+    request in identity_scope(), so no request can reach it - see the note on _UNSET
+    above. If that middleware is ever removed, every route silently becomes a trusted
+    internal caller, so it is covered by a test.
     """
     if not in_request():
         return True
-    if not owner_pan:
+    if not owner_user_id:
         return True
-    caller = current_pan()
+    caller = current_user_id()
     if caller is None:
         return False
-    return caller == owner_pan
+    return str(caller) == str(owner_user_id)

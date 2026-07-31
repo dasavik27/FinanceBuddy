@@ -9,6 +9,23 @@
 # previously out of sync with the development venv on five exact pins, which meant
 # local test results did not describe the deployed artifact.
 
+# ── Database ───────────────────────────────────────────────────────────────
+# psycopg 3, not SQLAlchemy. Every query in this codebase is hand-written SQL and
+# there are no ORM models, so an ORM would cost ~30 MB RSS on a 512 MB box for
+# machinery nothing uses. [binary] ships the libpq wheel so no system Postgres is
+# needed to build; [pool] is the connection pool - connecting per request costs a
+# 50-100 ms TLS handshake where the SQLite open it replaced was ~10 us.
+psycopg[binary,pool]==3.3.4
+
+# ID-token verification (shared/oidc.py). [crypto] pulls `cryptography`, which is
+# required for RS256/ES256 - without it PyJWT silently supports only HMAC, which is
+# exactly the algorithm this must never accept.
+PyJWT[crypto]==2.10.1
+
+# Loads backend/.env in local development. The platform sets real environment
+# variables, so this is a convenience rather than a dependency of correctness.
+python-dotenv==1.1.1
+
 # ── Web framework ──────────────────────────────────────────────────────────
 fastapi==0.140.1
 uvicorn==0.51.0
@@ -56,8 +73,6 @@ camelot-py==2.0.0
 # ── Testing ────────────────────────────────────────────────────────────────
 pytest>=9.0.0
 httpx>=0.28.1
-
-# ── Authentication ─────────────────────────────────────────────────────────
-# python-jose handles JWT sign/verify (HS256). The [cryptography] extra is
-# required for the RS256 path used to verify Google's own id_token signature.
-python-jose[cryptography]==3.3.0
+# Parses every SQL literal in the tree as Postgres without needing a server, which
+# is what catches a typo or leftover SQLite syntax before it reaches a deploy.
+sqlglot>=27.0.0

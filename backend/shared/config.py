@@ -15,22 +15,38 @@ import json
 # Time-To-Live (TTL) for in-memory and disk persistence layers (NAV & CAS Records)
 # Set via environment variable 'FINANCEBUDDY_CACHE_TTL' (Default: 60 minutes).
 # A value <= 0 triggers real-time direct fetching across all network providers.
-import sqlite3
-
 def _get_ttl_from_db():
+    """
+    The operator-configured cache TTL, falling back to the environment.
+
+    Read lazily rather than at import. It used to open the database at module import
+    time, which was survivable against a local file and is not against a pooled
+    network one: importing this module would build a connection pool as a side
+    effect, and any blip made the whole application fail to start over a tunable
+    that has a perfectly good default.
+    """
+    from shared import db
+
     try:
-        db_path = os.path.join(os.path.dirname(__file__), "..", "data", "metadata.sqlite3")
-        with sqlite3.connect(db_path) as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
-            cursor = conn.execute("SELECT value FROM app_settings WHERE key='cache_ttl'")
-            row = cursor.fetchone()
-            if row: 
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'cache_ttl'"
+            ).fetchone()
+            if row:
                 return int(row[0])
     except Exception:
         pass
     return int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
 
-CACHE_TTL_MINUTES = _get_ttl_from_db()
+
+CACHE_TTL_MINUTES = int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
+
+
+def refresh_cache_ttl() -> int:
+    """Reload the TTL from the database. Called at startup, and after /market/config."""
+    global CACHE_TTL_MINUTES
+    CACHE_TTL_MINUTES = _get_ttl_from_db()
+    return CACHE_TTL_MINUTES
 
 # Absolute directory path for disk-backed JSON cache storage.
 #

@@ -19,25 +19,16 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-# Load .env manually to avoid python-dotenv dependency
-env_path = os.path.join(os.path.dirname(__file__), '.env')
-if os.path.exists(env_path):
-    with open(env_path) as f:
-        for line in f:
-            if line.strip() and not line.startswith('#'):
-                key, _, value = line.partition('=')
-                if key and value:
-                    os.environ[key.strip()] = value.strip()
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from shared.identity import identity_scope, normalize_pan, decode_jwt_pan
+from shared import db, identity, oidc, users
+from shared.identity import identity_scope
 from shared.services.cache import cache_stats, request_scope
 
 # Shared Infrastructure Gateways
-from shared.routers import auth, google_auth, market, accounts, history
+from shared.routers import auth, market, accounts, history
 
 # Domain: Mutual Funds
 from domains.mutual_funds.routers import (
@@ -83,7 +74,20 @@ async def lifespan(app: FastAPI):
         "[STARTUP] sync endpoint concurrency capped at %d (anyio default was %d)",
         SYNC_ENDPOINT_CONCURRENCY, previous,
     )
+
+    # Build the pool during startup rather than on the first request, so the TLS
+    # handshake and authentication are paid before traffic arrives instead of by
+    # whoever happens to arrive first. A failure here is logged, not raised: the
+    # platform health check should get a response saying the database is
+    # unreachable, not a container that never finishes booting.
+    try:
+        db.get_pool()
+    except Exception as e:
+        logger.error("[STARTUP] database pool unavailable: %s", e)
+
     yield
+
+    db.close_pool()
 
 
 app = FastAPI(
@@ -174,39 +178,54 @@ class DefaultCacheControlMiddleware:
 
 class IdentityMiddleware:
     """
-    Binds the caller's asserted PAN for the request (shared/identity.py).
-
-    Priority order:
-      1. Authorization: Bearer <JWT>  — Google OAuth flow (verified, preferred)
-      2. X-User-PAN header            — legacy PAN-only flow (local dev / tests)
+    Resolves the caller's bearer token to an account and binds it (shared/identity.py).
 
     Ownership is enforced deep in the data-access layer rather than per route, so
     the identity has to be available there without threading a parameter through
     every signature. Same ContextVar mechanism as the L0 memo below.
+
+    One credential: `Authorization: Bearer <id token>`, verified against the
+    provider's JWKS in shared/oidc.py. There is no PAN-based fallback - a PAN is
+    printed on documents and is not something to authenticate with.
+
+    Resolution is cached in process (shared/users.py) - without that this would add
+    a database round trip to every authenticated request, ahead of the handler.
     """
 
     def __init__(self, app):
         self.app = app
+        self._verifier = oidc.from_env()
+
+    def _caller(self, scope):
+        if self._verifier is None:
+            return None
+
+        headers = dict(scope.get("headers", []))
+        raw_auth = headers.get(b"authorization")
+        if not raw_auth:
+            return None
+
+        value = raw_auth.decode("latin-1")
+        if not value.lower().startswith("bearer "):
+            return None
+
+        principal = self._verifier.verify(value[7:].strip())
+        if principal is None:
+            return None
+        return users.resolve(principal.issuer, principal.subject, email=principal.email)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        auth_header = None
-        pan_header  = None
-        for key, value in scope.get("headers", []):
-            if key == b"authorization":
-                auth_header = value.decode("latin-1")
-            elif key == b"x-user-pan":
-                pan_header = value.decode("latin-1")
+        try:
+            caller = self._caller(scope)
+        except Exception:
+            # Identity resolution must never 500 a request into an authorized state.
+            logger.exception("[AUTH] identity resolution failed; treating as anonymous")
+            caller = None
 
-        # JWT takes priority: it is cryptographically verified.
-        pan = decode_jwt_pan(auth_header)
-        # Fall back to legacy header (local dev, unit tests, PAN-only login).
-        if pan is None:
-            pan = normalize_pan(pan_header)
-
-        with identity_scope(pan):
+        with identity_scope(caller):
             await self.app(scope, receive, send)
 
 
@@ -280,11 +299,10 @@ app.add_middleware(RequestCacheMiddleware)
 # ────────────────────────────────────────────────────────────────────────────
 
 # Shared Infrastructure
-app.include_router(auth.router,         prefix="/auth",      tags=["Infrastructure - Authentication"])
-app.include_router(google_auth.router,  prefix="/auth",      tags=["Infrastructure - Google OAuth"])
-app.include_router(market.router,       prefix="/market",    tags=["Infrastructure - Live Market Feed"])
-app.include_router(accounts.router,     prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
-app.include_router(history.router,      prefix="/history",   tags=["Infrastructure - History Timeline"])
+app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
+app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
+app.include_router(accounts.router,  prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
+app.include_router(history.router,   prefix="/history",   tags=["Infrastructure - History Timeline"])
 
 # Domain: Mutual Funds
 app.include_router(portfolio.router,    prefix="/mutual-funds/portfolio",     tags=["Mutual Funds - Session Management"])
@@ -324,5 +342,12 @@ def health_cache():
 
     Useful for answering "is the cache actually working" after a deploy, rather
     than asserting that it is.
+
+    Authenticated, unlike `/health`. It carries no user data, but hit/miss/eviction
+    counters do reveal how much traffic the deployment is handling and when - which
+    is not something to publish. `/health` stays open because the platform's health
+    check calls it before anything could be signed in.
     """
+    if not identity.current_user_id():
+        raise HTTPException(status_code=401, detail="Authentication required.")
     return cache_stats()

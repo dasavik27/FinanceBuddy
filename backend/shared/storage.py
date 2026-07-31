@@ -1,256 +1,236 @@
 """
-core/storage.py
+shared/storage.py
 
-Data Lake Persistence & Transaction Ledger Reconciliation Engine
-================================================================
-Manages robust disk-level storage of CAS uploaded DataFrames using a unified SQLite database,
-mapped against an SQLite metadata registry. Includes a deterministic row-level hashing
-engine to prevent duplicate snapshots and allow semantic ledger reconciliation.
+Session persistence and transaction-ledger reconciliation.
+==========================================================
+Stores an uploaded CAS as one compressed payload row against a registry entry, and
+fingerprints ledgers so re-uploading the same statement is idempotent.
+
+Owner column
+------------
+Rows are keyed on `user_id` (a uuid this application issues), not on a PAN. PAN was
+previously the login credential, the owner column and the CAS PDF password all at
+once - and it is printed on documents, so "anyone who knows a PAN can read that
+user's data" was the real posture rather than an edge case. It is now an attribute
+on `profiles`.
+
+Schema lives in migrations/, not here. DDL used to run at import time, which is
+tolerable against a local file and not against a pooled network database: every
+process start would race the same CREATE statements, and there is nowhere sensible
+to put a failure.
 """
 
-import os
 import json
-import sqlite3
 import uuid
+import zlib
+import numpy as np
 import pandas as pd
 import hashlib
-from contextlib import contextmanager
+from io import StringIO
 from typing import Optional, Dict, Any, Tuple
 
-from shared.identity import mask_pan as _mask_pan
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+from shared import crypto, db
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-DB_PATH = os.path.join(DATA_DIR, "metadata.sqlite3")
+# Connection handling lives in shared/db.py - the one module that knows the engine.
+# Re-exported because callers and tests refer to storage._connect.
+_connect = db.connect
 
-os.makedirs(DATA_DIR, exist_ok=True)
+
+# ── Session payload codec ─────────────────────────────────────────────────────
+#
+# A session's three frames are stored as ONE compressed blob rather than as rows in
+# three implicitly-created tables. This replaced `DataFrame.to_sql`, which had three
+# problems that all trace back to the mf_* tables having no explicit DDL:
+#
+#   - Schema was frozen from whatever columns the *first* upload happened to have, so
+#     any parser change made `to_sql(if_exists="append")` fail on every subsequent
+#     upload. The previous mitigation issued `ALTER TABLE ADD COLUMN` at runtime using
+#     *document-controlled* identifiers, which is not a thing to do to a database.
+#   - Rehydration cost four round trips (registry + three frame reads). It is now one.
+#   - Postgres will not tolerate any of it. A strictly-typed database cannot have its
+#     schema mutated by the contents of an uploaded PDF.
+#
+# The format is deliberately boring - JSON, so it is inspectable and portable across
+# any engine with no driver-specific types. zlib level 1 rather than the
+# default 6: on ~0.1 shared vCPU the extra CPU of higher levels costs more than the
+# bytes it saves, and level 1 still gets roughly 10x on this data. Compressing in the
+# application rather than relying on Postgres TOAST also saves the *wire* bytes, since
+# TOAST decompresses server-side before sending.
+_PAYLOAD_CODEC = "zlib-json-split-v1"
+
+_PAYLOAD_FRAMES = ("holdings", "transactions", "sips")
+
+# Whitelisted so a corrupted or hand-edited `meta` cannot reach astype() with an
+# arbitrary string; anything unrecognised falls back to the ISO parse.
+_EPOCH_UNITS = frozenset(("s", "ms", "us", "ns"))
 
 
-def _apply_pragmas(conn: sqlite3.Connection) -> None:
+def _datetime_unit(dtype) -> str:
     """
-    Configure a connection for a concurrent web server.
+    The resolution of a datetime dtype: 's', 'ms', 'us' or 'ns'.
 
-    Under the default rollback journal a writer takes an EXCLUSIVE lock over the whole
-    database, so a 20k-row CAS upload (~0.7 s, plus fsyncs) blocked every reader - and
-    past the busy timeout those requests failed with "database is locked" as a 500.
-    WAL lets readers proceed during a write, which is the single most important setting
-    here.
-
-    - journal_mode=WAL is persistent (stored in the file header), so setting it on any
-      connection is enough; it is applied per-connection anyway because a fresh
-      database needs it once and this is the cheapest place to guarantee it.
-    - synchronous=NORMAL rather than FULL: FULL fsyncs on every commit, and on a
-      deployment whose disk is wiped on restart that durability buys nothing.
-    - busy_timeout gives a blocked writer time to wait rather than failing instantly.
-
-    WAL needs shared-memory mmap on the database's filesystem. That is fine on a
-    container's local disk but can fail on some network mounts, so a failure here is
-    logged and tolerated rather than fatal.
+    Two accessors are needed because two kinds of dtype reach this. pandas extension
+    dtypes (DatetimeTZDtype) expose `.unit`; a tz-naive column is a plain numpy dtype
+    which does not, and only answers to np.datetime_data. Relying on `.unit` alone
+    silently returned the "ns" default for every naive column - which is exactly the
+    case that matters, and on pandas 3 those columns are datetime64[us], so every
+    timestamp came back divided by 1000.
     """
+    unit = getattr(dtype, "unit", None)
+    if unit:
+        return unit
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=15000")
-    except sqlite3.DatabaseError as e:
-        logger.warning("[STORAGE] could not apply pragmas (WAL unsupported here?): %s", e)
+        return np.datetime_data(dtype)[0]
+    except (TypeError, ValueError):
+        return "ns"
 
 
-@contextmanager
-def _connect():
+def _encode_frame(df: Optional[pd.DataFrame]) -> Tuple[bytes, Dict[str, str]]:
     """
-    A configured connection that is always closed.
+    Compress one frame, returning (blob, {datetime_column: restore_mode}).
 
-    `with sqlite3.connect(...)` commits but does NOT close - it is a transaction
-    context, not a resource context. On an exception path the traceback keeps the
-    frame (and therefore the connection) alive for an indeterminate time, holding
-    locks. This wrapper commits on success, rolls back on failure, and closes either
-    way.
+    Two decisions here are performance-driven, both measured on a 20k-row ledger:
+
+    Each frame is its own self-contained JSON document rather than a member of a
+    larger one. Nesting them meant `to_json` -> `json.loads` -> `json.dumps`, which
+    serializes every row three times - 2.5 s, or roughly 10-20 s on the deployment's
+    ~0.1 shared vCPU. Standalone frames keep both directions on pandas' C JSON paths
+    and never materialise rows as Python objects.
+
+    Naive datetimes are written as integer epoch counts, not ISO strings.
+    `date_format="iso"` spent 334 ms of a 564 ms encode formatting one 20k-row Date
+    column, where `astype("int64")` is free - datetime64 is int64 underneath, so it is
+    a view rather than a conversion - and reads back in 1 ms instead of 25 ms. It is
+    also exact, where an ISO round trip is a lossy format-then-reparse.
+
+    The column's *unit* is recorded alongside it and must be, because it is not
+    always nanoseconds: pandas has supported non-nanosecond resolution since 2.0, and
+    on pandas 3 `pd.to_datetime` yields datetime64[us]. Restoring a microsecond
+    column as datetime64[ns] silently divides every timestamp by 1000 - 2023 becomes
+    1970 - and nothing downstream would flag it as anything but bad data.
+
+    Timezone-aware columns keep the ISO path: their integer value is UTC, so the
+    round trip would drop the zone. No parser emits them today, but the fallback
+    costs nothing and makes the wrong outcome unreachable rather than unlikely.
+
+    orient="split" keeps column order and emits rows as lists, which is much smaller
+    than orient="records" repeating every key on every row.
     """
-    conn = sqlite3.connect(DB_PATH, timeout=15.0)
-    _apply_pragmas(conn)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    if df is None:
+        df = pd.DataFrame()
 
-
-def _init_db():
-    """Initializes the SQLite metadata registry and runs migrations."""
-    with _connect() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                pan_id TEXT PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                data_hash TEXT UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_value REAL,
-                total_invested REAL,
-                num_funds INTEGER,
-                is_partial BOOLEAN
-            )
-        """)
-        # Schema Migration: Add pan_id to sessions if missing
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN pan_id TEXT")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-            
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN upload_type TEXT DEFAULT 'mutual_funds'")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN statement_period TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
-
-        # The GC sweep scans for sessions older than 24h on every pass.
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
-
-        # Every PAN-scoped read was a full scan of a table holding every session in
-        # the system: get_history (the /history timeline), the accounts summary, and
-        # the purge path. This covers the filter AND the sort, so get_history becomes a
-        # SEARCH with no temp B-tree instead of a SCAN.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_pan_type "
-            "ON sessions(pan_id, upload_type, created_at DESC)"
-        )
-
-        # The dedup lookup is now scoped by (data_hash, pan_id). data_hash already has
-        # a UNIQUE index, which serves it.
-
-        # ── OAuth / JWT tables ───────────────────────────────────────────────
-        # google_users: one row per Google account. pan_id is NULL until the user
-        # completes the PAN-linking step (first login only).
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS google_users (
-                google_id   TEXT PRIMARY KEY,
-                email       TEXT NOT NULL,
-                name        TEXT,
-                picture_url TEXT,
-                pan_id      TEXT,
-                created_at  REAL DEFAULT (unixepoch()),
-                updated_at  REAL DEFAULT (unixepoch())
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_google_users_pan ON google_users(pan_id)")
-
-        # refresh_tokens: rotating tokens bound to a google_id. Only the hash is
-        # stored so a DB breach does not immediately yield usable tokens.
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS refresh_tokens (
-                token_hash  TEXT PRIMARY KEY,
-                google_id   TEXT NOT NULL,
-                expires_at  REAL NOT NULL,
-                revoked     INTEGER DEFAULT 0,
-                created_at  REAL DEFAULT (unixepoch())
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_refresh_tokens_google ON refresh_tokens(google_id)")
-
-        _ensure_mf_indexes(conn)
-
-
-# The mf_* tables are created implicitly by DataFrame.to_sql, so they may not exist
-# when _init_db runs on a fresh database. Indexes are therefore ensured in two places:
-# here (for databases where the tables already exist) and again after to_sql in
-# save_session (for the first upload). CREATE INDEX IF NOT EXISTS makes both idempotent.
-_MF_INDEXED_TABLES = ("mf_holdings", "mf_transactions", "mf_sips")
-
-
-def _ensure_mf_indexes(conn: sqlite3.Connection) -> None:
-    """
-    Index the mf_* tables on session_id.
-
-    Every load_session() runs `SELECT * FROM mf_* WHERE session_id=?`, and these tables
-    hold *every* session's rows until the 24h purge - so without an index each
-    rehydration is three full table scans over unrelated sessions' data. This became a
-    hot path when the in-memory session store gained a resident cap, which makes
-    rehydration routine rather than exceptional.
-    """
-    for table in _MF_INDEXED_TABLES:
-        try:
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{table}_session_id ON {table}(session_id)"
-            )
-        except sqlite3.OperationalError:
-            pass  # table not created yet - save_session will index it after to_sql
-
-
-_init_db()
-
-def _quote_ident(name: str) -> str:
-    """
-    Escape a SQL identifier for use inside double quotes.
-
-    Table and column names here are not constants: column names come from the CAS/AIS
-    parser and therefore from the uploaded document. Doubling embedded quotes is the
-    SQLite-correct escape.
-    """
-    return str(name).replace('"', '""')
-
-
-def _align_frame_to_table(conn: sqlite3.Connection, table: str, df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reconcile a frame's columns with an existing table's before `to_sql`.
-
-    The mf_* tables have no explicit DDL - their schema is frozen from whatever
-    columns the *first* upload happened to have. So the moment the parser gains,
-    renames or drops a field, `to_sql(if_exists="append")` fails with
-    `DatabaseError: Execution failed`, which says nothing about the real cause. The
-    live schema has already drifted once: `mf_holdings` carries a "CAS NAV" column
-    the current parser no longer emits, and has no "Type" column.
-
-    On ephemeral disk this self-heals (the table is recreated each deploy), which is
-    exactly why it stayed hidden - attach a persistent volume and every upload
-    starts failing after any parser change.
-
-    Handling, in the additive direction, so no data is silently discarded:
-      - a column the frame has and the table lacks -> ALTER TABLE ADD COLUMN
-      - a column the table has and the frame lacks -> filled with NULL
-    Returns the frame reordered to the table's column order.
-    """
-    existing = [row[1] for row in conn.execute(f'PRAGMA table_info("{_quote_ident(table)}")').fetchall()]
-    if not existing:
-        return df  # table does not exist yet; to_sql will create it from this frame
-
+    datetime_columns: Dict[str, str] = {}
+    encodable = df
+    epoch_columns = []
     for column in df.columns:
-        if column in existing:
+        dtype = df[column].dtype
+        if not pd.api.types.is_datetime64_any_dtype(dtype):
             continue
-        # Keep the new field rather than dropping it on the floor. SQLite infers no
-        # type here, which is fine: it is dynamically typed per value.
-        #
-        # The identifier is escaped because column names come from the CAS/AIS parser,
-        # i.e. they are document-controlled. A name containing a double quote used to
-        # produce `OperationalError: unrecognized token` - an unhandled 500 on upload -
-        # and was only prevented from being worse by sqlite3's one-statement-per-execute
-        # rule, which is luck rather than a guard.
-        conn.execute(f'ALTER TABLE "{_quote_ident(table)}" ADD COLUMN "{_quote_ident(column)}"')
-        existing.append(column)
-        logger.info("[STORAGE] added column %r to %s (parser drift)", column, table)
+        if getattr(dtype, "tz", None) is not None:
+            datetime_columns[str(column)] = "iso"
+            continue
+        datetime_columns[str(column)] = f"epoch:{_datetime_unit(dtype)}"
+        epoch_columns.append(column)
 
-    aligned = df.copy()
-    for column in existing:
-        if column not in aligned.columns:
-            aligned[column] = None
+    if epoch_columns:
+        # Shallow copy: only the rewritten columns are replaced, the rest are shared.
+        encodable = df.copy(deep=False)
+        for column in epoch_columns:
+            # NaT becomes iNaT (INT64_MIN) and converts straight back to NaT, so this
+            # emits no nulls at all.
+            encodable[column] = df[column].astype("int64")
 
-    return aligned[existing]
+    encoded = encodable.to_json(orient="split", date_format="iso", index=False)
+    return zlib.compress(encoded.encode("utf-8"), 1), datetime_columns
 
 
-def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str:
+def _decode_frame(blob: Optional[bytes], datetime_columns: Optional[Dict[str, str]]) -> pd.DataFrame:
+    """
+    Inverse of _encode_frame.
+
+    Datetime columns are restored from the recorded names rather than inferred. The
+    old to_sql path wrote ISO strings (SQLite had no datetime type) and restored them
+    with a hardcoded check for a column literally named "Date" - written for
+    transactions, and only later duplicated for SIPs after the missing conversion
+    there was found to misparse ambiguous days via dayfirst=True. Recording the
+    columns makes it general instead of a list of names someone must remember to
+    extend.
+
+    Inference is switched off explicitly: left on, read_json would guess at dates and
+    re-type axes, which is the ambiguity this exists to remove.
+    """
+    if blob is None:
+        return pd.DataFrame()
+
+    # psycopg hands back a memoryview for bytea. zlib accepts any buffer, but the
+    # view keeps the whole result row alive until it is released, so materialise it.
+    text = zlib.decompress(bytes(blob)).decode("utf-8")
+    df = pd.read_json(
+        StringIO(text), orient="split", convert_dates=False, convert_axes=False
+    )
+    for column, mode in (datetime_columns or {}).items():
+        if column not in df.columns:
+            continue
+        unit = mode.split(":", 1)[1] if mode.startswith("epoch:") else None
+        if unit in _EPOCH_UNITS:
+            df[column] = df[column].astype("int64").astype(f"datetime64[{unit}]")
+        else:
+            # errors="coerce": one unparseable cell should become NaT rather than
+            # failing the whole rehydration and 404-ing a session that exists.
+            df[column] = pd.to_datetime(df[column], errors="coerce")
+    return df
+
+
+def encode_payload(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Serialize a session's three frames.
+
+    Returns the column values for one `session_payloads` row - three blobs plus a
+    small metadata document. Still a single row and a single round trip; the split is
+    only so each frame stays a standalone JSON document (see _encode_frame).
+    """
+    blobs = {}
+    datetime_columns = {}
+    for name, frame in zip(_PAYLOAD_FRAMES, (df_h, df_t, df_s)):
+        blobs[name], datetime_columns[name] = _encode_frame(frame)
+
+    return {
+        "codec": _PAYLOAD_CODEC,
+        # A plain dict, not a JSON string: the column is jsonb, and psycopg adapts a
+        # dict directly. Pre-serialising would store a jsonb *string* containing JSON.
+        "meta": {"datetime_columns": datetime_columns},
+        "byte_size": sum(len(b) for b in blobs.values()),
+        **blobs,
+    }
+
+
+def decode_payload(row: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Inverse of encode_payload. Returns (holdings, transactions, sips)."""
+    # jsonb comes back already decoded; the str branch is for a caller passing the
+    # encode_payload output straight through without a database round trip.
+    meta = row.get("meta") or {}
+    if isinstance(meta, (str, bytes)):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
+    datetime_columns = meta.get("datetime_columns") or {}
+
+    return tuple(
+        _decode_frame(row.get(name), datetime_columns.get(name))
+        for name in _PAYLOAD_FRAMES
+    )
+
+
+def compute_ledger_hash(df_t: pd.DataFrame, user_id: Optional[str] = None) -> str:
     """
     Deterministic SHA-256 fingerprint of a transaction ledger, scoped to its owner.
 
@@ -266,8 +246,8 @@ def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str
        never dedups, which is the correct behaviour: there is nothing to compare.
 
     2. The owner is part of the hash. Dedup is a per-user optimisation; a hash
-       match across two PANs must never resolve to the other user's session.
-       check_duplicate_upload() filters on pan_id as well, so this is defence in
+       match across two accounts must never resolve to the other user's session.
+       check_duplicate_upload() filters on user_id as well, so this is defence in
        depth rather than the only guard.
     """
     if df_t.empty:
@@ -285,11 +265,11 @@ def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str
 
     # Concatenate all rows into a single giant string and hash it, prefixed with the
     # owner so identical ledgers under different PANs produce different fingerprints.
-    full_ledger_string = f"{pan_id or ''}|" + "|".join(row_strings.values.astype(str))
+    full_ledger_string = f"{user_id or ''}|" + "|".join(row_strings.values.astype(str))
     return hashlib.sha256(full_ledger_string.encode('utf-8')).hexdigest()
 
 
-def check_duplicate_upload(ledger_hash: str, pan_id: Optional[str] = None) -> Optional[str]:
+def check_duplicate_upload(ledger_hash: str, user_id: Optional[str] = None) -> Optional[str]:
     """
     Returns this owner's existing session_id for an identical ledger, else None.
 
@@ -297,14 +277,15 @@ def check_duplicate_upload(ledger_hash: str, pan_id: Optional[str] = None) -> Op
     for save_session() anyway, and computing it twice per upload meant running a
     row-wise `df.apply` over the whole ledger twice.
 
-    `pan_id IS ?` rather than `= ?` because SQLite's `=` never matches NULL, and
-    sessions uploaded without a PAN header have pan_id NULL - those must still
-    dedup against each other, and must not match a PAN-owned row.
+    `IS NOT DISTINCT FROM` rather than `=` because `=` never matches NULL. Sessions
+    saved with no owner have user_id NULL, and those must still dedup against each
+    other while never matching an owned row.
     """
     with _connect() as conn:
         cursor = conn.execute(
-            "SELECT session_id FROM sessions WHERE data_hash = ? AND pan_id IS ?",
-            (ledger_hash, pan_id),
+            "SELECT session_id FROM sessions "
+            "WHERE data_hash = %s AND user_id IS NOT DISTINCT FROM %s",
+            (ledger_hash, user_id),
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -316,7 +297,7 @@ class OwnerLookupFailed(Exception):
 
     Deliberately distinct from "no such session". This used to be swallowed into
     `(False, None)`, which the caller read as "nothing to authorize" and then served
-    the data - so the authorization check silently became a no-op whenever SQLite
+    the data - so the authorization check silently became a no-op whenever the database
     errored. "database is locked" is precisely the condition WAL and busy_timeout were
     added to handle, so that path was reachable rather than theoretical.
 
@@ -326,7 +307,7 @@ class OwnerLookupFailed(Exception):
 
 def get_session_owner(session_id: str) -> Tuple[bool, Optional[str]]:
     """
-    (session_exists, owner_pan) for a session id.
+    (session_exists, owner_user_id) for a session id.
 
     Returned as a pair so callers can tell "no such session" from "exists but
     unowned" - both are legitimate, and they must not be conflated when deciding
@@ -336,227 +317,249 @@ def get_session_owner(session_id: str) -> Tuple[bool, Optional[str]]:
     """
     try:
         with _connect() as conn:
-            cursor = conn.execute("SELECT pan_id FROM sessions WHERE session_id = ?", (session_id,))
+            cursor = conn.execute(
+                "SELECT user_id FROM sessions WHERE session_id = %s", (session_id,)
+            )
             row = cursor.fetchone()
             if row is None:
                 return False, None
-            return True, row[0]
+            return True, str(row[0]) if row[0] is not None else None
     except Exception as e:
         logger.error(f"[STORAGE ERROR] owner lookup failed for {session_id}: {e}")
         raise OwnerLookupFailed(str(e)) from e
 
-def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds', ledger_hash: Optional[str] = None) -> str:
+def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", user_id: str = None, upload_type: str = 'mutual_funds', ledger_hash: Optional[str] = None) -> str:
     """
-    Persists the dataframes to SQLite and registers the session, tied to a PAN.
+    Persist the frames and register the session against its owner.
 
-    Write order is deliberate: the `sessions` registry row goes in **first**, then
-    the mf_* frames. It used to be the other way round, in two separate
-    transactions - so a failure between them (the UNIQUE constraint on data_hash
-    is reachable via a concurrent duplicate upload) left mf_* rows committed under
-    a session_id that appeared in no registry row. The 24h sweeper only finds rows
-    *via* `sessions`, so those were unreachable and immortal.
+    The registry row and the payload go in as **one transaction**. Under SQLite this
+    was two, because DataFrame.to_sql committed its own - so the code had to write
+    the registry first and hand-roll a compensating delete if the frames then failed,
+    aiming for a recoverable partial state rather than none. Postgres removes the
+    problem instead of mitigating it: either both rows land or neither does.
 
-    Registry-first inverts the failure mode: a later failure leaves a registry row
-    whose frames are missing, which load_session() reports as empty and the
-    sweeper purges normally. Full atomicity is not available here because
-    DataFrame.to_sql commits its own transaction, so the goal is a *recoverable*
-    partial state rather than none.
+    Concurrent duplicate uploads are resolved by ON CONFLICT rather than by catching
+    the unique violation. Catching it would not work here anyway - a failed statement
+    aborts the whole Postgres transaction, so the follow-up SELECT on the same
+    connection would itself error with "current transaction is aborted".
     """
     if ledger_hash is None:
-        ledger_hash = compute_ledger_hash(df_t, pan_id)
+        ledger_hash = compute_ledger_hash(df_t, user_id)
 
-    # 1. Extract quick metrics for the registry
-    total_value = float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0
-    total_invested = float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0
-    num_funds = len(df_h)
+    # total_value is the user's net worth, so these are encrypted alongside the
+    # payload rather than left as queryable doubles. Nothing filters or sorts on them
+    # in SQL - the history timeline just displays them.
+    metrics = {
+        "total_value": float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0,
+        "total_invested": float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0,
+        "num_funds": len(df_h),
+    }
 
-    # 2. Claim the session id in the registry before writing any frame rows.
+    # Compressing and encrypting outside the transaction keeps ~300 ms of CPU-bound
+    # work off the connection, which would otherwise hold it (and its share of a
+    # small pool) idle.
+    payload = encode_payload(df_h, df_t, df_s)
+    # Bound to the session id: a ciphertext copied into another session's row fails
+    # to decrypt rather than being served to the wrong owner.
+    encrypted = {
+        name: crypto.encrypt(payload[name], aad=session_id)
+        for name in _PAYLOAD_FRAMES
+    }
+    encrypted_metrics = crypto.encrypt_json(metrics, aad=session_id)
+
     with _connect() as conn:
-        try:
-            conn.execute("""
-                INSERT INTO sessions (session_id, data_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (session_id, ledger_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            # data_hash is UNIQUE, so this means an identical ledger for this owner
-            # landed between the caller's dedup check and now. Uploading the same
-            # statement twice should be idempotent, not a 500, so adopt the winner.
-            conn.rollback()
+        row = conn.execute(
+            """
+            INSERT INTO sessions (
+                session_id, user_id, upload_type, data_hash,
+                metrics, is_partial, statement_period
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (data_hash, user_id) WHERE data_hash IS NOT NULL
+            DO NOTHING
+            RETURNING session_id
+            """,
+            (
+                session_id, user_id, upload_type, ledger_hash,
+                encrypted_metrics, is_partial, statement_period,
+            ),
+        ).fetchone()
+
+        if row is None:
+            # An identical ledger for this owner landed between the caller's dedup
+            # check and now. Uploading the same statement twice is idempotent, not a
+            # 500, so adopt whichever write won.
             existing = conn.execute(
-                "SELECT session_id FROM sessions WHERE data_hash = ? AND pan_id IS ?",
-                (ledger_hash, pan_id),
+                "SELECT session_id FROM sessions "
+                "WHERE data_hash = %s AND user_id IS NOT DISTINCT FROM %s",
+                (ledger_hash, user_id),
             ).fetchone()
             if existing:
                 logger.info(
-                    "[STORAGE] concurrent duplicate upload for %s; reusing session %s",
-                    _mask_pan(pan_id), existing[0],
+                    "[STORAGE] duplicate upload; reusing session %s", existing[0]
                 )
                 return existing[0]
-            raise
+            # No conflicting row either - the insert was skipped for a reason we do
+            # not model, and silently returning would strand the caller with an id
+            # that does not exist.
+            raise RuntimeError(f"session {session_id} was neither inserted nor found")
 
-    # 3. Save DataFrames to SQLite.
-    #
-    # If this fails, the registry row from step 2 must be removed. Leaving it would be
-    # worse than the orphan rows the old ordering produced: the row carries the real
-    # data_hash, so check_duplicate_upload would match it and every retry of the same
-    # CAS would be deduped into the broken empty session until the 24h sweep - a
-    # permanently bricked upload path rather than a retryable failure. load_session
-    # also returns empty frames rather than None for such a row, so it would surface as
-    # a portfolio with no holdings instead of a clean 404.
-    try:
-        with _connect() as conn:
-            for frame, table in ((df_h, "mf_holdings"), (df_t, "mf_transactions"), (df_s, "mf_sips")):
-                if frame.empty:
-                    continue
-                frame_copy = frame.copy()
-                frame_copy['session_id'] = session_id
-                frame_copy = _align_frame_to_table(conn, table, frame_copy)
-                frame_copy.to_sql(table, conn, if_exists="append", index=False)
-
-            # to_sql has just created any missing tables, so this is where a fresh
-            # database actually gets its session_id indexes. _init_db cannot do it:
-            # the mf_* tables do not exist yet at import time.
-            _ensure_mf_indexes(conn)
-    except Exception:
-        logger.exception("[STORAGE] frame write failed for %s; rolling back registry row", session_id)
-        try:
-            delete_session(session_id)
-        except Exception:
-            logger.exception("[STORAGE] could not roll back registry row for %s", session_id)
-        raise
-
-        # to_sql has just created any missing tables, so this is where a fresh
-        # database actually gets its session_id indexes.
-        _ensure_mf_indexes(conn)
-        conn.commit()
+        conn.execute(
+            """
+            INSERT INTO session_payloads
+                (session_id, codec, holdings, transactions, sips, meta, byte_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (session_id) DO UPDATE SET
+                codec = EXCLUDED.codec,
+                holdings = EXCLUDED.holdings,
+                transactions = EXCLUDED.transactions,
+                sips = EXCLUDED.sips,
+                meta = EXCLUDED.meta,
+                byte_size = EXCLUDED.byte_size
+            """,
+            (
+                session_id, payload["codec"], encrypted["holdings"],
+                encrypted["transactions"], encrypted["sips"],
+                # meta stays plaintext jsonb: it holds column names and datetime
+                # units, which is schema rather than data.
+                Jsonb(payload["meta"]), payload["byte_size"],
+            ),
+        )
 
     return session_id
 
 def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]]:
     """
-    Reconstructs the portfolio from SQLite using the session_id.
+    Reconstruct a session's frames.
+
+    One round trip for the payload, and one for the registry flag. The mf_* version
+    took four, on a path that became routine rather than exceptional once the
+    in-memory store gained a resident cap.
     """
     try:
         with _connect() as conn:
-            # Check if session exists
-            cursor = conn.execute("SELECT is_partial FROM sessions WHERE session_id = ?", (session_id,))
-            row = cursor.fetchone()
-            if not row:
-                return None
-            is_partial = bool(row[0])
-            
-            # Read dataframes (parameterized — session_id is untrusted input)
-            try:
-                df_h = pd.read_sql("SELECT * FROM mf_holdings WHERE session_id=?", conn, params=(session_id,))
-                df_h.drop(columns=['session_id'], inplace=True, errors='ignore')
-            except Exception:
-                df_h = pd.DataFrame()
+            row = conn.execute(
+                """
+                SELECT s.is_partial, p.holdings, p.transactions, p.sips, p.meta
+                FROM sessions s
+                LEFT JOIN session_payloads p ON p.session_id = s.session_id
+                WHERE s.session_id = %s
+                """,
+                (session_id,),
+            ).fetchone()
 
-            try:
-                df_t = pd.read_sql("SELECT * FROM mf_transactions WHERE session_id=?", conn, params=(session_id,))
-                df_t.drop(columns=['session_id'], inplace=True, errors='ignore')
-                # SQLite has no native datetime type — to_sql wrote "Date" as ISO (year-first)
-                # strings, so it comes back as plain object dtype, not datetime64. Every
-                # downstream consumer (FIFO lots, XIRR, rolling returns) expects datetime64;
-                # restore it here once instead of forcing every caller to defend against it.
-                if not df_t.empty and "Date" in df_t.columns and not pd.api.types.is_datetime64_any_dtype(df_t["Date"]):
-                    df_t["Date"] = pd.to_datetime(df_t["Date"])
-            except Exception:
-                df_t = pd.DataFrame()
+        if row is None:
+            return None
 
-            try:
-                df_s = pd.read_sql("SELECT * FROM mf_sips WHERE session_id=?", conn, params=(session_id,))
-                df_s.drop(columns=['session_id'], inplace=True, errors='ignore')
-                # Same restore as df_t above. mf_sips.Date is stored as the identical
-                # ISO string, but only df_t was being converted back - so downstream
-                # code got object dtype and papered over it with
-                # `pd.to_datetime(..., dayfirst=True)`, which misparses a
-                # "YYYY-MM-DD HH:MM:SS" string the moment the day is ambiguous.
-                if not df_s.empty and "Date" in df_s.columns and not pd.api.types.is_datetime64_any_dtype(df_s["Date"]):
-                    df_s["Date"] = pd.to_datetime(df_s["Date"])
-            except Exception:
-                df_s = pd.DataFrame()
-                
-        return df_h, df_t, df_s, is_partial
+        is_partial, holdings, transactions, sips, meta = row
+        # A LEFT JOIN with no payload means the registry row exists but its frames do
+        # not. Reported as empty rather than missing, so the 404 stays reserved for
+        # "no such session".
+        df_h, df_t, df_s = decode_payload({
+            "holdings": crypto.decrypt(holdings, aad=session_id),
+            "transactions": crypto.decrypt(transactions, aad=session_id),
+            "sips": crypto.decrypt(sips, aad=session_id),
+            "meta": meta,
+        })
+        return df_h, df_t, df_s, bool(is_partial)
+    except crypto.DecryptionFailed:
+        # Deliberately not folded into the generic handler below. Returning None here
+        # renders as "session not found", which for a decryption failure would mean a
+        # misconfigured key silently looks like an empty account across every session
+        # at once. Re-raised so it surfaces as a 500 with the reason in the log.
+        logger.exception(
+            "[STORAGE] cannot decrypt session %s - check FINANCEBUDDY_ENCRYPTION_KEYS",
+            session_id,
+        )
+        raise
     except Exception as e:
-        logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {e}")
         return None
 
-def get_history(pan_id: str = None, upload_type: str = None) -> list:
+
+def get_history(user_id: str = None, upload_type: str = None) -> list:
     """
-    Returns a chronological list of all uploaded CAS sessions for a given PAN and upload_type.
+    The caller's uploads, newest first.
+
+    Selects named columns rather than `*`, and flattens the encrypted `metrics` blob
+    back into the same keys the timeline has always read - so the API contract is
+    unchanged by the columns having moved inside encryption.
     """
-    with _connect() as conn:
-        conn.row_factory = sqlite3.Row
-        
-        query = "SELECT * FROM sessions WHERE 1=1"
-        params = []
-        
-        if pan_id:
-            query += " AND pan_id = ?"
-            params.append(pan_id)
-            
-        if upload_type:
-            query += " AND upload_type = ?"
-            params.append(upload_type)
-            
-        query += " ORDER BY created_at DESC"
-        
-        cursor = conn.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
+    query = [
+        "SELECT session_id, user_id, upload_type, created_at, updated_at,",
+        "       is_partial, statement_period, metrics",
+        "FROM sessions WHERE TRUE",
+    ]
+    params = []
+
+    if user_id:
+        query.append("AND user_id = %s")
+        params.append(user_id)
+    if upload_type:
+        query.append("AND upload_type = %s")
+        params.append(upload_type)
+    query.append("ORDER BY created_at DESC")
+
+    with _connect(row_factory=dict_row) as conn:
+        rows = conn.execute(" ".join(query), params).fetchall()
+
+    for row in rows:
+        # user_id is a uuid; stringify so the response serialises without a custom
+        # encoder.
+        if row.get("user_id") is not None:
+            row["user_id"] = str(row["user_id"])
+
+        # Flatten metrics back to top-level keys. A row whose metrics will not
+        # decrypt still lists - the timeline degrades to showing the date and the
+        # restore button rather than the whole history vanishing, which is the more
+        # useful failure when one row is damaged.
+        blob = row.pop("metrics", None)
+        try:
+            metrics = crypto.decrypt_json(blob, aad=row["session_id"]) or {}
+        except crypto.DecryptionFailed:
+            logger.exception(
+                "[STORAGE] cannot decrypt metrics for session %s", row["session_id"]
+            )
+            metrics = {}
+        row["total_value"] = metrics.get("total_value")
+        row["total_invested"] = metrics.get("total_invested")
+        row["num_funds"] = metrics.get("num_funds")
+        row["summary"] = metrics.get("summary") or {}
+    return rows
+
 
 def delete_session(session_id: str) -> bool:
     """
-    Deletes a session from the SQLite registry and its associated dataframes.
+    Delete one session and everything hanging off it.
+
+    session_payloads and tax_payloads declare ON DELETE CASCADE, so this is a single
+    statement where the SQLite version had to name each child table and tolerate the
+    ones that did not exist yet.
     """
     try:
         with _connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            try:
-                conn.execute("DELETE FROM mf_holdings WHERE session_id = ?", (session_id,))
-                conn.execute("DELETE FROM mf_transactions WHERE session_id = ?", (session_id,))
-                conn.execute("DELETE FROM mf_sips WHERE session_id = ?", (session_id,))
-            except sqlite3.OperationalError:
-                pass # Tables might not exist yet
-            conn.commit()
+            conn.execute("DELETE FROM sessions WHERE session_id = %s", (session_id,))
         return True
     except Exception as e:
-        logger.error(f"[STORAGE ERROR] Failed to delete session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to delete session {session_id}: {e}")
         return False
 
-def delete_all_for_pan(pan_id: str) -> int:
-    """
-    Deletes every session associated with a PAN, plus the PAN's own user row.
-    Returns the number of sessions deleted.
 
-    Two things were wrong here. It looped `delete_session(sid)` while holding an
-    open connection, so N sessions meant 1 + 4N statements across N nested
-    connections with N commits - the shape that produces `database is locked` the
-    moment WAL and any concurrency are in play. And it left the `users` row behind,
-    so a PAN that asked to have all its data "permanently deleted" stayed in the
-    database forever. Both are fixed by collecting the ids, then issuing one
-    executemany batch per table in a single transaction.
+def delete_all_for_user(user_id: str) -> int:
+    """
+    Delete every session belonging to a user, plus the account itself.
+
+    The point of a purge request is that nothing identifying survives it, so this
+    removes the `users` row too - `identities`, `profiles` and `sessions` all cascade
+    from it, and `session_payloads` / `tax_payloads` cascade from those. One
+    statement, where the SQLite version fanned out across five tables and used to
+    loop `delete_session()` inside an open connection.
     """
     with _connect() as conn:
-        session_ids = [
-            row[0] for row in conn.execute(
-                "SELECT session_id FROM sessions WHERE pan_id = ?", (pan_id,)
-            ).fetchall()
-        ]
+        count = conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE user_id = %s", (user_id,)
+        ).fetchone()[0]
+        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
-        if session_ids:
-            rows = [(sid,) for sid in session_ids]
-            for table in _MF_INDEXED_TABLES:
-                try:
-                    conn.executemany(f"DELETE FROM {table} WHERE session_id = ?", rows)
-                except sqlite3.OperationalError:
-                    pass  # table not created yet
-            conn.executemany("DELETE FROM sessions WHERE session_id = ?", rows)
-
-        # The point of a purge request is that nothing identifying survives it.
-        conn.execute("DELETE FROM users WHERE pan_id = ?", (pan_id,))
-        conn.commit()
-
-    logger.info("[STORAGE] purged %d sessions for %s", len(session_ids), _mask_pan(pan_id))
-    return len(session_ids)
+    logger.info("[STORAGE] purged account %s and %d session(s)", user_id, count)
+    return count

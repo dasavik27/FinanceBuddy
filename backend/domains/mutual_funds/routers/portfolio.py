@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Header
 from domains.mutual_funds.parser import parse_cas_file
 from domains.mutual_funds.sessions import create_session, get_session
+from shared import identity
 from shared.config import BENCHMARKS
 from shared.cache import MarketCache
 from shared.services.market_indices import clear_benchmark_cache
@@ -22,15 +23,14 @@ router = APIRouter()
 def parse_cas(
     file: UploadFile = File(...),
     password: str = Form(None), # Made optional for testing
-    x_user_pan: str = Header(None),
     x_upload_type: str = Header("mutual_funds")
 ):
     """
     Parse a CAS PDF and create a portfolio session.
 
     Deliberately a sync `def`, not `async def`: parse_cas_file (casparser + PDF
-    extraction) and create_session (ledger hash + three SQLite writes) are blocking
-    work measured in seconds. Under `async def` they ran directly on the event loop
+    extraction) and create_session (ledger hash, compression, encryption, the write)
+    are blocking work measured in seconds. Under `async def` they ran directly on the event loop
     of a single-worker deployment, which froze the whole API for the duration -
     including /health, which can fail the platform health check mid-upload. As a
     sync def, FastAPI runs this in the threadpool and the loop stays responsive.
@@ -39,12 +39,12 @@ def parse_cas(
     fixed for exactly this reason; this endpoint is the same bug.
     """
     raw = file.file.read()
-    # CAS statements are conventionally password-protected with the investor's own PAN.
-    # If no password is supplied, fall back to the logged-in profile's PAN (X-User-PAN header)
-    # rather than a hardcoded credential.
-    actual_pw = password if password and password.strip() else x_user_pan
+    # CAS statements are conventionally password-protected with the investor's own
+    # PAN. If no password is supplied, fall back to the PAN on the signed-in user's
+    # profile (set via PUT /auth/profile/pan) rather than a hardcoded credential.
+    actual_pw = password if password and password.strip() else identity.current_pan()
     if not actual_pw:
-        raise HTTPException(status_code=400, detail="Password is required (or log in with your PAN so it can be used automatically).")
+        raise HTTPException(status_code=400, detail="Password is required (or set your PAN in your profile so it can be used automatically).")
     df_h, df_t, df_s, err, is_partial, statement_period = parse_cas_file(raw, actual_pw)
 
     if err:
@@ -52,7 +52,7 @@ def parse_cas(
     if df_h.empty:
         raise HTTPException(status_code=422, detail="No active holdings found in CAS.")
 
-    session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, pan_id=x_user_pan, upload_type=x_upload_type)
+    session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, upload_type=x_upload_type)
     
     return {
         "session_id": session_id,

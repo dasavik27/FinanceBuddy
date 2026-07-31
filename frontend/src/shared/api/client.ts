@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAppStore } from '../store/appStore'
+import authClient from '../auth/authClient'
 import type {
   ParseResponse, Summary, OverviewData, Holding, FundResult,
   PerformanceData, AllocationData, InsightsData,
@@ -7,94 +8,40 @@ import type {
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
-// ── Request interceptor: attach auth credential ──────────────────────────────
-// Priority: Bearer JWT (Google OAuth) > X-User-PAN (legacy/local dev)
-api.interceptors.request.use((config) => {
-  const { accessToken, pan } = useAppStore.getState()
-  if (accessToken) {
-    config.headers['Authorization'] = `Bearer ${accessToken}`
-  } else if (pan) {
-    config.headers['X-User-PAN'] = pan
+/**
+ * Attach the signed-in user's bearer token.
+ *
+ * Async because the token comes from the auth client's getSession(), which
+ * refreshes it when it is close to expiry - caching it here would reintroduce the
+ * expired-token logout. There is no PAN fallback: Google is the only credential.
+ */
+api.interceptors.request.use(async (config) => {
+  const token = await authClient.getAccessToken()
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`
   }
   return config
 })
 
-// ── Response interceptor: auto-refresh JWT on 401 ────────────────────────────
-let _refreshing: Promise<string | null> | null = null
-
+/**
+ * A 401 means the credential is gone or no longer valid, so clear local state
+ * rather than leaving the UI showing a signed-in shell over failing requests.
+ */
 api.interceptors.response.use(
-  (res) => res,
-  async (error) => {
-    const original = error.config
-    // Only attempt one refresh per request, only on 401, skip auth endpoints.
-    if (
-      error?.response?.status === 401 &&
-      !original._retried &&
-      !original.url?.includes('/auth/')
-    ) {
-      original._retried = true
-      const { refreshToken, setAccessToken, clearGoogleAuth } = useAppStore.getState()
-      if (!refreshToken) {
-        clearGoogleAuth()
-        return Promise.reject(error)
-      }
-      try {
-        // Deduplicate concurrent refresh calls
-        if (!_refreshing) {
-          _refreshing = api
-            .post('/auth/refresh', { refresh_token: refreshToken })
-            .then((r) => {
-              setAccessToken(r.data.access_token)
-              // Also update refresh token in store if backend rotated it
-              useAppStore.setState({ refreshToken: r.data.refresh_token })
-              return r.data.access_token as string
-            })
-            .catch(() => null)
-            .finally(() => { _refreshing = null })
-        }
-        const newToken = await _refreshing
-        if (!newToken) {
-          clearGoogleAuth()
-          return Promise.reject(error)
-        }
-        original.headers['Authorization'] = `Bearer ${newToken}`
-        return api(original)
-      } catch {
-        clearGoogleAuth()
-        return Promise.reject(error)
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const store = useAppStore.getState()
+      if (store.pan || store.userId) {
+        store.clearIdentity()
       }
     }
     return Promise.reject(error)
-  }
+  },
 )
 
+// ── API calls ────────────────────────────────────────────────────────────────
 export const apiClient = {
-  // ── Google OAuth ──────────────────────────────────────────────────────────
-  /** Returns the Google authorization URL to redirect the user to. */
-  getGoogleLoginUrl: async (): Promise<{ url: string }> => {
-    const { data } = await api.get('/auth/google/login')
-    return data
-  },
-
-  /** Exchange the authorization code Google returned for our JWT tokens. */
-  googleCallback: async (code: string): Promise<any> => {
-    const { data } = await api.post('/auth/google/callback', { code })
-    return data
-  },
-
-  /** Link a PAN to the authenticated Google account (called once, first login). */
-  linkPan: async (pan: string, refreshToken: string): Promise<any> => {
-    const { data } = await api.post('/auth/link-pan', { pan, refresh_token: refreshToken })
-    return data
-  },
-
-  /** Check if Google OAuth is configured on the backend and get the client ID. */
-  getGoogleConfig: async (): Promise<{ configured: boolean; client_id?: string }> => {
-    const { data } = await api.get('/auth/google/config')
-    return data
-  },
-
-  // ── CAS / Mutual Funds ────────────────────────────────────────────────────
   /** Parses CAS PDF statement and initializes a portfolio session. */
   parseFile: async (file: File, password: string, uploadType: string = 'mutual_funds'): Promise<ParseResponse> => {
     const fd = new FormData()
@@ -257,12 +204,6 @@ export const apiClient = {
     return data
   },
 
-  /** Fetch all tax sessions for the current PAN (used by history/switch panel). */
-  getTaxHistory: async (): Promise<any> => {
-    const { data } = await api.get('/tax-expert/tax-history')
-    return data
-  },
-
   reconcileBrokerFile: async (sessionId: string, file: File): Promise<any> => {
     const fd = new FormData()
     fd.append('broker_file', file)
@@ -276,9 +217,38 @@ export const apiClient = {
     return res.data
   },
   
-  purgeAccount: async (panId: string): Promise<any> => {
-    const res = await api.delete(`/accounts/${panId}`)
+  /** Permanently delete the signed-in account. Takes no target - see DELETE /accounts/me. */
+  purgeAccount: async (): Promise<any> => {
+    const res = await api.delete('/accounts/me')
     return res.data
+  },
+
+  /** Everything the server holds about the caller, as one JSON document. */
+  exportAccount: async (): Promise<any> => {
+    const res = await api.get('/accounts/me/export')
+    return res.data
+  },
+
+  getTaxHistory: async (): Promise<{ sessions: any[] }> => {
+    const { data } = await api.get('/tax-expert/tax-history')
+    return data
+  },
+
+  deleteTaxSession: async (sid: string): Promise<any> => {
+    const { data } = await api.delete(`/tax-expert/tax-history/${sid}`)
+    return data
+  },
+
+  /** The signed-in account, or 401. */
+  getMe: async (): Promise<{ user_id: string; pan: string | null }> => {
+    const { data } = await api.get('/auth/me')
+    return data
+  },
+
+  /** Attach a PAN after signing in - still needed for the CAS password default. */
+  setProfilePan: async (pan: string): Promise<any> => {
+    const { data } = await api.put('/auth/profile/pan', { pan })
+    return data
   },
 
   clearSystemCaches: async (): Promise<any> => {

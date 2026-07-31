@@ -11,14 +11,18 @@ from typing import Optional
 import difflib
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, Header
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from shared import identity
 from domains.tax_expert.ais_parser import parse_ais_pdf
 from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownCodeError
 from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.broker_parser import parse_zerodha_tax_pnl
 from domains.tax_expert.reconciliation import reconcile_trades, _normalize
-from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_pan, update_ais_data
+from domains.tax_expert.tax_sessions import (
+    create_tax_session, get_tax_session, get_sessions_by_user,
+    delete_tax_session, update_ais_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +33,11 @@ router = APIRouter()
 def parse_ais(
     file: UploadFile = File(...),
     broker_file: Optional[UploadFile] = File(None),
-    x_user_pan: str = Header(None),
 ):
     """Parse an AIS PDF and create a tax computation session.
 
     Deliberately a sync `def`, not `async def`: every call below (camelot table
-    extraction, broker parsing, reconciliation, the SQLite write) is blocking
+    extraction, broker parsing, reconciliation, the database write) is blocking
     CPU-bound work taking seconds. Under `async def` it ran directly on the
     event loop and froze the entire single-worker API — including /health, which
     could fail Render's health check mid-upload. As a sync def, FastAPI runs it
@@ -87,7 +90,7 @@ def parse_ais(
             logger.info(f"Failed to parse broker file: {e}")
             pass
 
-    session_id = create_tax_session(ais_data, pan_id=x_user_pan, flags=reconciliation_flags)
+    session_id = create_tax_session(ais_data, flags=reconciliation_flags)
 
     # Compute initial tax (New Regime by default). Routed through the cache so the
     # dashboard's immediate follow-up GET /tax/summary?regime=new is a hit rather
@@ -265,8 +268,40 @@ def reconcile_broker(
 
 
 @router.get("/tax-history")
-def get_tax_history(x_user_pan: str = Header(None)):
-    """Get all tax sessions for the current user."""
-    if not x_user_pan:
-        return {"sessions": []}
-    return {"sessions": get_sessions_by_pan(x_user_pan)}
+def get_tax_history():
+    """Get all tax sessions for the current user.
+
+    The PAN comes from the request-scoped identity rather than the raw header, so
+    it is normalized the same way every ownership check in the app normalizes it.
+    Reading `x_user_pan` directly meant a lower-case or padded header silently
+    matched nothing, and an absent one returned an empty list rather than a 401 -
+    indistinguishable, to the client, from "you have no saved sessions".
+    """
+    caller = identity.current_user_id()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Sign in to view your tax history.")
+    return {"sessions": get_sessions_by_user(caller)}
+
+
+@router.delete("/tax-history/{session_id}")
+def delete_tax_history_entry(session_id: str):
+    """
+    Delete one of the caller's own tax sessions.
+
+    Mirrors DELETE /history/{session_id} on the mutual-funds side, which had no tax
+    equivalent - `delete_tax_session` existed but was only ever reached from logout,
+    so a user could accumulate sessions with no way to remove one.
+
+    404 rather than 403 when the session belongs to someone else: a 403 confirms it
+    exists, which turns id guessing into an enumeration oracle.
+    """
+    caller = identity.current_user_id()
+    if not caller:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    # get_tax_session applies the ownership check and returns None either way.
+    if get_tax_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="Tax session not found.")
+
+    delete_tax_session(session_id)
+    return {"status": "success", "deleted_session_id": session_id}

@@ -16,6 +16,14 @@ import pytest
 from domains.mutual_funds import sessions
 from domains.mutual_funds.sessions import _compact_dtypes, df_to_records
 
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
+
 
 # ---------------------------------------------------------------------------
 # df_to_records equivalence
