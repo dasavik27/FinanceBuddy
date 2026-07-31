@@ -7,24 +7,26 @@ mistaken for done.
 
 ## Authentication
 
-Two credentials are accepted, and they resolve to the same account:
+One credential: `Authorization: Bearer <OIDC id token>`, verified against the
+provider's JWKS in `shared/oidc.py`. There is no PAN-based sign-in and no PAN header
+accepted anywhere — `POST /auth/login`, `users.resolve_legacy_pan` and the
+middleware's PAN branch were removed rather than deprecated, since there is no
+existing session or stored login to keep working.
 
-| Credential | Status |
-|---|---|
-| `Authorization: Bearer <OIDC id token>` | Verified against the provider's JWKS |
-| `X-User-PAN: <pan>` | **Legacy.** Identification only, no proof of possession |
+Verification: signature against a cached JWKS, pinned asymmetric algorithms, and
+required `exp` / `iss` / `aud`. Each of those is a live attack if omitted, and each
+has a test (`tests/test_oidc_verifier.py`). Provider-agnostic — a JWKS URL, an issuer
+and an audience — so Google, Supabase, Auth0 and Cognito are configuration, not code.
 
-Token verification is in `shared/oidc.py`: signature against a cached JWKS, pinned
-asymmetric algorithms, and required `exp` / `iss` / `aud`. Each of those is a live
-attack if omitted, and each has a test. Provider-agnostic — a JWKS URL, an issuer and
-an audience — so Google, Supabase, Auth0 and Cognito are configuration, not code.
+An account with no token cannot reach anything: every route below the middleware
+either 401s on an anonymous caller or treats the request as unowned data with nobody
+to protect (`identity.owns_record`).
 
 ### PAN is no longer identity
 
-This was the largest open item in this file and it is now closed structurally rather
-than mitigated. Ownership is `users.id`, a uuid this application issues. PAN moved to
-`profiles.pan`, where it is still the CAS PDF password default and the AIS matching
-key, but decides nothing about access.
+Ownership is `users.id`, a uuid this application issues. PAN moved to `profiles.pan`
+— still the CAS PDF password default and the AIS matching key, set once by the user
+after signing in via `PUT /auth/profile/pan` — but it decides nothing about access.
 
 The consequence worth stating plainly: **two accounts may hold the same PAN and
 cannot see each other's data.** `test_pan_is_not_identity` pins it.
@@ -34,13 +36,7 @@ cannot see each other's data.** `test_pan_is_not_identity` pins it.
 | One user reading another's session by holding a `session_id` | Closed |
 | `/accounts/summary` enumerating every user on the deployment | Closed |
 | Purging another user's data | Closed — `DELETE /accounts/me` takes no target |
-| A caller who knows a PAN impersonating its owner | Closed *for token sign-in* |
-| The same, for the legacy PAN header | **Open while the header is enabled** |
-
-The legacy header exists so the Postgres migration and the switch to real sign-in
-stayed separately reversible. It is removed by deleting `users.resolve_legacy_pan`,
-the middleware's PAN branch, and `POST /auth/login`. **Until then, the row above is
-still open** — a deployment that has finished migrating should turn it off.
+| A caller who knows a PAN impersonating its owner | Closed — there is no PAN credential to present |
 
 ## Storage is durable, and that is the current open item
 
@@ -156,16 +152,12 @@ user-derived payload with a market-data type.
 
 ## Known-open items
 
-1. **Data at rest is not encrypted** (above). Now the largest item, because storage
-   became durable. Gates using this with real data.
-2. **The legacy `X-User-PAN` header is still accepted.** Anyone who knows a PAN can
-   present it. It is kept only until the frontend sends tokens everywhere; a finished
-   deployment should remove it.
-3. **`POST /market/config` is still unauthenticated.** It can no longer disable
+1. **Data at rest is not encrypted** (above). The largest remaining item, because
+   storage became durable. Gates using this with real data.
+2. **`POST /market/config` is still unauthenticated.** It can no longer disable
    caching outright — the TTL is floored at 1 minute — but any caller can still lower
-   it and increase upstream load. It should require whatever credential item 1
-   introduces.
-4. **`/health/cache` and `/tax-expert/tax/cache-stats` are unauthenticated.** They leak
+   it and increase upstream load. It should require a signed-in caller.
+3. **`/health/cache` and `/tax-expert/tax/cache-stats` are unauthenticated.** They leak
    no user data — counters only — but do reveal activity volume.
 
 Closed during the pre-production pass, listed so the history is visible: the
@@ -174,5 +166,5 @@ account purge, `Cache-Control: public` on portfolio data, the unlocked tax sessi
 store, destructive tax-session eviction, unpurged `users` rows, unmasked PAN logging,
 the `auth.py` first-login migration that claimed orphaned sessions for whoever logged
 in first after a restart, the body-supplied PAN on `POST /auth/logout` that let anyone
-destroy a named user's tax sessions, and — with the move to `users.id` — PAN itself
-being the owner column.
+destroy a named user's tax sessions, PAN itself being the owner column, and — once
+Google sign-in was in place — the `X-User-PAN` header and `POST /auth/login` entirely.

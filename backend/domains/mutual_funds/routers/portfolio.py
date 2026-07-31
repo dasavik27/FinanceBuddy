@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Header
 from domains.mutual_funds.parser import parse_cas_file
 from domains.mutual_funds.sessions import create_session, get_session
+from shared import identity
 from shared.config import BENCHMARKS
 from shared.cache import MarketCache
 from shared.services.market_indices import clear_benchmark_cache
@@ -22,7 +23,6 @@ router = APIRouter()
 def parse_cas(
     file: UploadFile = File(...),
     password: str = Form(None), # Made optional for testing
-    x_user_pan: str = Header(None),
     x_upload_type: str = Header("mutual_funds")
 ):
     """
@@ -39,12 +39,12 @@ def parse_cas(
     fixed for exactly this reason; this endpoint is the same bug.
     """
     raw = file.file.read()
-    # CAS statements are conventionally password-protected with the investor's own PAN.
-    # If no password is supplied, fall back to the logged-in profile's PAN (X-User-PAN header)
-    # rather than a hardcoded credential.
-    actual_pw = password if password and password.strip() else x_user_pan
+    # CAS statements are conventionally password-protected with the investor's own
+    # PAN. If no password is supplied, fall back to the PAN on the signed-in user's
+    # profile (set via PUT /auth/profile/pan) rather than a hardcoded credential.
+    actual_pw = password if password and password.strip() else identity.current_pan()
     if not actual_pw:
-        raise HTTPException(status_code=400, detail="Password is required (or log in with your PAN so it can be used automatically).")
+        raise HTTPException(status_code=400, detail="Password is required (or set your PAN in your profile so it can be used automatically).")
     df_h, df_t, df_s, err, is_partial, statement_period = parse_cas_file(raw, actual_pw)
 
     if err:

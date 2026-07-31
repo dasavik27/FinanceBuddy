@@ -178,24 +178,18 @@ class DefaultCacheControlMiddleware:
 
 class IdentityMiddleware:
     """
-    Resolves the caller's credential to an account and binds it (shared/identity.py).
+    Resolves the caller's bearer token to an account and binds it (shared/identity.py).
 
     Ownership is enforced deep in the data-access layer rather than per route, so
     the identity has to be available there without threading a parameter through
     every signature. Same ContextVar mechanism as the L0 memo below.
 
-    Two credentials are accepted, in order:
+    One credential: `Authorization: Bearer <id token>`, verified against the
+    provider's JWKS in shared/oidc.py. There is no PAN-based fallback - a PAN is
+    printed on documents and is not something to authenticate with.
 
-      Authorization: Bearer <id token>   verified against the provider's JWKS
-      X-User-PAN: <pan>                  legacy, no proof of possession
-
-    Both end at the same `Caller`, so nothing downstream can tell them apart. The
-    PAN branch exists so the database migration and the switch to real sign-in stay
-    separately reversible; deleting it and the resolver's legacy helper is the whole
-    of its removal.
-
-    Resolution is cached in process (shared/accounts.py) - without that this would
-    add a database round trip to every authenticated request, ahead of the handler.
+    Resolution is cached in process (shared/users.py) - without that this would add
+    a database round trip to every authenticated request, ahead of the handler.
     """
 
     def __init__(self, app):
@@ -203,27 +197,22 @@ class IdentityMiddleware:
         self._verifier = oidc.from_env()
 
     def _caller(self, scope):
+        if self._verifier is None:
+            return None
+
         headers = dict(scope.get("headers", []))
-
         raw_auth = headers.get(b"authorization")
-        if raw_auth:
-            value = raw_auth.decode("latin-1")
-            if value.lower().startswith("bearer ") and self._verifier is not None:
-                principal = self._verifier.verify(value[7:].strip())
-                if principal is not None:
-                    return users.resolve(
-                        principal.issuer, principal.subject, email=principal.email
-                    )
-                # A presented-but-invalid token is anonymous, never a silent fall
-                # through to the weaker header - otherwise an expired token would
-                # quietly downgrade to PAN identification.
-                return None
+        if not raw_auth:
+            return None
 
-        raw_pan = headers.get(b"x-user-pan")
-        if raw_pan:
-            return users.resolve_legacy_pan(raw_pan.decode("latin-1"))
+        value = raw_auth.decode("latin-1")
+        if not value.lower().startswith("bearer "):
+            return None
 
-        return None
+        principal = self._verifier.verify(value[7:].strip())
+        if principal is None:
+            return None
+        return users.resolve(principal.issuer, principal.subject, email=principal.email)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":

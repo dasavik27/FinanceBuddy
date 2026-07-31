@@ -46,19 +46,19 @@ becomes a second of waiting.
 
 ## Authentication
 
-OIDC ID tokens, verified locally against the provider's JWKS. Provider-agnostic:
+OIDC ID tokens, verified locally against the provider's JWKS. There is no PAN-based
+sign-in and no fallback header — **without these set, every request is anonymous and
+the app is unusable**, by design: there is nothing to fall back to.
 
-| Variable | Purpose |
-|---|---|
-| `AUTH_JWKS_URL` | Provider's JWKS endpoint. |
-| `AUTH_ISSUER` | Expected `iss`. |
-| `AUTH_AUDIENCE` | Expected `aud`. |
-| `SUPABASE_URL` | Convenience — the three above are derived from it if unset. |
+| Variable | Required | Purpose |
+|---|---|---|
+| `SUPABASE_URL` | **yes** | Your Supabase project URL. Also derives `AUTH_ISSUER` and `AUTH_JWKS_URL` (as `<url>/auth/v1` and `<url>/auth/v1/.well-known/jwks.json`) and defaults `AUTH_AUDIENCE` to `authenticated`, so this one variable is enough for a Supabase-fronted deployment. |
+| `AUTH_JWKS_URL` | no | Override, for a non-Supabase OIDC provider. |
+| `AUTH_ISSUER` | no | Override. Expected `iss` claim. |
+| `AUTH_AUDIENCE` | no | Override. Expected `aud` claim. |
 
-Unset entirely, token auth is disabled and only the legacy `X-User-PAN` header works.
-That header is identification, not authentication, and exists so the database
-migration and the switch to real sign-in stay separately reversible. Remove it by
-deleting `users.resolve_legacy_pan` and the middleware's PAN branch.
+Provider-agnostic by construction: swapping Google/Supabase for Auth0 or Cognito is
+three environment variables, not a code change — see `shared/oidc.py`.
 
 ## `--workers 1` is not a default, it is a requirement
 

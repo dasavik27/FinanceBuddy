@@ -6,6 +6,16 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+# Set before `from main import app`: IdentityMiddleware builds its verifier
+# (shared.oidc.from_env()) the first time ANY request goes through the app, which
+# can be triggered by an unrelated test file elsewhere in the session. These have to
+# exist from the very start so a real (if fake-shaped) OidcJwtVerifier is always
+# constructed - fake_bearer_auth below patches its verify() method, which works
+# regardless of when the instance was built, but only if it was built at all.
+os.environ.setdefault("AUTH_JWKS_URL", "https://example-test-issuer.invalid/jwks.json")
+os.environ.setdefault("AUTH_ISSUER", "https://example-test-issuer.invalid/auth/v1")
+os.environ.setdefault("AUTH_AUDIENCE", "authenticated")
+
 from main import app
 
 # ---------------------------------------------------------------------------
@@ -89,6 +99,49 @@ def clean_db(db_schema):
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# HTTP-level authentication for route tests
+# ---------------------------------------------------------------------------
+# There is exactly one credential now: Authorization: Bearer <verified OIDC token>.
+# Real signature verification (JWKS fetch, RS256, algorithm pinning, required
+# exp/iss/aud) is exercised for real in test_oidc_verifier.py, which mints and
+# verifies genuine RS256 tokens against a locally-generated key. Route-level tests
+# want a *resolved identity*, not a second run through the crypto path, so
+# OidcJwtVerifier.verify is replaced here with a parser for a fixed test scheme.
+
+TEST_ISSUER = os.environ["AUTH_ISSUER"]
+
+
+@pytest.fixture
+def fake_bearer_auth(monkeypatch):
+    """
+    Returns `header(subject, email="", issuer=TEST_ISSUER) -> {"Authorization": ...}`.
+
+    The fake "token" is `issuer|subject|email` - never a real JWT, and rejected
+    outright by the real verify() if this fixture is not requested, so a test that
+    forgets to authenticate gets a genuine 401 rather than an accidental pass.
+
+    `issuer` defaults to TEST_ISSUER but can be overridden to match whatever a test
+    already passed to `users.resolve(issuer, subject, ...)` directly.
+    """
+    from shared import oidc
+
+    def fake_verify(self, token):
+        if not token or token.count("|") != 2:
+            return None
+        issuer, subject, email = token.split("|")
+        if not issuer or not subject:
+            return None
+        return oidc.Principal(issuer=issuer, subject=subject, email=email or None)
+
+    monkeypatch.setattr(oidc.OidcJwtVerifier, "verify", fake_verify)
+
+    def _header(subject: str, email: str = "", issuer: str = TEST_ISSUER) -> dict:
+        return {"Authorization": f"Bearer {issuer}|{subject}|{email}"}
+
+    return _header
 
 
 # ---------------------------------------------------------------------------

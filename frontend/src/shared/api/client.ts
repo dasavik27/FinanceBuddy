@@ -9,27 +9,16 @@ import type {
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
- * Attach whatever credential we have.
+ * Attach the signed-in user's bearer token.
  *
- * A verified bearer token when signed in with a provider; otherwise the legacy
- * X-User-PAN header, which is identification with no proof of possession and exists
- * only until the migration to real sign-in is finished. The backend accepts both and
- * resolves them to the same account, so this is the only place that needs to know
- * which one is in play.
- *
- * Async because the token is read from the auth client, which refreshes it when it
- * is close to expiry. Caching it here would reintroduce the expired-token logout.
+ * Async because the token comes from the auth client's getSession(), which
+ * refreshes it when it is close to expiry - caching it here would reintroduce the
+ * expired-token logout. There is no PAN fallback: Google is the only credential.
  */
 api.interceptors.request.use(async (config) => {
   const token = await authClient.getAccessToken()
   if (token) {
     config.headers['Authorization'] = `Bearer ${token}`
-    return config
-  }
-
-  const pan = useAppStore.getState().pan
-  if (pan) {
-    config.headers['X-User-PAN'] = pan
   }
   return config
 })

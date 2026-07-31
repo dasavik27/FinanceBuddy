@@ -1,13 +1,8 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
-  Box, Typography, Button, TextField, Alert, CircularProgress,
-  Collapse, GlobalStyles, Paper
+  Box, Typography, Button, Alert, CircularProgress, Collapse, GlobalStyles, Paper,
 } from '@mui/material'
-import LockIcon         from '@mui/icons-material/Lock'
 import TrendingUpIcon   from '@mui/icons-material/TrendingUp'
-import api              from '../api/client'
-import { useAppStore }  from '../store/appStore'
 import authClient       from '../auth/authClient'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
@@ -35,33 +30,17 @@ const landingAnimations = (
 )
 
 export default function Landing() {
-  const [loginPan, setLoginPan] = useState('')
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
-  const setIdentity = useAppStore((s) => s.setIdentity)
-  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
 
   const handleGoogleSignIn = async () => {
     setLoading(true); setError(null)
     try {
-      // Redirects away; nothing after this runs on success.
+      // Redirects away; App.tsx picks up the restored session on return and routes
+      // to /dashboard - there is nothing to do here on success.
       await authClient.signInWithGoogle()
     } catch (e: any) {
       setError(e?.message ?? 'Could not start sign-in.')
-      setLoading(false)
-    }
-  }
-
-  const handleLogin = async () => {
-    if (!loginPan || loginPan.length !== 10) return setError("Please enter a valid 10-character PAN.")
-    setLoading(true); setError(null)
-    try {
-      const res = await api.post('/auth/login', { pan: loginPan })
-      setIdentity({ userId: res.data.user_id, pan: res.data.pan })
-      navigate('/dashboard')
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? 'Failed to login.')
-    } finally {
       setLoading(false)
     }
   }
@@ -120,27 +99,27 @@ export default function Landing() {
             Finance Buddy
           </Typography>
 
-          <Typography 
-            variant="h6" 
-            sx={{ 
-              color: '#38BDF8', 
-              fontWeight: 700, 
-              letterSpacing: '0.15em', 
+          <Typography
+            variant="h6"
+            sx={{
+              color: '#38BDF8',
+              fontWeight: 700,
+              letterSpacing: '0.15em',
               textTransform: 'uppercase',
               mb: 3
             }}
           >
-            One PAN. Total Financial Control.
+            Total Financial Control
           </Typography>
 
           <Typography variant="body1" sx={{ color: '#94A3B8', maxWidth: 600, mx: 'auto', lineHeight: 1.8, fontSize: '1.1rem' }}>
-            Enter your PAN to instantly unlock your unified wealth dashboard. 
+            Sign in to unlock your unified wealth dashboard.
             Experience institutional-grade analytics spanning <strong style={{ color: '#F8FAFC' }}>Indian Stocks, Mutual Funds, and Tax Optimization.</strong>
           </Typography>
         </Box>
       </Box>
 
-      {/* PAN Login Hub */}
+      {/* Sign-in Hub */}
       <Box sx={{
         zIndex: 1, width: '100%', maxWidth: 540,
         animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) 150ms both',
@@ -158,69 +137,29 @@ export default function Landing() {
         >
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
             <Box>
-              <Typography variant="overline" sx={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.1em', display: 'block', mb: 1 }}>
-                SECURE ACCESS HUB
+              <Typography variant="overline" sx={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.1em', display: 'block', mb: 2 }}>
+                SECURE ACCESS
               </Typography>
 
-              {/* Only rendered when a provider is configured. Unconfigured, the PAN
-                  field below is the whole sign-in - which is what every existing
-                  deployment does until VITE_SUPABASE_* is set. */}
-              {authClient.isConfigured && (
-                <>
-                  <Button
-                    fullWidth
-                    onClick={handleGoogleSignIn}
-                    disabled={loading}
-                    startIcon={<GoogleMark />}
-                    sx={{
-                      py: 1.75,
-                      mb: 2,
-                      borderRadius: '16px',
-                      bgcolor: '#fff',
-                      color: '#1F2937',
-                      fontSize: '1rem',
-                      fontWeight: 700,
-                      textTransform: 'none',
-                      '&:hover': { bgcolor: '#F1F5F9' },
-                      '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.4)' },
-                    }}
-                  >
-                    Continue with Google
-                  </Button>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'rgba(255,255,255,0.08)' }} />
-                    <Typography sx={{ color: '#475569', fontSize: '0.75rem', fontWeight: 700 }}>
-                      OR CONTINUE WITH PAN
-                    </Typography>
-                    <Box sx={{ flex: 1, height: '1px', bgcolor: 'rgba(255,255,255,0.08)' }} />
-                  </Box>
-                </>
-              )}
-
-              <TextField
+              <Button
                 fullWidth
-                variant="outlined"
-                value={loginPan}
-                onChange={(e) => setLoginPan(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                placeholder="Enter 10-digit PAN (e.g. ABCDE1234F)"
-                autoComplete="off"
-                InputProps={{
-                  startAdornment: <LockIcon sx={{ color: '#475569', mr: 1.5 }} />,
-                  sx: { 
-                    color: '#fff', 
-                    fontWeight: 700, 
-                    letterSpacing: 2, 
-                    fontSize: '1.1rem',
-                    bgcolor: 'rgba(0,0,0,0.2)',
-                    borderRadius: '16px',
-                    '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.05)' },
-                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.1)' },
-                    '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#38BDF8', borderWidth: 2 }
-                  }
+                onClick={handleGoogleSignIn}
+                disabled={loading}
+                startIcon={loading ? undefined : <GoogleMark />}
+                sx={{
+                  py: 2,
+                  borderRadius: '16px',
+                  bgcolor: '#fff',
+                  color: '#1F2937',
+                  fontSize: '1.05rem',
+                  fontWeight: 700,
+                  textTransform: 'none',
+                  '&:hover': { bgcolor: '#F1F5F9' },
+                  '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.4)' },
                 }}
-              />
+              >
+                {loading ? <CircularProgress size={26} sx={{ color: '#1F2937' }} /> : 'Continue with Google'}
+              </Button>
             </Box>
 
             {/* MUI's own Collapse rather than AnimatePresence: it does the same
@@ -230,32 +169,13 @@ export default function Landing() {
             <Collapse in={!!error} unmountOnExit>
               <Alert severity="error" sx={{ borderRadius: '12px', bgcolor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', '& .MuiAlert-icon': { color: '#EF4444' } }}>{error}</Alert>
             </Collapse>
-
-            <Button
-              variant="contained"
-              fullWidth
-              onClick={handleLogin}
-              disabled={loading}
-              sx={{
-                py: 2,
-                borderRadius: '16px',
-                background: 'linear-gradient(135deg, #0EA5E9 0%, #2563EB 100%)',
-                fontSize: '1.1rem',
-                fontWeight: 800,
-                textTransform: 'none',
-                boxShadow: '0 8px 25px rgba(37, 99, 235, 0.4)',
-                '&:hover': { background: 'linear-gradient(135deg, #0284C7 0%, #1D4ED8 100%)', boxShadow: '0 12px 35px rgba(37, 99, 235, 0.6)' }
-              }}
-            >
-              {loading ? <CircularProgress size={28} sx={{ color: '#fff' }} /> : 'Unlock Finance Buddy'}
-            </Button>
           </Box>
         </Paper>
       </Box>
 
       {/* Footer */}
       <Typography variant="caption" display="block" textAlign="center" sx={{ mt: 8, mb: 2, color: '#475569', zIndex: 1, fontWeight: 600 }}>
-        Finance Buddy v8.0 · SEBI CSCRF 2025 Compliant · Zero Data Retention Architecture
+        Finance Buddy v8.0 · SEBI CSCRF 2025 Compliant
       </Typography>
     </Box>
   )

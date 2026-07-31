@@ -29,15 +29,22 @@ someone refactors these functions later:
 import threading
 
 
-def _as_user(user_id, fn):
+def _as_user(subject, fn):
     """Run fn as an authenticated user.
 
     create_tax_session() takes its owner from the identity scope rather than a
     keyword now: the owner must be the authenticated caller, and a parameter is
     something a request could otherwise assert for itself.
+
+    Resolves a real backing account for `subject` rather than fabricating a Caller
+    with an arbitrary string: `sessions.user_id` is a uuid with a foreign key to
+    `users(id)`, so an unresolved id fails at the database - a persist error deep in
+    a background thread - rather than surfacing where the mistake actually is.
     """
-    from shared import identity
-    with identity.identity_scope(identity.Caller(user_id=str(user_id))):
+    from shared import identity, users
+    from tests.conftest import TEST_ISSUER
+    caller = users.resolve(TEST_ISSUER, str(subject))
+    with identity.identity_scope(caller):
         return fn()
 
 
@@ -55,8 +62,15 @@ pytestmark = requires_db
 
 
 @pytest.fixture(autouse=True)
-def small_store(monkeypatch):
-    """A tight cap so eviction runs constantly during the test."""
+def small_store(monkeypatch, clean_db):
+    """
+    A tight cap so eviction runs constantly during the test.
+
+    Depends on clean_db (not just requires_db) so every test in this module runs
+    against the throwaway schema: without it, DATABASE_URL is whatever is already in
+    the environment - the production DSN on a developer machine - since nothing else
+    in this file would otherwise redirect it.
+    """
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 4)
     yield
     tax_sessions.clear_all()

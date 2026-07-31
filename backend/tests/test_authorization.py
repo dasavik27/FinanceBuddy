@@ -25,7 +25,7 @@ from main import app
 from shared import db, identity, storage, users
 from shared.identity import Caller
 
-from tests.conftest import requires_db
+from tests.conftest import requires_db, TEST_ISSUER
 
 pytestmark = requires_db
 
@@ -33,17 +33,19 @@ pytestmark = requires_db
 PAN_A = "AAAAA1111A"
 PAN_B = "BBBBB2222B"
 
-ISSUER = "https://example-issuer.test/auth/v1"
+ISSUER = TEST_ISSUER
+SUBJECT_A = "subject-a"
+SUBJECT_B = "subject-b"
 
 
 @pytest.fixture
 def user_a(clean_db):
-    return users.resolve(ISSUER, "subject-a", email="a@example.test", pan=PAN_A)
+    return users.resolve(ISSUER, SUBJECT_A, email="a@example.test", pan=PAN_A)
 
 
 @pytest.fixture
 def user_b(clean_db):
-    return users.resolve(ISSUER, "subject-b", email="b@example.test", pan=PAN_B)
+    return users.resolve(ISSUER, SUBJECT_B, email="b@example.test", pan=PAN_B)
 
 
 @pytest.fixture(autouse=True)
@@ -88,11 +90,6 @@ def _save(owner_id, df_t: pd.DataFrame, fund: str = "Test Fund") -> str:
 
 def _as(caller: Caller):
     return identity.identity_scope(caller)
-
-
-def _headers(caller: Caller) -> dict:
-    """Authenticate over HTTP. Still the legacy PAN header until the frontend moves."""
-    return {"X-User-PAN": caller.pan}
 
 
 # ── the identity model itself ─────────────────────────────────────────────────
@@ -308,11 +305,11 @@ def test_purge_removes_the_account_row_too(user_a):
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
-def test_accounts_summary_only_returns_the_callers_sessions(user_a, user_b, client):
+def test_accounts_summary_only_returns_the_callers_sessions(user_a, user_b, client, fake_bearer_auth):
     _save(user_a.user_id, _ledger("2024-07-01"), "A's Fund")
     _save(user_b.user_id, _ledger("2024-07-02"), "B's Fund")
 
-    resp = client.get("/accounts/summary", headers=_headers(user_a))
+    resp = client.get("/accounts/summary", headers=fake_bearer_auth(SUBJECT_A))
     assert resp.status_code == 200
 
     ids = {account["user_id"] for account in resp.json()["accounts"]}
@@ -323,7 +320,7 @@ def test_accounts_summary_requires_identity(client, clean_db):
     assert client.get("/accounts/summary").status_code == 401
 
 
-def test_purge_only_ever_targets_the_caller(user_a, user_b, client):
+def test_purge_only_ever_targets_the_caller(user_a, user_b, client, fake_bearer_auth):
     """
     The endpoint is /accounts/me and takes no target.
 
@@ -332,7 +329,7 @@ def test_purge_only_ever_targets_the_caller(user_a, user_b, client):
     """
     _save(user_b.user_id, _ledger("2024-08-01"))
 
-    assert client.delete("/accounts/me", headers=_headers(user_a)).status_code == 200
+    assert client.delete("/accounts/me", headers=fake_bearer_auth(SUBJECT_A)).status_code == 200
 
     with db.connect() as conn:
         assert conn.execute(
@@ -356,25 +353,26 @@ def _make_tax_session(caller: Caller, name: str = "Test User") -> str:
         })
 
 
-def test_logout_cannot_delete_another_users_tax_sessions(user_a, user_b, client):
+def test_logout_only_ever_affects_the_caller(user_a, user_b, client, fake_bearer_auth):
     """
-    POST /auth/logout took the PAN from the request body and delete_tax_session
-    performed no ownership check, so any caller could name a victim and destroy
-    their tax sessions from memory *and* disk.
+    Logout takes the account from the request identity, full stop - there is no
+    field anywhere in the request that could name a different account. It used to
+    take a PAN from the request body with no ownership check on the delete, so any
+    caller could name a victim and destroy their tax sessions.
     """
     from domains.tax_expert import tax_sessions
 
     victim_sid = _make_tax_session(user_b, name="Victim")
 
-    resp = client.post("/auth/logout", json={"pan": user_b.pan}, headers=_headers(user_a))
+    resp = client.post("/auth/logout", headers=fake_bearer_auth(SUBJECT_A))
     assert resp.status_code == 200
 
     with _as(user_b):
         assert tax_sessions.get_tax_session(victim_sid) is not None, \
-            "logout honoured a body-supplied identity and destroyed another user's data"
+            "logging out as one account touched another account's data"
 
 
-def test_logout_does_not_destroy_the_callers_stored_history(user_a, client):
+def test_logout_does_not_destroy_the_callers_stored_history(user_a, client, fake_bearer_auth):
     """
     Signing out evicts from memory only.
 
@@ -384,7 +382,7 @@ def test_logout_does_not_destroy_the_callers_stored_history(user_a, client):
     from domains.tax_expert import tax_sessions
 
     sid = _make_tax_session(user_a)
-    assert client.post("/auth/logout", headers=_headers(user_a)).status_code == 200
+    assert client.post("/auth/logout", headers=fake_bearer_auth(SUBJECT_A)).status_code == 200
 
     with _as(user_a):
         assert tax_sessions.get_tax_session(sid) is not None, \
@@ -392,7 +390,7 @@ def test_logout_does_not_destroy_the_callers_stored_history(user_a, client):
 
 
 def test_logout_requires_identity(client, clean_db):
-    assert client.post("/auth/logout", json={"pan": PAN_A}).status_code == 401
+    assert client.post("/auth/logout").status_code == 401
 
 
 def test_tax_history_requires_identity(client, clean_db):
@@ -400,16 +398,16 @@ def test_tax_history_requires_identity(client, clean_db):
     assert client.get("/tax-expert/tax-history").status_code == 401
 
 
-def test_tax_history_does_not_leak_another_users_sessions(user_a, user_b, client):
+def test_tax_history_does_not_leak_another_users_sessions(user_a, user_b, client, fake_bearer_auth):
     _make_tax_session(user_a, name="A")
     _make_tax_session(user_b, name="B")
 
-    resp = client.get("/tax-expert/tax-history", headers=_headers(user_a))
+    resp = client.get("/tax-expert/tax-history", headers=fake_bearer_auth(SUBJECT_A))
     assert resp.status_code == 200
     assert len(resp.json()["sessions"]) == 1
 
 
-def test_tax_history_finds_sessions_that_are_not_resident(user_a, client):
+def test_tax_history_finds_sessions_that_are_not_resident(user_a, client, fake_bearer_auth):
     """
     The listing is a database query, not a scan of the in-memory store.
 
@@ -422,7 +420,7 @@ def test_tax_history_finds_sessions_that_are_not_resident(user_a, client):
     sid = _make_tax_session(user_a)
     tax_sessions.clear_all()  # nothing resident
 
-    resp = client.get("/tax-expert/tax-history", headers=_headers(user_a))
+    resp = client.get("/tax-expert/tax-history", headers=fake_bearer_auth(SUBJECT_A))
     assert resp.status_code == 200
     sessions = resp.json()["sessions"]
     assert [s["session_id"] for s in sessions] == [sid]
@@ -451,7 +449,7 @@ def test_owns_record_trusts_in_process_callers_outside_a_request():
     assert identity.owns_record("anything") is True
 
 
-def test_every_http_request_enters_an_identity_scope(client, clean_db):
+def test_every_http_request_enters_an_identity_scope(client, clean_db, fake_bearer_auth):
     """
     owns_record() grants access to any record when not in a request. That is only
     safe because IdentityMiddleware wraps every HTTP request - so if the middleware
@@ -475,9 +473,8 @@ def test_every_http_request_enters_an_identity_scope(client, clean_db):
         assert probe["in_request"] is True
         assert probe["user_id"] is None, "an unauthenticated request must be anonymous"
 
-        users.resolve(ISSUER, "probe-subject", pan=PAN_A)
-        client.get("/__identity_probe__", headers={"X-User-PAN": PAN_A})
-        assert probe["user_id"] is not None, "a credential must resolve to an account"
+        client.get("/__identity_probe__", headers=fake_bearer_auth("probe-subject"))
+        assert probe["user_id"] is not None, "a verified bearer token must resolve to an account"
     finally:
         app.router.routes = [
             r for r in app.router.routes

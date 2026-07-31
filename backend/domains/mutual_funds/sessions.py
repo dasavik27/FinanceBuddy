@@ -134,11 +134,6 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     Initializes a new portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with AMFI & Morningstar categorization.
     """
-    # Normalize the owner exactly as every read does. The write path used to store the
-    # raw X-User-PAN header while identity.normalize_pan() upper-cases on the way in,
-    # so a lowercase header made a session its own owner could not read: reads compared
-    # "ABCDE1234F" against a stored "abcde1234f" and 404'd. Masked logs rendered both
-    # sides identically, which would have made it undiagnosable in production.
     # The owner is the authenticated caller, never a value the request supplied.
     user_id = identity.current_user_id()
 

@@ -11,7 +11,7 @@ from typing import Optional
 import difflib
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, Header
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from shared import identity
 from domains.tax_expert.ais_parser import parse_ais_pdf
@@ -33,7 +33,6 @@ router = APIRouter()
 def parse_ais(
     file: UploadFile = File(...),
     broker_file: Optional[UploadFile] = File(None),
-    x_user_pan: str = Header(None),
 ):
     """Parse an AIS PDF and create a tax computation session.
 

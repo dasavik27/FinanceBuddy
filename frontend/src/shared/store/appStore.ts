@@ -25,7 +25,6 @@ interface Filters {
 
 interface AppState {
   pan: string | null
-  setPan: (pan: string | null) => void
 
   /** The account id the server issued. Null when signed out. */
   userId: string | null
@@ -53,7 +52,6 @@ interface AppState {
   setSession: (id: string, type: string, data: any) => void
   setSessionById: (id: string, type: string) => void
   clearSession: (type?: string) => void
-  clearAllSessionsByPan: (pan: string) => void
   setFilters: (f: Partial<Filters>) => void
   triggerRefresh: () => void
   logout: () => void
@@ -68,7 +66,6 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       pan: null,
-      setPan: (pan) => set({ pan }),
 
       userId: null,
       email: null,
@@ -171,20 +168,6 @@ export const useAppStore = create<AppState>()(
           }
         }),
         
-      clearAllSessionsByPan: (panToClear: string) => {
-        const state = get()
-        if (state.pan?.toUpperCase() === panToClear.toUpperCase()) {
-            set({
-                pan: null,
-                mfSessionId: null,
-                taxSessionId: null,
-                parseData: null,
-                isPartial: false,
-                lastSynced: Date.now()
-            })
-        }
-      },
-
       logout: () => {
         try {
           // Body intentionally empty: the server takes the account from the request
@@ -263,4 +246,3 @@ export const useTaxSlab = () => useAppStore(s => s.taxSlab)
 export const useSetTaxSlab = () => useAppStore(s => s.setTaxSlab)
 export const useTaxRegime = () => useAppStore(s => s.taxRegime)
 export const useSetTaxRegime = () => useAppStore(s => s.setTaxRegime)
-export const useClearAllSessionsByPan = () => useAppStore(s => s.clearAllSessionsByPan)

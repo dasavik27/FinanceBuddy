@@ -9,11 +9,6 @@ one, is an INSERT into `identities` - no table is re-keyed, and no user loses th
 data. Storing the provider's subject directly as the owner column would make the
 provider impossible to leave, which is the single most expensive kind of coupling to
 undo later.
-
-The legacy PAN header is modelled as just another issuer. It is not special-cased
-anywhere below this module: a PAN-authenticated request produces the same Caller as
-a token-authenticated one, so every downstream authorization check is identical and
-removing PAN login later touches only this file and the middleware.
 """
 
 import logging
@@ -26,10 +21,6 @@ from shared import db, identity
 from shared.identity import Caller
 
 logger = logging.getLogger(__name__)
-
-# Issuer for the pre-OIDC PAN header. A URN rather than a bare word so it cannot
-# collide with a real issuer, which is always an https URL.
-LEGACY_PAN_ISSUER = "urn:financebuddy:legacy-pan"
 
 # ── Resolution cache ──────────────────────────────────────────────────────────
 #
@@ -166,21 +157,6 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
         # denies against any owned row - never accidentally authorized.
         logger.error("[AUTH] could not resolve identity for issuer=%s: %s", issuer, e)
         return None
-
-
-def resolve_legacy_pan(raw_pan: str) -> Optional[Caller]:
-    """
-    The account for a PAN presented via the X-User-PAN header.
-
-    This is identification, not authentication - the header carries no proof of
-    possession. It exists so the Postgres cutover and the switch to real sign-in are
-    separate, independently reversible changes; delete this function and its
-    middleware branch when the frontend sends tokens.
-    """
-    pan = identity.normalize_pan(raw_pan)
-    if not pan:
-        return None
-    return resolve(LEGACY_PAN_ISSUER, pan, pan=pan)
 
 
 def find_pan(user_id: str) -> Optional[str]:

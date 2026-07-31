@@ -9,11 +9,10 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import CachedIcon from '@mui/icons-material/Cached'
 
 import { apiClient } from '../../api/client'
-import { useClearAllSessionsByPan, useLogout } from '../../store/appStore'
+import { useLogout } from '../../store/appStore'
 
 export default function AccountsDashboard() {
   const queryClient = useQueryClient()
-  const clearSessions = useClearAllSessionsByPan()
   const logout = useLogout()
   const [deletePan, setDeletePan] = useState<string | null>(null)
 

@@ -11,22 +11,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-def _as_user(user_id, fn):
+def _as_user(subject, fn):
     """Run fn as an authenticated user.
 
     create_tax_session() takes its owner from the identity scope rather than a
     keyword now: the owner must be the authenticated caller, and a parameter is
     something a request could otherwise assert for itself.
+
+    Resolves a real backing account for `subject` rather than fabricating a Caller
+    with an arbitrary string: `sessions.user_id` is a uuid with a foreign key to
+    `users(id)`, so an unresolved id fails at the database rather than where the
+    mistake actually is.
     """
-    from shared import identity
-    with identity.identity_scope(identity.Caller(user_id=str(user_id))):
+    from shared import identity, users
+    from tests.conftest import TEST_ISSUER
+    caller = users.resolve(TEST_ISSUER, str(subject))
+    with identity.identity_scope(caller):
         return fn()
 
 
 import main
 from domains.tax_expert import computation_cache, tax_sessions
 
-from tests.conftest import requires_db
+from tests.conftest import requires_db, TEST_ISSUER
 
 # Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
 # than failing with a connection error when TEST_DATABASE_URL is unset - see
@@ -34,21 +41,29 @@ from tests.conftest import requires_db
 pytestmark = requires_db
 
 
-
-# A syntactically valid PAN: the identity middleware rejects malformed ones, so the
-# fixture's owner and the client's asserted identity have to be a real PAN shape.
+# The PAN printed inside the AIS document. Unrelated to auth - it is just fixture
+# content - but kept as a real-shaped PAN since the AIS parser downstream validates it.
 TEST_PAN = "ABCDE1234F"
+OWNER_SUBJECT = "phase2-test-subject"
 
 
 @pytest.fixture
-def client():
-    # Sessions below are owned by TEST_PAN, and reading an owned session now requires
-    # asserting that identity - the same header the frontend's axios interceptor sends.
-    return TestClient(main.app, headers={"X-User-PAN": TEST_PAN})
+def owner(clean_db):
+    """The account that owns every session in this file."""
+    from shared import users
+    return users.resolve(TEST_ISSUER, OWNER_SUBJECT, pan=TEST_PAN)
 
 
 @pytest.fixture
-def session_id():
+def client(owner, fake_bearer_auth):
+    # Sessions below are owned by `owner`, and reading an owned session now requires
+    # asserting that identity via a verified bearer token - the same header the
+    # frontend's axios interceptor sends.
+    return TestClient(main.app, headers=fake_bearer_auth(OWNER_SUBJECT))
+
+
+@pytest.fixture
+def session_id(owner):
     """A session whose capital gains exercise grandfathering, Sec 50AA and B/F losses.
 
     Each of these is a rule the old duplicated aggregation in capital_gains.py
@@ -90,7 +105,7 @@ def session_id():
         "cg_real_estate": [], "cg_unlisted": [], "cg_bonds_gold": [],
         "refunds": [{"sr": 1, "amount": 5_000, "financial_year": "2024-25"}],
     }
-    sid = _as_user(TEST_PAN, lambda: tax_sessions.create_tax_session(ais))
+    sid = _as_user(owner.user_id, lambda: tax_sessions.create_tax_session(ais))
     # Brought-forward losses: another rule the old aggregation skipped.
     tax_sessions.update_overrides(sid, {"bf_losses": {"ltcl": 50_000, "stcl": 10_000}})
     yield sid
@@ -213,7 +228,7 @@ def test_session_version_bumps_on_mutation(session_id):
     assert tax_sessions.get_session_version(session_id) > v0
 
 
-def test_lru_bound_caps_resident_sessions(monkeypatch):
+def test_lru_bound_caps_resident_sessions(monkeypatch, clean_db):
     """The store must not grow without bound — that was the 512 MB failure mode."""
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 3)
     created = [
@@ -228,7 +243,7 @@ def test_lru_bound_caps_resident_sessions(monkeypatch):
         tax_sessions.delete_tax_session(sid)
 
 
-def test_eviction_is_not_data_loss(monkeypatch):
+def test_eviction_is_not_data_loss(monkeypatch, clean_db):
     """
     An LRU-evicted session must still be retrievable.
 
@@ -238,8 +253,9 @@ def test_eviction_is_not_data_loss(monkeypatch):
     resident cap safe.
     """
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 2)
-    first = _as_user("EVICT0"
-    , lambda: tax_sessions.create_tax_session({"personal": {"pan": "EVICT0"}, "fy": "2025-26"}))
+    first = _as_user(
+        "EVICT0", lambda: tax_sessions.create_tax_session({"personal": {"pan": "EVICT0"}, "fy": "2025-26"})
+    )
     later = [
         _as_user(f"EVICT{i}", lambda: tax_sessions.create_tax_session({"personal": {"pan": f"EVICT{i}"}}))
         for i in range(1, 4)
@@ -256,13 +272,14 @@ def test_eviction_is_not_data_loss(monkeypatch):
         tax_sessions.delete_tax_session(sid)
 
 
-def test_clear_all_does_not_brick_the_store():
+def test_clear_all_does_not_brick_the_store(clean_db):
     """
     clear_all() left _sessions_loaded True, so _ensure_loaded() never reloaded and
     every session 404'd until the process restarted - even with rows intact on disk.
     """
-    sid = _as_user("CLEARME"
-    , lambda: tax_sessions.create_tax_session({"personal": {"pan": "CLEARME"}, "fy": "2025-26"}))
+    sid = _as_user(
+        "CLEARME", lambda: tax_sessions.create_tax_session({"personal": {"pan": "CLEARME"}, "fy": "2025-26"})
+    )
     tax_sessions.clear_all()
     assert tax_sessions.get_tax_session(sid) is not None, "store did not recover after clear_all()"
     tax_sessions.delete_tax_session(sid)
