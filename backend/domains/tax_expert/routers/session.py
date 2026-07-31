@@ -19,7 +19,7 @@ from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownC
 from domains.tax_expert.computation_cache import get_computation
 from domains.tax_expert.broker_parser import parse_zerodha_tax_pnl
 from domains.tax_expert.reconciliation import reconcile_trades, _normalize
-from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_pan, update_ais_data
+from domains.tax_expert.tax_sessions import create_tax_session, get_tax_session, get_sessions_by_user, update_ais_data
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def parse_ais(
             logger.info(f"Failed to parse broker file: {e}")
             pass
 
-    session_id = create_tax_session(ais_data, pan_id=x_user_pan, flags=reconciliation_flags)
+    session_id = create_tax_session(ais_data, flags=reconciliation_flags)
 
     # Compute initial tax (New Regime by default). Routed through the cache so the
     # dashboard's immediate follow-up GET /tax/summary?regime=new is a hit rather
@@ -275,7 +275,7 @@ def get_tax_history():
     matched nothing, and an absent one returned an empty list rather than a 401 -
     indistinguishable, to the client, from "you have no saved sessions".
     """
-    caller = identity.current_pan()
+    caller = identity.current_user_id()
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in to view your tax history.")
-    return {"sessions": get_sessions_by_pan(caller)}
+    return {"sessions": get_sessions_by_user(caller)}

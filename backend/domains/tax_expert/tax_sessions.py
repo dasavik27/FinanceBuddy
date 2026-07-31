@@ -31,6 +31,8 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
+from psycopg.types.json import Jsonb
+
 from shared import db, identity
 from shared.identity import mask_pan
 
@@ -55,31 +57,6 @@ logger = logging.getLogger(__name__)
 MAX_SESSIONS = int(os.getenv("FINANCEBUDDY_MAX_TAX_SESSIONS", "8"))
 SESSION_TTL_SECONDS = int(os.getenv("FINANCEBUDDY_TAX_SESSION_TTL", str(24 * 3600)))
 
-
-def _init_db():
-    try:
-        with db.connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tax_sessions (
-                    session_id TEXT PRIMARY KEY,
-                    pan TEXT,
-                    data TEXT
-                )
-            """)
-            # Migrate older databases that predate the timestamp columns. Without a
-            # created_at/updated_at nothing could ever expire by age, which is why
-            # the store grew without bound.
-            existing = {row[1] for row in conn.execute("PRAGMA table_info(tax_sessions)")}
-            if "created_at" not in existing:
-                conn.execute("ALTER TABLE tax_sessions ADD COLUMN created_at REAL DEFAULT 0")
-            if "updated_at" not in existing:
-                conn.execute("ALTER TABLE tax_sessions ADD COLUMN updated_at REAL DEFAULT 0")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tax_sessions_pan ON tax_sessions(pan)")
-    except Exception as e:
-        logger.error(f"Failed to initialize tax_sessions schema: {e}")
-
-
-_init_db()
 
 # In-memory record of truth. OrderedDict so eviction can be least-recently-used.
 #
@@ -122,10 +99,12 @@ def _load_from_disk_locked():
     try:
         with db.connect() as conn:
             rows = conn.execute(
-                db.sql(
-                    "SELECT session_id, data, updated_at FROM tax_sessions "
-                    "ORDER BY updated_at DESC LIMIT ?"
-                ),
+                """
+                SELECT session_id, data, EXTRACT(EPOCH FROM updated_at)
+                FROM tax_payloads
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
                 (MAX_SESSIONS,),
             ).fetchall()
             expired = []
@@ -135,7 +114,9 @@ def _load_from_disk_locked():
                     expired.append(sid)
                     continue
                 try:
-                    session = json.loads(blob)
+                    session = json.loads(blob) if isinstance(blob, (str, bytes)) else blob
+                    if not isinstance(session, dict):
+                        raise TypeError(f"expected an object, got {type(session).__name__}")
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Discarding unreadable tax session {sid}: {e}")
                     expired.append(sid)
@@ -145,7 +126,7 @@ def _load_from_disk_locked():
                 _tax_sessions[sid] = session
             if expired:
                 conn.executemany(
-                    db.sql("DELETE FROM tax_sessions WHERE session_id = ?"),
+                    "DELETE FROM sessions WHERE session_id = %s",
                     [(s,) for s in expired],
                 )
                 logger.info(f"Purged {len(expired)} expired/unreadable tax session(s).")
@@ -170,7 +151,10 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     try:
         with db.connect() as conn:
             row = conn.execute(
-                db.sql("SELECT data, updated_at FROM tax_sessions WHERE session_id = ?"),
+                """
+                SELECT data, EXTRACT(EPOCH FROM updated_at)
+                FROM tax_payloads WHERE session_id = %s
+                """,
                 (session_id,),
             ).fetchone()
     except Exception as e:
@@ -184,7 +168,9 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     if updated_at and updated_at < time.time() - SESSION_TTL_SECONDS:
         return None
     try:
-        session = json.loads(blob)
+        session = json.loads(blob) if isinstance(blob, (str, bytes)) else blob
+        if not isinstance(session, dict):
+            raise TypeError(f"expected an object, got {type(session).__name__}")
     except (ValueError, TypeError) as e:
         logger.warning(f"Discarding unreadable tax session {session_id}: {e}")
         return None
@@ -206,40 +192,56 @@ def _rehydrate(session_id: str) -> Optional[dict]:
 
 def purge_expired_from_disk() -> int:
     """
-    Delete rows past their TTL. Returns how many were removed.
+    No longer deletes anything. Returns 0.
 
-    Needed now that eviction no longer deletes from disk: without a periodic sweep
-    the table would only ever grow between restarts. Called from the session GC
-    daemon in domains/mutual_funds/sessions.py, which already runs every 10 minutes.
+    This swept away tax sessions older than SESSION_TTL_SECONDS. It made sense when
+    the filesystem was ephemeral: the table could only grow between restarts and
+    nothing in it survived a deploy anyway.
+
+    Storage is durable now and a parsed AIS is the user's data, so a timer that
+    silently deletes it is data loss rather than housekeeping. The in-memory TTL in
+    _evict_locked() still applies - that is a cache bound, and an evicted session is
+    restored by _rehydrate() on next access.
+
+    Kept as a no-op rather than deleted because the GC daemon in
+    domains/mutual_funds/sessions.py calls it on every sweep; removing the call and
+    the function is a separate tidy-up.
     """
-    cutoff = time.time() - SESSION_TTL_SECONDS
-    try:
-        with db.connect() as conn:
-            cursor = conn.execute(
-                db.sql("DELETE FROM tax_sessions WHERE updated_at > 0 AND updated_at < ?"),
-                (cutoff,),
-            )
-            removed = cursor.rowcount or 0
-        if removed:
-            logger.info(f"Swept {removed} expired tax session row(s) from disk.")
-        return removed
-    except Exception as e:
-        logger.error(f"Failed to sweep expired tax sessions: {e}")
-        return 0
+    return 0
+
+
+def _summarise(session: dict) -> dict:
+    """
+    The few fields the history timeline needs, denormalised onto the registry row.
+
+    Without this, listing a user's tax sessions means decompressing and parsing every
+    payload just to print a heading. The mutual-funds side has carried
+    total_value/num_funds on its registry row for exactly this reason.
+    """
+    ais = session.get("ais_data") or {}
+    return {
+        "name": (ais.get("personal") or {}).get("name", ""),
+        "fy": ais.get("fy", ""),
+        "gross_salary": (ais.get("salary") or {}).get("gross", 0),
+    }
 
 
 def _persist_one(session_id: str):
     """
-    Write a single session through to SQLite.
+    Write a single session through to the database.
+
+    Two rows, one transaction: the registry entry in `sessions` (which is what makes
+    a tax session visible to /history alongside CAS uploads) and the document itself
+    in `tax_payloads`. They used to live in a private `tax_sessions` table that no
+    shared query could see.
 
     The top-level snapshot is taken under the lock: serializing the live dict meant
     json.dumps could iterate it while another thread replaced a key, raising
-    "dictionary changed size during iteration". A shallow copy is enough here because
-    every mutation path assigns a whole top-level value rather than editing nested
+    "dictionary changed size during iteration". A shallow copy is enough because every
+    mutation path assigns a whole top-level value rather than editing nested
     structures in place.
 
-    The dumps and the write happen outside the lock, so disk I/O does not block
-    other readers.
+    The dumps and the write happen outside the lock, so I/O does not block readers.
     """
     with _SESSIONS_LOCK:
         session = _tax_sessions.get(session_id)
@@ -249,20 +251,32 @@ def _persist_one(session_id: str):
         # stored blob; `_version` is kept so the computation cache stays correct
         # across a reload.
         snapshot = {k: v for k, v in session.items() if k != "_last_access"}
-        pan = session.get("pan", "")
+        user_id = session.get("user_id") or None
+        version = session.get("_version", 0)
+        summary = _summarise(session)
 
     try:
-        now = time.time()
-        blob = json.dumps(snapshot, ensure_ascii=False, default=str)
         with db.connect() as conn:
             conn.execute(
-                db.sql("""
-                    INSERT INTO tax_sessions (session_id, pan, data, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        data=excluded.data, pan=excluded.pan, updated_at=excluded.updated_at
-                """),
-                (session_id, pan, blob, now, now),
+                """
+                INSERT INTO sessions (session_id, user_id, upload_type, summary, updated_at)
+                VALUES (%s, %s, 'tax_expert', %s, now())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    summary = EXCLUDED.summary,
+                    updated_at = now()
+                """,
+                (session_id, user_id, Jsonb(summary)),
+            )
+            conn.execute(
+                """
+                INSERT INTO tax_payloads (session_id, data, version, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    data = EXCLUDED.data,
+                    version = EXCLUDED.version,
+                    updated_at = now()
+                """,
+                (session_id, Jsonb(snapshot), version),
             )
     except Exception as e:
         logger.error(f"Failed to persist tax session {session_id}: {e}")
@@ -274,7 +288,7 @@ def _delete_many(session_ids: list):
     try:
         with db.connect() as conn:
             conn.executemany(
-                db.sql("DELETE FROM tax_sessions WHERE session_id = ?"),
+                "DELETE FROM sessions WHERE session_id = %s",
                 [(s,) for s in session_ids],
             )
     except Exception as e:
@@ -363,34 +377,32 @@ def get_session_version(session_id: str) -> int:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def create_tax_session(ais_data: dict, pan_id: Optional[str] = None, flags: Optional[dict] = None) -> str:
-    """Create a new tax session from parsed AIS data and persist it."""
+def create_tax_session(ais_data: dict, flags: Optional[dict] = None) -> str:
+    """Create a new tax session from parsed AIS data and persist it.
+
+    The owner is the authenticated caller, full stop. It used to be derived from a
+    header, then the identity, then finally the PAN printed inside the uploaded PDF -
+    and that last fallback meant an anonymous upload was owned by whoever the document
+    named, so the person who uploaded it could not read it back. That surfaced as a
+    500 after a multi-second parse.
+    """
     _ensure_loaded()
     session_id = str(uuid.uuid4())
-    # Normalized, and preferring the *caller's* identity over the PAN printed in the
-    # document. Two bugs came from not doing this: a raw lowercase header stored an
-    # owner that no normalized read could match, and falling back to the AIS PDF's own
-    # PAN made an anonymous upload immediately unreadable by the anonymous uploader -
-    # which surfaced as a 500 after a multi-second parse.
-    pan = (
-        identity.normalize_pan(pan_id)
-        or identity.current_pan()
-        or identity.normalize_pan(ais_data.get("personal", {}).get("pan", ""))
-        or ""
-    )
+    user_id = identity.current_user_id()
+
     with _SESSIONS_LOCK:
         _tax_sessions[session_id] = {
             "ais_data": ais_data,
             "deductions": {},
             "overrides": {},
-            "pan": pan,
+            "user_id": user_id,
             "reconciliation_flags": flags or {},
             "_version": 0,
             "_last_access": time.time(),
         }
         _evict_locked()
     _persist_one(session_id)
-    logger.info(f"Created tax session {session_id} for PAN {mask_pan(pan)}")
+    logger.info("Created tax session %s for user %s", session_id, user_id)
     return session_id
 
 
@@ -404,11 +416,11 @@ def _owned_or_none(session: Optional[dict]) -> Optional[dict]:
     """
     if session is None:
         return None
-    owner = session.get("pan") or None
+    owner = session.get("user_id") or None
     if not identity.owns_record(owner):
         logger.warning(
             "[AUTHZ] %s denied access to tax session owned by %s",
-            mask_pan(identity.current_pan()), mask_pan(owner),
+            identity.current_user_id(), owner,
         )
         return None
     return session
@@ -551,24 +563,71 @@ def list_sessions() -> list:
         return list(_tax_sessions.items())
 
 
-def get_sessions_by_pan(pan: str) -> list:
-    """Get all tax sessions for a given PAN."""
-    _ensure_loaded()
-    target = pan.upper()
+def get_sessions_by_user(user_id: str) -> list:
+    """
+    Every tax session belonging to a user, newest first.
+
+    Queried from the registry, not from memory. The previous version scanned the
+    resident dict - capped at 8 entries, and populated at cold start by the newest
+    rows *across all users* - so a user's older sessions existed on disk and were
+    simply invisible to their own history. Anything LRU-evicted vanished from the
+    list too, despite still being restorable.
+
+    Reads the denormalised `summary` rather than the payload, so listing does not
+    decompress and parse every stored AIS document just to render headings.
+    """
+    if not user_id:
+        return []
+    try:
+        with db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, created_at, updated_at, summary
+                FROM sessions
+                WHERE user_id = %s AND upload_type = 'tax_expert'
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+    except Exception as e:
+        logger.error(f"Failed to list tax sessions: {e}")
+        return []
+
     results = []
-    with _SESSIONS_LOCK:
-        snapshot = list(_tax_sessions.items())
-    for sid, data in snapshot:
-        if data.get("pan", "").upper() == target:
-            ais = data.get("ais_data", {})
-            results.append({
-                "session_id": sid,
-                "pan": data.get("pan", ""),
-                "name": ais.get("personal", {}).get("name", ""),
-                "fy": ais.get("fy", ""),
-                "gross_salary": ais.get("salary", {}).get("gross", 0),
-            })
+    for session_id, created_at, updated_at, summary in rows:
+        summary = summary or {}
+        results.append({
+            "session_id": session_id,
+            # Timestamps were absent from this response entirely, which is why the
+            # accounts summary hardcoded created_at: None and no timeline could sort.
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "name": summary.get("name", ""),
+            "fy": summary.get("fy", ""),
+            "gross_salary": summary.get("gross_salary", 0),
+        })
     return results
+
+
+def evict_for_user(user_id: str) -> int:
+    """
+    Drop a user's sessions from memory, leaving the stored copies alone.
+
+    This is what logout calls. It used to delete from disk as well, which made
+    signing out destroy the user's tax history - tolerable when the filesystem was
+    wiped on every deploy, and straightforward data loss now that it is not. An
+    evicted session is restored by _rehydrate() on next access.
+    """
+    with _SESSIONS_LOCK:
+        doomed = [
+            sid for sid, data in _tax_sessions.items()
+            if str(data.get("user_id") or "") == str(user_id)
+        ]
+        for sid in doomed:
+            del _tax_sessions[sid]
+    for sid in doomed:
+        _drop_cached_computations(sid)
+    return len(doomed)
 
 
 def update_itr_data(session_id: str, itr_data: dict) -> bool:
@@ -587,33 +646,8 @@ def get_itr_data(session_id: str) -> Optional[dict]:
     return session.get("itr_data") if session else None
 
 
-def delete_all_for_pan(pan: str) -> int:
-    """
-    Delete all tax sessions for a given PAN from memory and disk.
-
-    Deletes by PAN directly in SQL as well as in memory, so sessions that are on
-    disk but not currently resident (LRU-evicted) are also removed - otherwise a
-    purge would silently leave them behind to be rehydrated later.
-    """
-    _ensure_loaded()
-    target = pan.upper()
-    with _SESSIONS_LOCK:
-        keys_to_delete = [
-            sid for sid, data in _tax_sessions.items()
-            if data.get("pan", "").upper() == target
-        ]
-        for sid in keys_to_delete:
-            del _tax_sessions[sid]
-    for sid in keys_to_delete:
-        _drop_cached_computations(sid)
-
-    try:
-        with db.connect() as conn:
-            cursor = conn.execute(
-                db.sql("DELETE FROM tax_sessions WHERE UPPER(pan) = ?"), (target,)
-            )
-            removed = max(cursor.rowcount or 0, len(keys_to_delete))
-    except Exception as e:
-        logger.error(f"Failed to delete tax sessions for PAN {mask_pan(pan)}: {e}")
-        removed = len(keys_to_delete)
-    return removed
+# delete_all_for_pan() is gone. A purge deletes the `users` row, and sessions ->
+# tax_payloads cascade from it, so there is nothing domain-specific left to
+# coordinate. The accounts router had to call it separately only because the tax
+# table was invisible to shared storage; evict_for_user() above covers the
+# memory half.

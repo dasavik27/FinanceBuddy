@@ -52,7 +52,7 @@ def parse_cas(
     if df_h.empty:
         raise HTTPException(status_code=422, detail="No active holdings found in CAS.")
 
-    session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, pan_id=x_user_pan, upload_type=x_upload_type)
+    session_id = create_session(df_h, df_t, df_s, is_partial, statement_period, upload_type=x_upload_type)
     
     return {
         "session_id": session_id,

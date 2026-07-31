@@ -10,8 +10,29 @@ Covers the three behaviours the Phase 2 refactor is responsible for:
 import pytest
 from fastapi.testclient import TestClient
 
+
+def _as_user(user_id, fn):
+    """Run fn as an authenticated user.
+
+    create_tax_session() takes its owner from the identity scope rather than a
+    keyword now: the owner must be the authenticated caller, and a parameter is
+    something a request could otherwise assert for itself.
+    """
+    from shared import identity
+    with identity.identity_scope(identity.Caller(user_id=str(user_id))):
+        return fn()
+
+
 import main
 from domains.tax_expert import computation_cache, tax_sessions
+
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
 
 
 # A syntactically valid PAN: the identity middleware rejects malformed ones, so the
@@ -69,7 +90,7 @@ def session_id():
         "cg_real_estate": [], "cg_unlisted": [], "cg_bonds_gold": [],
         "refunds": [{"sr": 1, "amount": 5_000, "financial_year": "2024-25"}],
     }
-    sid = tax_sessions.create_tax_session(ais, pan_id=TEST_PAN)
+    sid = _as_user(TEST_PAN, lambda: tax_sessions.create_tax_session(ais))
     # Brought-forward losses: another rule the old aggregation skipped.
     tax_sessions.update_overrides(sid, {"bf_losses": {"ltcl": 50_000, "stcl": 10_000}})
     yield sid
@@ -196,7 +217,7 @@ def test_lru_bound_caps_resident_sessions(monkeypatch):
     """The store must not grow without bound — that was the 512 MB failure mode."""
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 3)
     created = [
-        tax_sessions.create_tax_session({"personal": {"pan": f"BOUND{i}"}}, pan_id=f"BOUND{i}")
+        _as_user(f"BOUND{i}", lambda: tax_sessions.create_tax_session({"personal": {"pan": f"BOUND{i}"}}))
         for i in range(6)
     ]
     # Only the cap's worth stay in memory...
@@ -217,11 +238,10 @@ def test_eviction_is_not_data_loss(monkeypatch):
     resident cap safe.
     """
     monkeypatch.setattr(tax_sessions, "MAX_SESSIONS", 2)
-    first = tax_sessions.create_tax_session(
-        {"personal": {"pan": "EVICT0"}, "fy": "2025-26"}, pan_id="EVICT0"
-    )
+    first = _as_user("EVICT0"
+    , lambda: tax_sessions.create_tax_session({"personal": {"pan": "EVICT0"}, "fy": "2025-26"}))
     later = [
-        tax_sessions.create_tax_session({"personal": {"pan": f"EVICT{i}"}}, pan_id=f"EVICT{i}")
+        _as_user(f"EVICT{i}", lambda: tax_sessions.create_tax_session({"personal": {"pan": f"EVICT{i}"}}))
         for i in range(1, 4)
     ]
 
@@ -241,9 +261,8 @@ def test_clear_all_does_not_brick_the_store():
     clear_all() left _sessions_loaded True, so _ensure_loaded() never reloaded and
     every session 404'd until the process restarted - even with rows intact on disk.
     """
-    sid = tax_sessions.create_tax_session(
-        {"personal": {"pan": "CLEARME"}, "fy": "2025-26"}, pan_id="CLEARME"
-    )
+    sid = _as_user("CLEARME"
+    , lambda: tax_sessions.create_tax_session({"personal": {"pan": "CLEARME"}, "fy": "2025-26"}))
     tax_sessions.clear_all()
     assert tax_sessions.get_tax_session(sid) is not None, "store did not recover after clear_all()"
     tax_sessions.delete_tax_session(sid)

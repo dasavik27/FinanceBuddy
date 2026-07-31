@@ -100,7 +100,7 @@ def _compact_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 # Session lifecycle
 # ---------------------------------------------------------------------------
 
-def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = None) -> None:
+def _remember(session_id: str, portfolio: Portfolio, owner: Optional[str] = None) -> None:
     """
     Insert a session as most-recently-used and evict beyond the budget.
 
@@ -114,7 +114,7 @@ def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = 
     with _SESSIONS_LOCK:
         _SESSIONS[session_id] = {
             "portfolio": portfolio,
-            "owner": owner_pan,
+            "owner": owner,
             "created_at": now,
             "last_accessed": now,
         }
@@ -129,7 +129,7 @@ def _remember(session_id: str, portfolio: Portfolio, owner_pan: Optional[str] = 
             )
 
 
-def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds') -> str:
+def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", upload_type: str = 'mutual_funds') -> str:
     """
     Initializes a new portfolio session. Retroactively classifies holdings via the
     CategorizationEngine to ensure parity with AMFI & Morningstar categorization.
@@ -139,15 +139,16 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     # so a lowercase header made a session its own owner could not read: reads compared
     # "ABCDE1234F" against a stored "abcde1234f" and 404'd. Masked logs rendered both
     # sides identically, which would have made it undiagnosable in production.
-    pan_id = identity.normalize_pan(pan_id)
+    # The owner is the authenticated caller, never a value the request supplied.
+    user_id = identity.current_user_id()
 
     # Deduplication check: if this owner already uploaded this exact ledger, reuse
     # the existing session. The hash is computed once here and threaded into
     # save_session, both because the dedup lookup and the registry row must agree
     # and because computing it twice ran a row-wise `df.apply` over the whole ledger
     # twice per upload.
-    ledger_hash = storage.compute_ledger_hash(df_t, pan_id)
-    duplicate_id = storage.check_duplicate_upload(ledger_hash, pan_id)
+    ledger_hash = storage.compute_ledger_hash(df_t, user_id)
+    duplicate_id = storage.check_duplicate_upload(ledger_hash, user_id)
     if duplicate_id:
         return duplicate_id
 
@@ -169,7 +170,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     # Persist BEFORE compacting: to_sql writes categoricals as their codes in some
     # pandas/SQLite combinations, and the round-trip must preserve the label.
     final_session_id = storage.save_session(
-        session_id, df_h, df_t, df_s, is_partial, statement_period, pan_id, upload_type,
+        session_id, df_h, df_t, df_s, is_partial, statement_period, user_id, upload_type,
         ledger_hash=ledger_hash,
     )
     # save_session returns a different id if it adopted a concurrent duplicate.
@@ -182,7 +183,7 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
     portfolio = Portfolio(df_h, df_t, df_s, is_partial)
     portfolio.update_live_navs()
 
-    _remember(session_id, portfolio, owner_pan=pan_id)
+    _remember(session_id, portfolio, owner=user_id)
     return session_id
 
 
@@ -208,20 +209,21 @@ def _session_purge_worker():
                 for sid in expired:
                     _SESSIONS.pop(sid, None)
 
-            # 2. Disk-Level Purge (24 hours) for CAS
-            from shared import db
-            from shared.storage import delete_session
-            with db.connect() as conn:
-                cursor = conn.execute(
-                    "SELECT session_id FROM sessions "
-                    "WHERE created_at < datetime('now', '-24 hours')"
-                )
-                expired_ids = [row[0] for row in cursor.fetchall()]
-            # Deleted outside the read connection: delete_session opens its own, and
-            # nesting a writer inside an open reader is the shape that produces
-            # "database is locked" under WAL.
-            for session_id in expired_ids:
-                delete_session(session_id)
+            # 2. No disk purge.
+            #
+            # This used to delete every session older than 24 hours. That existed
+            # because the filesystem was ephemeral and the database was a
+            # within-process convenience - keeping rows past a deploy was pointless,
+            # and bounding the table was free.
+            #
+            # Storage is durable now, and a user's uploaded statements are their
+            # data. Deleting them on a timer would mean signing in tomorrow to an
+            # empty dashboard. Retention is a product decision and belongs to the
+            # user: DELETE /accounts/me removes everything, DELETE /history/{id}
+            # removes one statement.
+            #
+            # In-memory eviction above is unaffected - it is a cache bound, and an
+            # evicted session is rehydrated from the database on next access.
 
             # 3. Trim the disk cache alongside sessions, so the .cache directory
             #    cannot outgrow its budget on a long-lived instance.
@@ -257,7 +259,7 @@ def _deny(session_id: str, owner: Optional[str]) -> "HTTPException":
     Build the denial. 404 rather than 403 on purpose: a 403 confirms the session
     exists, which is exactly the signal an id-guessing caller is looking for.
     """
-    caller = identity.current_pan()
+    caller = identity.current_user_id()
     logger.warning(
         "[AUTHZ] caller=%s denied access to session %s owned=%s (same PAN in different "
         "case is a bug, not an attack - both mask identically here)",
@@ -326,7 +328,7 @@ def get_session(session_id: str) -> Portfolio:
     except Exception as e:
         logger.warning(f"[SESSION REHYDRATE] live NAV refresh failed for {session_id}: {e}")
 
-    _remember(session_id, portfolio, owner_pan=owner)
+    _remember(session_id, portfolio, owner=owner)
     return portfolio
 
 
@@ -336,7 +338,7 @@ def forget(session_id: str) -> bool:
         return _SESSIONS.pop(session_id, None) is not None
 
 
-def evict_for_pan(pan_id: str) -> int:
+def evict_for_user(user_id: str) -> int:
     """
     Drop a PAN's resident sessions. Returns how many were dropped.
 
@@ -346,7 +348,7 @@ def evict_for_pan(pan_id: str) -> int:
     the registry could no longer say who owned it. The tax store already did this; the
     mutual-fund store did not.
     """
-    target = (pan_id or "").upper()
+    target = str(user_id or "")
     with _SESSIONS_LOCK:
         doomed = [
             sid for sid, entry in _SESSIONS.items()
@@ -355,7 +357,7 @@ def evict_for_pan(pan_id: str) -> int:
         for sid in doomed:
             _SESSIONS.pop(sid, None)
     if doomed:
-        logger.info("[SESSION] evicted %d resident session(s) for %s", len(doomed), identity.mask_pan(pan_id))
+        logger.info("[SESSION] evicted %d resident session(s) for %s", len(doomed), user_id)
     return len(doomed)
 
 

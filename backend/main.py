@@ -23,7 +23,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from shared.identity import identity_scope, normalize_pan
+from shared import db, oidc, users
+from shared.identity import identity_scope
 from shared.services.cache import cache_stats, request_scope
 
 # Shared Infrastructure Gateways
@@ -73,7 +74,20 @@ async def lifespan(app: FastAPI):
         "[STARTUP] sync endpoint concurrency capped at %d (anyio default was %d)",
         SYNC_ENDPOINT_CONCURRENCY, previous,
     )
+
+    # Build the pool during startup rather than on the first request, so the TLS
+    # handshake and authentication are paid before traffic arrives instead of by
+    # whoever happens to arrive first. A failure here is logged, not raised: the
+    # platform health check should get a response saying the database is
+    # unreachable, not a container that never finishes booting.
+    try:
+        db.get_pool()
+    except Exception as e:
+        logger.error("[STARTUP] database pool unavailable: %s", e)
+
     yield
+
+    db.close_pool()
 
 
 app = FastAPI(
@@ -164,27 +178,65 @@ class DefaultCacheControlMiddleware:
 
 class IdentityMiddleware:
     """
-    Binds the caller's asserted PAN for the request (shared/identity.py).
+    Resolves the caller's credential to an account and binds it (shared/identity.py).
 
     Ownership is enforced deep in the data-access layer rather than per route, so
     the identity has to be available there without threading a parameter through
     every signature. Same ContextVar mechanism as the L0 memo below.
+
+    Two credentials are accepted, in order:
+
+      Authorization: Bearer <id token>   verified against the provider's JWKS
+      X-User-PAN: <pan>                  legacy, no proof of possession
+
+    Both end at the same `Caller`, so nothing downstream can tell them apart. The
+    PAN branch exists so the database migration and the switch to real sign-in stay
+    separately reversible; deleting it and the resolver's legacy helper is the whole
+    of its removal.
+
+    Resolution is cached in process (shared/accounts.py) - without that this would
+    add a database round trip to every authenticated request, ahead of the handler.
     """
 
     def __init__(self, app):
         self.app = app
+        self._verifier = oidc.from_env()
+
+    def _caller(self, scope):
+        headers = dict(scope.get("headers", []))
+
+        raw_auth = headers.get(b"authorization")
+        if raw_auth:
+            value = raw_auth.decode("latin-1")
+            if value.lower().startswith("bearer ") and self._verifier is not None:
+                principal = self._verifier.verify(value[7:].strip())
+                if principal is not None:
+                    return users.resolve(
+                        principal.issuer, principal.subject, email=principal.email
+                    )
+                # A presented-but-invalid token is anonymous, never a silent fall
+                # through to the weaker header - otherwise an expired token would
+                # quietly downgrade to PAN identification.
+                return None
+
+        raw_pan = headers.get(b"x-user-pan")
+        if raw_pan:
+            return users.resolve_legacy_pan(raw_pan.decode("latin-1"))
+
+        return None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        raw = None
-        for key, value in scope.get("headers", []):
-            if key == b"x-user-pan":
-                raw = value.decode("latin-1")
-                break
+        try:
+            caller = self._caller(scope)
+        except Exception:
+            # Identity resolution must never 500 a request into an authorized state.
+            logger.exception("[AUTH] identity resolution failed; treating as anonymous")
+            caller = None
 
-        with identity_scope(normalize_pan(raw)):
+        with identity_scope(caller):
             await self.app(scope, receive, send)
 
 

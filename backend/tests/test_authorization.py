@@ -17,6 +17,14 @@ from fastapi.testclient import TestClient
 from main import app
 from shared import db, identity, storage
 
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
+
 USER_A = "AAAAA1111A"
 USER_B = "BBBBB2222B"
 

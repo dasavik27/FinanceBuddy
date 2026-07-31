@@ -15,6 +15,14 @@ import pytest
 from shared import db as db_module
 from shared import storage
 
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
+
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):

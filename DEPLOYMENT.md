@@ -3,12 +3,62 @@
 ## The start command
 
 ```
-cd backend && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+release: cd backend && python -m migrations.migrate
+web:     cd backend && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
 ```
 
-This is in `Procfile` (Render, Railway, Heroku read it directly). Platforms that ask
-for the command in a dashboard field want the same string. Python 3.13 — see
+Both are in `Procfile` (Render, Railway, Heroku read it directly). Platforms that ask
+for the commands in dashboard fields want the same strings. Python 3.13 — see
 `.python-version`.
+
+The release command applies pending migrations before the new version serves
+traffic. It is safe to run concurrently and repeatedly: it takes an advisory lock,
+applies each file in its own transaction, and skips anything already recorded in
+`schema_migrations`.
+
+## Database
+
+PostgreSQL, via psycopg 3. SQLite is gone — the app now keeps user data across
+restarts, and a file on an ephemeral container cannot.
+
+Nothing here is tied to a hosting provider. Supabase, Neon, RDS, Railway and a local
+server are the same code behind one connection string; no vendor SDK is imported and
+no table references a provider-managed one.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | **yes** | Postgres DSN. |
+| `TEST_DATABASE_URL` | for tests | A *separate* database. The suite creates and drops schemas, so never point this at production. Unset, the database-backed tests skip. |
+| `FINANCEBUDDY_DB_POOL_MIN` | no (1) | Idle connections held. |
+| `FINANCEBUDDY_DB_POOL_MAX` | no (6) | Ceiling. Keep at or below `FINANCEBUDDY_SYNC_CONCURRENCY` — that cap is the real limit on concurrent handlers, so extra connections only consume the server's allowance. |
+| `FINANCEBUDDY_DB_STATEMENT_TIMEOUT_MS` | no (15000) | A query past this is not going to help the request that started it. |
+
+**Use the transaction pooler, not the direct connection.** On Supabase that is port
+`6543` (`...pooler.supabase.com`), not `5432` on `db.<ref>.supabase.co` — the direct
+host is IPv6-only on newer projects, which fails from IPv4-only networks. The pool
+disables prepared statements (`prepare_threshold=None`) because a transaction-mode
+pooler multiplexes one backend across clients per transaction and a prepared
+statement does not survive that; the failure only appears under concurrency.
+
+**Put the database in the same region as the app.** This is the single largest
+latency lever and it is free. Cross-region is ~90 ms per query; a page issuing ten
+becomes a second of waiting.
+
+## Authentication
+
+OIDC ID tokens, verified locally against the provider's JWKS. Provider-agnostic:
+
+| Variable | Purpose |
+|---|---|
+| `AUTH_JWKS_URL` | Provider's JWKS endpoint. |
+| `AUTH_ISSUER` | Expected `iss`. |
+| `AUTH_AUDIENCE` | Expected `aud`. |
+| `SUPABASE_URL` | Convenience — the three above are derived from it if unset. |
+
+Unset entirely, token auth is disabled and only the legacy `X-User-PAN` header works.
+That header is identification, not authentication, and exists so the database
+migration and the switch to real sign-in stay separately reversible. Remove it by
+deleting `users.resolve_legacy_pan` and the middleware's PAN branch.
 
 ## `--workers 1` is not a default, it is a requirement
 
@@ -57,25 +107,41 @@ instead of thrash. Raise it only alongside more CPU.
 | `FINANCEBUDDY_MAX_TAX_SESSIONS` | `8` | Resident tax sessions. Overflow rehydrates from SQLite. |
 | `FINANCEBUDDY_TAX_SESSION_TTL` | `86400` | Tax session idle TTL, seconds. |
 
-## Storage is ephemeral, and the app is built for that
+## Storage is durable now, and that changes the threat model
 
-Free tiers give no persistent disk and spin down when idle. On restart, both the
-SQLite database (`backend/data/metadata.sqlite3`) and the L2 disk cache
-(`backend/.cache`) are gone.
+User data lives in Postgres and survives restarts. That was the point of the
+migration, and it converts a previously-accepted risk into an open one.
 
-This is handled rather than worked around: a missing session returns 404 and the UI
-prompts for re-upload. Treat L2 as a warm-start optimisation, not storage.
+Sessions hold holdings, capital gains, PAN and income. That was tolerable when the
+disk evaporated on every deploy; it is not now. **Encryption at rest, a retention
+policy and a user-facing export are requirements rather than nice-to-haves** —
+`SECURITY.md` is the tracking place, and its threat model still needs rewriting to
+match: it is written as though the filesystem were ephemeral.
 
-Two consequences worth knowing:
+What did *not* survive the migration, deliberately:
 
-- **Attaching a persistent volume changes the security posture.** Sessions hold
-  holdings, capital gains, PAN and income as plaintext JSON and SQLite rows. Today
-  that is acceptable largely *because* the disk evaporates. With a real volume or
-  backups, encryption-at-rest becomes a requirement, not a nice-to-have.
-- **Schema drift becomes reachable.** The `mf_*` tables have no explicit DDL — their
-  schema is frozen from the first upload. `storage._align_frame_to_table` migrates
-  additively so a parser change no longer hard-fails uploads, but on ephemeral disk
-  this was previously masked entirely by the tables being recreated each deploy.
+- **The 24-hour sweep is gone.** It deleted every session older than a day, which
+  made sense when nothing survived a deploy anyway. Deleting a user's statements on
+  a timer is now data loss, not housekeeping. Retention belongs to the user:
+  `DELETE /accounts/me` removes the account and everything under it (one statement —
+  every child table cascades), `DELETE /history/{id}` removes one statement.
+- **Logout no longer deletes anything.** It evicts the caller's sessions from memory;
+  the stored copies stay and are rehydrated on next access.
+- **Schema drift is no longer possible.** The `mf_*` tables had no DDL and absorbed
+  parser changes via runtime `ALTER TABLE` using identifiers taken from the uploaded
+  PDF. They are replaced by one compressed payload row per session, which has no
+  schema to drift from.
+
+The L2 disk cache (`backend/.cache`) is still ephemeral and still fine — it holds
+regenerable market data, and putting it in Postgres would spend the connection and
+IO budget on something a refetch replaces for free.
+
+## Storage budget
+
+A 20k-row ledger is ~3 MB as JSON and ~0.8 MB compressed (zlib level 1, applied in
+the application rather than left to TOAST — TOAST decompresses server-side, so doing
+it here saves the wire bytes too). On Supabase's 500 MB free tier that is roughly 600
+snapshots before it matters.
 
 ## Health checks
 

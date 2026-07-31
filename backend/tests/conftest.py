@@ -1,3 +1,5 @@
+import os
+import uuid
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -5,6 +7,83 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+
+# ---------------------------------------------------------------------------
+# Database-backed tests
+# ---------------------------------------------------------------------------
+# Postgres replaced SQLite, so the tests that exercise persistence now need a real
+# server. Rather than let them fail with a connection error - which reads as "the
+# code is broken" - they are skipped with a reason when TEST_DATABASE_URL is unset.
+#
+# TEST_DATABASE_URL, deliberately not DATABASE_URL: these create and drop schemas,
+# and pointing them at the value already in .env would run them against whatever
+# that is, which on a developer machine is production.
+#
+# Each session gets its own schema, so runs are isolated and a failed run leaves
+# nothing behind that the next one has to clean up.
+
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
+
+# With no test database, unset DATABASE_URL for the whole run so db.get_pool() raises
+# immediately instead of dialling a real host. Two reasons, and the second is the one
+# that actually bit: a connection attempt to an unreachable server blocks for the full
+# 10 s pool timeout *per call*, which turned a one-minute suite into an unbounded one;
+# and .env holds the production DSN, so any test that slipped past a skip would write
+# to it.
+if not TEST_DATABASE_URL:
+    os.environ.pop("DATABASE_URL", None)
+
+requires_db = pytest.mark.skipif(
+    not TEST_DATABASE_URL,
+    reason="needs Postgres - set TEST_DATABASE_URL (see DEPLOYMENT.md)",
+)
+
+
+@pytest.fixture(scope="session")
+def db_schema():
+    """A throwaway schema for this test session, dropped at the end."""
+    if not TEST_DATABASE_URL:
+        pytest.skip("needs Postgres - set TEST_DATABASE_URL")
+
+    from shared import db
+
+    schema = f"test_{uuid.uuid4().hex[:12]}"
+    os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+    db.reset_pool()
+
+    with db.connect() as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    # search_path is set per connection, so it has to be applied on checkout rather
+    # than once here - a pooled connection is not the same one next time.
+    previous_configure = db._configure
+
+    def _configure_with_schema(conn):
+        previous_configure(conn)
+        conn.execute(f'SET search_path TO "{schema}"')
+
+    db._configure = _configure_with_schema
+    db.reset_pool()
+
+    from migrations import migrate
+    migrate.upgrade()
+
+    yield schema
+
+    db._configure = previous_configure
+    db.reset_pool()
+    with db.connect() as conn:
+        conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+    db.close_pool()
+
+
+@pytest.fixture
+def clean_db(db_schema):
+    """Empty every table before a test, keeping the schema."""
+    from shared import db
+
+    with db.connect() as conn:
+        conn.execute("TRUNCATE users, sessions RESTART IDENTITY CASCADE")
+    yield db_schema
 
 
 @pytest.fixture

@@ -1,130 +1,190 @@
 """
-shared/db.py - the single place that knows how to reach the database.
+shared/db.py - the only module that reaches the database.
 
-Why this exists
----------------
-Before this module, seven call sites opened their own connection:
+Engine
+------
+PostgreSQL via psycopg 3. SQLite is gone: the deployment now keeps user data
+across restarts, and a file-backed database on an ephemeral container cannot.
 
-  shared/storage.py            configured (WAL, busy_timeout), via its own _connect
-  domains/tax_expert/          configured, but through a *second* DB_PATH constant
-    tax_sessions.py            naming the same file - a Path where storage's was a str
-  shared/routers/auth.py       bare sqlite3.connect - no pragmas
-  shared/routers/accounts.py   bare sqlite3.connect - no pragmas
-  shared/routers/market.py     bare sqlite3.connect - no pragmas
-  shared/config.py             bare sqlite3.connect - no pragmas
-  domains/mutual_funds/        bare sqlite3.connect - no pragmas
-    sessions.py
+No ORM. The codebase has never had one, every query here is hand-written SQL, and
+SQLAlchemy would cost roughly 30 MB RSS on a 512 MB box for machinery nothing uses.
+That also decided migrations - Alembic requires SQLAlchemy, and without ORM models
+its autogenerate has nothing to diff, so its migrations would be `op.execute()`
+wrappers around the same raw SQL. `migrations/` holds numbered .sql files and
+`migrate.py` applies them against a `schema_migrations` ledger.
 
-The five unconfigured ones get no `busy_timeout`, so a concurrent CAS upload -
-which holds a write transaction for most of a second - makes them fail outright
-with "database is locked" rather than waiting. They also use
-`with sqlite3.connect(...)`, which commits but does *not* close, so the connection
-survives until garbage collection and holds its locks that whole time.
+Pooling
+-------
+Connecting per request is not viable against a network database: a TLS handshake
+plus authentication is 50-100 ms, where the SQLite open it replaced was ~10 us. The
+pool is sized against the anyio threadpool cap (FINANCEBUDDY_SYNC_CONCURRENCY,
+default 8) - that cap is the real ceiling on concurrent sync handlers, so more
+connections than that can only sit idle while still counting against the server's
+connection limit, which is small on a free tier.
 
-Two constants naming one file also meant a test that redirected storage.DB_PATH to a
-temp database left the tax store writing to the developer's real one.
+min_size is 1 rather than max_size: this instance idles most of the time and
+spins down, so holding open connections buys nothing and a pooler charges for
+them.
+
+Transaction-mode poolers
+------------------------
+Supabase's Supavisor on port 6543, and pgBouncer generally, multiplex one server
+connection across many clients per *transaction*. Server-side prepared statements
+do not survive that, so prepare_threshold is disabled - otherwise psycopg prepares
+a statement on one backend and later executes it on another, which fails with
+"prepared statement does not exist" only under concurrency, i.e. in production and
+not in a test.
+
+The same constraint rules out anything session-scoped: no LISTEN/NOTIFY, no
+server-side cursors, no SET without LOCAL, no advisory locks held across
+statements.
 
 Portability
 -----------
-This is also the seam for the Postgres migration. Everything that differs between
-the two engines is meant to live here rather than in the modules that persist
-things:
-
-  - connection acquisition (a per-call connect today, a pool under Postgres)
-  - parameter placeholders: `?` for sqlite3, `%s` for psycopg
-  - engine setup (PRAGMAs have no Postgres equivalent)
-
-Callers write `?` and go through `sql()`. Keep to SQL that both engines accept -
-`INSERT ... ON CONFLICT (col) DO UPDATE` is understood by both, where
-`INSERT OR REPLACE` is SQLite-only and additionally deletes-then-inserts, which
-would drop columns the statement does not name.
-
-DDL is deliberately NOT abstracted here. Type names diverge too far to paper over
-(TEXT/REAL/INTEGER/BLOB against text/double precision/bigint/bytea), and schema
-management moves to Alembic with the Postgres migration rather than to a
-hand-rolled translation layer.
+This talks to Postgres, not to a vendor. Everything provider-specific is a
+connection string, so Supabase, Neon, RDS, Railway or a local server are the same
+code. Nothing here imports a vendor SDK, and no schema object references a
+provider-managed table.
 """
 
 import os
-import sqlite3
 import logging
+import threading
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+try:  # loading a .env is a developer convenience; the platform sets real env vars
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # pragma: no cover - python-dotenv absent in a slim image
+    pass
 
 logger = logging.getLogger(__name__)
 
-# ── Location ──────────────────────────────────────────────────────────────────
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-DB_PATH = os.path.join(DATA_DIR, "metadata.sqlite3")
 
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# The engine in use. Reading this to branch is a smell - prefer adding a helper here
-# - but it lets a caller assert which engine it is talking to.
-DIALECT = "sqlite"
-
-
-def sql(statement: str) -> str:
+def database_url() -> str:
     """
-    Adapt a statement written with `?` placeholders to the active driver.
+    The DSN, read at call time so a test can redirect it.
 
-    A no-op on SQLite. Under psycopg this becomes a `?` -> `%s` rewrite, so callers
-    can keep writing one style. Deliberately a function rather than a format string
-    so the substitution has exactly one implementation.
+    Deliberately not cached: the test suite points this at a throwaway database by
+    setting the environment variable, and a module-level constant captured at import
+    would ignore that.
     """
-    return statement
+    return os.getenv("DATABASE_URL", "")
 
 
-def _apply_pragmas(conn: sqlite3.Connection) -> None:
+# Bounded by the anyio threadpool cap rather than guessed - see the module docstring.
+POOL_MIN_SIZE = int(os.getenv("FINANCEBUDDY_DB_POOL_MIN", "1"))
+POOL_MAX_SIZE = int(os.getenv("FINANCEBUDDY_DB_POOL_MAX", "6"))
+
+# A query that has run this long is not going to help the request that started it,
+# and on a shared-CPU instance it is actively taking time from other requests.
+STATEMENT_TIMEOUT_MS = int(os.getenv("FINANCEBUDDY_DB_STATEMENT_TIMEOUT_MS", "15000"))
+
+_pool: Optional[ConnectionPool] = None
+_pool_lock = threading.Lock()
+
+
+def _configure(conn: psycopg.Connection) -> None:
+    """Applied once per physical connection, not per checkout."""
+    conn.execute(f"SET statement_timeout = {STATEMENT_TIMEOUT_MS}")
+
+
+def get_pool() -> ConnectionPool:
     """
-    Configure a connection for a concurrent web server.
+    The process-wide pool, created on first use.
 
-    Under the default rollback journal a writer takes an EXCLUSIVE lock over the whole
-    database, so a 20k-row CAS upload (~0.7 s, plus fsyncs) blocked every reader - and
-    past the busy timeout those requests failed with "database is locked" as a 500.
-    WAL lets readers proceed during a write, which is the single most important setting
-    here.
-
-    - journal_mode=WAL is persistent (stored in the file header), so setting it on any
-      connection is enough; it is applied per-connection anyway because a fresh
-      database needs it once and this is the cheapest place to guarantee it.
-    - synchronous=NORMAL rather than FULL: FULL fsyncs on every commit, and on a
-      deployment whose disk is wiped on restart that durability buys nothing.
-    - busy_timeout gives a blocked writer time to wait rather than failing instantly.
-
-    WAL needs shared-memory mmap on the database's filesystem. That is fine on a
-    container's local disk but can fail on some network mounts, so a failure here is
-    logged and tolerated rather than fatal.
+    Built lazily rather than at import: importing this module must not require a
+    reachable database, or the test suite and any offline tooling cannot even load
+    the app. Double-checked under a lock so two concurrent first requests do not
+    each build one - the same check-then-act that the tax session store got wrong.
     """
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=15000")
-    except sqlite3.DatabaseError as e:
-        logger.warning("[DB] could not apply pragmas (WAL unsupported here?): %s", e)
+    global _pool
+    if _pool is not None:
+        return _pool
+
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+
+        dsn = database_url()
+        if not dsn:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Postgres is required - see DEPLOYMENT.md."
+            )
+
+        _pool = ConnectionPool(
+            conninfo=dsn,
+            min_size=POOL_MIN_SIZE,
+            max_size=POOL_MAX_SIZE,
+            timeout=10.0,          # wait for a free connection before failing
+            max_lifetime=1800.0,   # recycle, so a pooler-side restart cannot pin a dead socket
+            max_idle=300.0,
+            configure=_configure,
+            kwargs={
+                # See "Transaction-mode poolers" above. Not optional against Supavisor.
+                "prepare_threshold": None,
+                "application_name": "financebuddy",
+            },
+            open=True,
+            check=ConnectionPool.check_connection,
+        )
+        logger.info(
+            "[DB] pool ready (min=%d max=%d)", POOL_MIN_SIZE, POOL_MAX_SIZE
+        )
+        return _pool
+
+
+def close_pool() -> None:
+    """Shut the pool down. Called from the app's lifespan handler and by tests."""
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+
+
+def reset_pool() -> None:
+    """
+    Drop the pool so the next call rebuilds it against the current DATABASE_URL.
+
+    Exists for the test suite, which points the DSN at a throwaway database after
+    this module has already been imported.
+    """
+    close_pool()
 
 
 @contextmanager
-def connect() -> Iterator[sqlite3.Connection]:
+def connect(row_factory=None) -> Iterator[psycopg.Connection]:
     """
-    A configured connection that is always closed.
+    A pooled connection wrapped in one transaction.
 
-    `with sqlite3.connect(...)` commits but does NOT close - it is a transaction
-    context, not a resource context. On an exception path the traceback keeps the
-    frame (and therefore the connection) alive for an indeterminate time, holding
-    locks. This wrapper commits on success, rolls back on failure, and closes either
-    way.
+    Commits on success, rolls back on any exception, and always returns the
+    connection to the pool. Callers do not commit; doing so mid-block would end the
+    transaction early and leave the rest of the block running outside it.
 
-    DB_PATH is read at call time, not captured at import, so redirecting it (as the
-    tests do) affects every subsequent connection.
+    Pass row_factory=dict_row where a query wants column access by name; the default
+    tuple factory is the cheapest and is what most callers here want.
     """
-    conn = sqlite3.connect(DB_PATH, timeout=15.0)
-    _apply_pragmas(conn)
-    try:
+    pool = get_pool()
+    with pool.connection() as conn:
+        if row_factory is not None:
+            conn.row_factory = row_factory
+        # psycopg's connection context manager already commits on clean exit and
+        # rolls back on exception, so no explicit handling is needed here.
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+
+
+__all__ = [
+    "connect",
+    "get_pool",
+    "close_pool",
+    "reset_pool",
+    "database_url",
+    "dict_row",
+]

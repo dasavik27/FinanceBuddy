@@ -14,10 +14,10 @@ def get_upload_history(x_upload_type: str = Header("mutual_funds")):
     it is the same value every ownership check in the app uses and cannot diverge
     from it.
     """
-    caller = identity.current_pan()
+    caller = identity.current_user_id()
     if not caller:
-        raise HTTPException(status_code=401, detail="Sign in with your PAN to view your history.")
-    history = storage.get_history(pan_id=caller, upload_type=x_upload_type)
+        raise HTTPException(status_code=401, detail="Sign in to view your history.")
+    history = storage.get_history(user_id=caller, upload_type=x_upload_type)
     return {"status": "success", "history": history}
 
 @router.delete("/{session_id}")
@@ -62,11 +62,11 @@ def compare_sessions(session_id_a: str, session_id_b: str):
     # storage.get_history() with NO arguments - every session of every user,
     # materialized into dicts - and then linearly scanned it for two ids, which was
     # both an unscoped read of other people's rows and a full table scan per compare.
-    caller = identity.current_pan()
+    caller = identity.current_user_id()
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in with your PAN to compare statements.")
 
-    history_list = storage.get_history(pan_id=caller)
+    history_list = storage.get_history(user_id=caller)
     meta_a = next((h for h in history_list if h["session_id"] == session_id_a), None)
     meta_b = next((h for h in history_list if h["session_id"] == session_id_b), None)
 

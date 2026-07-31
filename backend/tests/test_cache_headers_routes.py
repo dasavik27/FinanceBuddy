@@ -22,6 +22,14 @@ from main import app
 from shared import storage
 from shared.services.cache import CACHE_CONFIG, get_cache_headers
 
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
+
 OWNER_PAN = "CCCCC3333C"
 
 

@@ -28,9 +28,30 @@ someone refactors these functions later:
 
 import threading
 
+
+def _as_user(user_id, fn):
+    """Run fn as an authenticated user.
+
+    create_tax_session() takes its owner from the identity scope rather than a
+    keyword now: the owner must be the authenticated caller, and a parameter is
+    something a request could otherwise assert for itself.
+    """
+    from shared import identity
+    with identity.identity_scope(identity.Caller(user_id=str(user_id))):
+        return fn()
+
+
 import pytest
 
 from domains.tax_expert import tax_sessions
+
+from tests.conftest import requires_db
+
+# Postgres replaced SQLite, so these need a real server. Skipped with a reason rather
+# than failing with a connection error when TEST_DATABASE_URL is unset - see
+# tests/conftest.py.
+pytestmark = requires_db
+
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +82,7 @@ def test_concurrent_create_and_iterate_does_not_raise():
     def writer(n):
         try:
             for i in range(25):
-                sid = tax_sessions.create_tax_session(_ais(f"W{n}I{i}"), pan_id=f"W{n}I{i}")
+                sid = _as_user(f"W{n}I{i}", lambda: tax_sessions.create_tax_session(_ais(f"W{n}I{i}")))
                 with created_lock:
                     created.append(sid)
         except Exception as exc:  # pragma: no cover - the bug being pinned
@@ -100,7 +121,7 @@ def test_concurrent_first_access_does_not_lose_a_session():
     loser's reassignment threw away a session the winner had just inserted. The store
     now clears in place under the lock.
     """
-    sid = tax_sessions.create_tax_session(_ais("RACER1"), pan_id="RACER1")
+    sid = _as_user("RACER1", lambda: tax_sessions.create_tax_session(_ais("RACER1")))
 
     # Force the cold-start path: flag cleared, store emptied, row still on disk.
     tax_sessions.clear_all()
@@ -150,11 +171,11 @@ def test_editing_an_evicted_session_persists():
     original = tax_sessions.MAX_SESSIONS
     tax_sessions.MAX_SESSIONS = monkey_cap
     try:
-        sid = tax_sessions.create_tax_session(_ais("SURVIVE"), pan_id="SURVIVE")
+        sid = _as_user("SURVIVE", lambda: tax_sessions.create_tax_session(_ais("SURVIVE")))
 
         # Push it out of the resident set entirely.
         filler = [
-            tax_sessions.create_tax_session(_ais(f"FILL{i}"), pan_id=f"FILL{i}")
+            _as_user(f"FILL{i}", lambda: tax_sessions.create_tax_session(_ais(f"FILL{i}")))
             for i in range(4)
         ]
         assert sid not in {s for s, _ in tax_sessions.list_sessions()}
@@ -163,7 +184,7 @@ def test_editing_an_evicted_session_persists():
         assert tax_sessions.update_deductions(sid, {"80C": 150000}) is True
 
         for i in range(4):
-            tax_sessions.create_tax_session(_ais(f"MORE{i}"), pan_id=f"MORE{i}")
+            _as_user(f"MORE{i}", lambda: tax_sessions.create_tax_session(_ais(f"MORE{i}")))
             filler.append(_ais(f"MORE{i}"))
 
         # Re-read from disk: the deduction must have persisted.
@@ -183,7 +204,7 @@ def test_concurrent_mutation_and_persist_does_not_raise():
     json.dumps used to serialize the live session dict, so a concurrent mutation
     could raise "dictionary changed size during iteration" from the persist path.
     """
-    sid = tax_sessions.create_tax_session(_ais("MUTATE"), pan_id="MUTATE")
+    sid = _as_user("MUTATE", lambda: tax_sessions.create_tax_session(_ais("MUTATE")))
     errors = []
     stop = threading.Event()
 

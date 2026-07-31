@@ -1,16 +1,26 @@
 """
-core/storage.py
+shared/storage.py
 
-Data Lake Persistence & Transaction Ledger Reconciliation Engine
-================================================================
-Manages robust disk-level storage of CAS uploaded DataFrames using a unified SQLite database,
-mapped against an SQLite metadata registry. Includes a deterministic row-level hashing
-engine to prevent duplicate snapshots and allow semantic ledger reconciliation.
+Session persistence and transaction-ledger reconciliation.
+==========================================================
+Stores an uploaded CAS as one compressed payload row against a registry entry, and
+fingerprints ledgers so re-uploading the same statement is idempotent.
+
+Owner column
+------------
+Rows are keyed on `user_id` (a uuid this application issues), not on a PAN. PAN was
+previously the login credential, the owner column and the CAS PDF password all at
+once - and it is printed on documents, so "anyone who knows a PAN can read that
+user's data" was the real posture rather than an edge case. It is now an attribute
+on `profiles`.
+
+Schema lives in migrations/, not here. DDL used to run at import time, which is
+tolerable against a local file and not against a pooled network database: every
+process start would race the same CREATE statements, and there is nowhere sensible
+to put a failure.
 """
 
-import os
 import json
-import sqlite3
 import uuid
 import zlib
 import numpy as np
@@ -19,120 +29,19 @@ import hashlib
 from io import StringIO
 from typing import Optional, Dict, Any, Tuple
 
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
 from shared import db
-from shared.identity import mask_pan as _mask_pan
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-# Connection management, the database location and the pragmas all live in shared/db.py
-# now - it is the one place that knows which engine this is, so the Postgres migration
-# is a change there rather than in every module that persists something.
-#
-# Re-exported because callers (and tests) refer to storage._connect / storage.DATA_DIR.
-# _connect is a genuine alias, not a copy: rebinding db.DB_PATH redirects it, since
-# db.connect() reads the path at call time.
+# Connection handling lives in shared/db.py - the one module that knows the engine.
+# Re-exported because callers and tests refer to storage._connect.
 _connect = db.connect
-DATA_DIR = db.DATA_DIR
-
-
-def _init_db():
-    """Initializes the SQLite metadata registry and runs migrations."""
-    with _connect() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                pan_id TEXT PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                data_hash TEXT UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_value REAL,
-                total_invested REAL,
-                num_funds INTEGER,
-                is_partial BOOLEAN
-            )
-        """)
-        # Schema Migration: Add pan_id to sessions if missing
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN pan_id TEXT")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-            
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN upload_type TEXT DEFAULT 'mutual_funds'")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN statement_period TEXT DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
-
-        # The GC sweep scans for sessions older than 24h on every pass.
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at)")
-
-        # Every PAN-scoped read was a full scan of a table holding every session in
-        # the system: get_history (the /history timeline), the accounts summary, and
-        # the purge path. This covers the filter AND the sort, so get_history becomes a
-        # SEARCH with no temp B-tree instead of a SCAN.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_pan_type "
-            "ON sessions(pan_id, upload_type, created_at DESC)"
-        )
-
-        # The dedup lookup is now scoped by (data_hash, pan_id). data_hash already has
-        # a UNIQUE index, which serves it.
-
-        # One compressed blob per session, replacing the three implicit mf_* tables.
-        # session_id is the PRIMARY KEY, so the lookup load_session() performs is
-        # already indexed - the mf_* tables each needed an explicit index for the
-        # same query, added in two places because to_sql created them lazily.
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS session_payloads (
-                session_id TEXT PRIMARY KEY,
-                codec TEXT NOT NULL,
-                holdings BLOB,
-                transactions BLOB,
-                sips BLOB,
-                meta TEXT NOT NULL DEFAULT '{}',
-                byte_size INTEGER
-            )
-        """)
-
-        _ensure_mf_indexes(conn)
-
-
-# LEGACY - the implicitly-created tables that `session_payloads` replaced. Nothing
-# writes them any more; they are still read and deleted so a database predating the
-# payload codec does not report its existing sessions as empty or leak rows past a
-# purge. Remove along with _load_legacy_frames.
-_MF_INDEXED_TABLES = ("mf_holdings", "mf_transactions", "mf_sips")
-
-
-def _ensure_mf_indexes(conn: sqlite3.Connection) -> None:
-    """
-    Index the legacy mf_* tables on session_id, where they exist.
-
-    Only matters for a database written before the payload codec: the legacy read
-    path still runs `SELECT * FROM mf_* WHERE session_id=?`, and those tables hold
-    every session's rows, so without the index each such read is a full scan over
-    unrelated sessions' data.
-    """
-    for table in _MF_INDEXED_TABLES:
-        try:
-            conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{table}_session_id ON {table}(session_id)"
-            )
-        except sqlite3.OperationalError:
-            pass  # table does not exist, i.e. this database never used the old format
-
-
-_init_db()
 
 
 # ── Session payload codec ─────────────────────────────────────────────────────
@@ -261,7 +170,9 @@ def _decode_frame(blob: Optional[bytes], datetime_columns: Optional[Dict[str, st
     if blob is None:
         return pd.DataFrame()
 
-    text = zlib.decompress(blob).decode("utf-8")
+    # psycopg hands back a memoryview for bytea. zlib accepts any buffer, but the
+    # view keeps the whole result row alive until it is released, so materialise it.
+    text = zlib.decompress(bytes(blob)).decode("utf-8")
     df = pd.read_json(
         StringIO(text), orient="split", convert_dates=False, convert_axes=False
     )
@@ -293,7 +204,9 @@ def encode_payload(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame) -
 
     return {
         "codec": _PAYLOAD_CODEC,
-        "meta": json.dumps({"datetime_columns": datetime_columns}, separators=(",", ":")),
+        # A plain dict, not a JSON string: the column is jsonb, and psycopg adapts a
+        # dict directly. Pre-serialising would store a jsonb *string* containing JSON.
+        "meta": {"datetime_columns": datetime_columns},
         "byte_size": sum(len(b) for b in blobs.values()),
         **blobs,
     }
@@ -301,10 +214,14 @@ def encode_payload(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame) -
 
 def decode_payload(row: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Inverse of encode_payload. Returns (holdings, transactions, sips)."""
-    try:
-        meta = json.loads(row.get("meta") or "{}")
-    except (ValueError, TypeError):
-        meta = {}
+    # jsonb comes back already decoded; the str branch is for a caller passing the
+    # encode_payload output straight through without a database round trip.
+    meta = row.get("meta") or {}
+    if isinstance(meta, (str, bytes)):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
     datetime_columns = meta.get("datetime_columns") or {}
 
     return tuple(
@@ -313,7 +230,7 @@ def decode_payload(row: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.
     )
 
 
-def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str:
+def compute_ledger_hash(df_t: pd.DataFrame, user_id: Optional[str] = None) -> str:
     """
     Deterministic SHA-256 fingerprint of a transaction ledger, scoped to its owner.
 
@@ -329,8 +246,8 @@ def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str
        never dedups, which is the correct behaviour: there is nothing to compare.
 
     2. The owner is part of the hash. Dedup is a per-user optimisation; a hash
-       match across two PANs must never resolve to the other user's session.
-       check_duplicate_upload() filters on pan_id as well, so this is defence in
+       match across two accounts must never resolve to the other user's session.
+       check_duplicate_upload() filters on user_id as well, so this is defence in
        depth rather than the only guard.
     """
     if df_t.empty:
@@ -348,11 +265,11 @@ def compute_ledger_hash(df_t: pd.DataFrame, pan_id: Optional[str] = None) -> str
 
     # Concatenate all rows into a single giant string and hash it, prefixed with the
     # owner so identical ledgers under different PANs produce different fingerprints.
-    full_ledger_string = f"{pan_id or ''}|" + "|".join(row_strings.values.astype(str))
+    full_ledger_string = f"{user_id or ''}|" + "|".join(row_strings.values.astype(str))
     return hashlib.sha256(full_ledger_string.encode('utf-8')).hexdigest()
 
 
-def check_duplicate_upload(ledger_hash: str, pan_id: Optional[str] = None) -> Optional[str]:
+def check_duplicate_upload(ledger_hash: str, user_id: Optional[str] = None) -> Optional[str]:
     """
     Returns this owner's existing session_id for an identical ledger, else None.
 
@@ -360,14 +277,15 @@ def check_duplicate_upload(ledger_hash: str, pan_id: Optional[str] = None) -> Op
     for save_session() anyway, and computing it twice per upload meant running a
     row-wise `df.apply` over the whole ledger twice.
 
-    `pan_id IS ?` rather than `= ?` because SQLite's `=` never matches NULL, and
-    sessions uploaded without a PAN header have pan_id NULL - those must still
-    dedup against each other, and must not match a PAN-owned row.
+    `IS NOT DISTINCT FROM` rather than `=` because `=` never matches NULL. Sessions
+    saved with no owner have user_id NULL, and those must still dedup against each
+    other while never matching an owned row.
     """
     with _connect() as conn:
         cursor = conn.execute(
-            "SELECT session_id FROM sessions WHERE data_hash = ? AND pan_id IS ?",
-            (ledger_hash, pan_id),
+            "SELECT session_id FROM sessions "
+            "WHERE data_hash = %s AND user_id IS NOT DISTINCT FROM %s",
+            (ledger_hash, user_id),
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -389,7 +307,7 @@ class OwnerLookupFailed(Exception):
 
 def get_session_owner(session_id: str) -> Tuple[bool, Optional[str]]:
     """
-    (session_exists, owner_pan) for a session id.
+    (session_exists, owner_user_id) for a session id.
 
     Returned as a pair so callers can tell "no such session" from "exists but
     unowned" - both are legitimate, and they must not be conflated when deciding
@@ -399,240 +317,207 @@ def get_session_owner(session_id: str) -> Tuple[bool, Optional[str]]:
     """
     try:
         with _connect() as conn:
-            cursor = conn.execute("SELECT pan_id FROM sessions WHERE session_id = ?", (session_id,))
+            cursor = conn.execute(
+                "SELECT user_id FROM sessions WHERE session_id = %s", (session_id,)
+            )
             row = cursor.fetchone()
             if row is None:
                 return False, None
-            return True, row[0]
+            return True, str(row[0]) if row[0] is not None else None
     except Exception as e:
         logger.error(f"[STORAGE ERROR] owner lookup failed for {session_id}: {e}")
         raise OwnerLookupFailed(str(e)) from e
 
-def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", pan_id: str = None, upload_type: str = 'mutual_funds', ledger_hash: Optional[str] = None) -> str:
+def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool, statement_period: str = "", user_id: str = None, upload_type: str = 'mutual_funds', ledger_hash: Optional[str] = None) -> str:
     """
-    Persists the dataframes to SQLite and registers the session, tied to a PAN.
+    Persist the frames and register the session against its owner.
 
-    Write order is deliberate: the `sessions` registry row goes in **first**, then
-    the mf_* frames. It used to be the other way round, in two separate
-    transactions - so a failure between them (the UNIQUE constraint on data_hash
-    is reachable via a concurrent duplicate upload) left mf_* rows committed under
-    a session_id that appeared in no registry row. The 24h sweeper only finds rows
-    *via* `sessions`, so those were unreachable and immortal.
+    The registry row and the payload go in as **one transaction**. Under SQLite this
+    was two, because DataFrame.to_sql committed its own - so the code had to write
+    the registry first and hand-roll a compensating delete if the frames then failed,
+    aiming for a recoverable partial state rather than none. Postgres removes the
+    problem instead of mitigating it: either both rows land or neither does.
 
-    Registry-first inverts the failure mode: a later failure leaves a registry row
-    whose frames are missing, which load_session() reports as empty and the
-    sweeper purges normally. Full atomicity is not available here because
-    DataFrame.to_sql commits its own transaction, so the goal is a *recoverable*
-    partial state rather than none.
+    Concurrent duplicate uploads are resolved by ON CONFLICT rather than by catching
+    the unique violation. Catching it would not work here anyway - a failed statement
+    aborts the whole Postgres transaction, so the follow-up SELECT on the same
+    connection would itself error with "current transaction is aborted".
     """
     if ledger_hash is None:
-        ledger_hash = compute_ledger_hash(df_t, pan_id)
+        ledger_hash = compute_ledger_hash(df_t, user_id)
 
-    # 1. Extract quick metrics for the registry
     total_value = float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0
     total_invested = float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0
     num_funds = len(df_h)
 
-    # 2. Claim the session id in the registry before writing any frame rows.
+    # Compressing outside the transaction keeps a ~300 ms CPU-bound encode off the
+    # connection, which would otherwise hold it (and its share of a small pool) idle.
+    payload = encode_payload(df_h, df_t, df_s)
+
     with _connect() as conn:
-        try:
-            conn.execute("""
-                INSERT INTO sessions (session_id, data_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (session_id, ledger_hash, total_value, total_invested, num_funds, is_partial, statement_period, pan_id, upload_type))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            # data_hash is UNIQUE, so this means an identical ledger for this owner
-            # landed between the caller's dedup check and now. Uploading the same
-            # statement twice should be idempotent, not a 500, so adopt the winner.
-            conn.rollback()
+        row = conn.execute(
+            """
+            INSERT INTO sessions (
+                session_id, user_id, upload_type, data_hash,
+                total_value, total_invested, num_funds, is_partial, statement_period
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (data_hash, user_id) WHERE data_hash IS NOT NULL
+            DO NOTHING
+            RETURNING session_id
+            """,
+            (
+                session_id, user_id, upload_type, ledger_hash,
+                total_value, total_invested, num_funds, is_partial, statement_period,
+            ),
+        ).fetchone()
+
+        if row is None:
+            # An identical ledger for this owner landed between the caller's dedup
+            # check and now. Uploading the same statement twice is idempotent, not a
+            # 500, so adopt whichever write won.
             existing = conn.execute(
-                "SELECT session_id FROM sessions WHERE data_hash = ? AND pan_id IS ?",
-                (ledger_hash, pan_id),
+                "SELECT session_id FROM sessions "
+                "WHERE data_hash = %s AND user_id IS NOT DISTINCT FROM %s",
+                (ledger_hash, user_id),
             ).fetchone()
             if existing:
                 logger.info(
-                    "[STORAGE] concurrent duplicate upload for %s; reusing session %s",
-                    _mask_pan(pan_id), existing[0],
+                    "[STORAGE] duplicate upload; reusing session %s", existing[0]
                 )
                 return existing[0]
-            raise
+            # No conflicting row either - the insert was skipped for a reason we do
+            # not model, and silently returning would strand the caller with an id
+            # that does not exist.
+            raise RuntimeError(f"session {session_id} was neither inserted nor found")
 
-    # 3. Save the frames as one compressed payload row.
-    #
-    # If this fails, the registry row from step 2 must be removed. Leaving it would be
-    # worse than the orphan rows the old ordering produced: the row carries the real
-    # data_hash, so check_duplicate_upload would match it and every retry of the same
-    # CAS would be deduped into the broken empty session until the 24h sweep - a
-    # permanently bricked upload path rather than a retryable failure. load_session
-    # also returns empty frames rather than None for such a row, so it would surface as
-    # a portfolio with no holdings instead of a clean 404.
-    #
-    # Unlike the previous to_sql version this is a single INSERT, so the write is
-    # genuinely atomic rather than three self-committing statements that could leave a
-    # session with holdings but no transactions.
-    try:
-        payload = encode_payload(df_h, df_t, df_s)
-        with _connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO session_payloads "
-                "(session_id, codec, holdings, transactions, sips, meta, byte_size) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    session_id, payload["codec"], payload["holdings"],
-                    payload["transactions"], payload["sips"],
-                    payload["meta"], payload["byte_size"],
-                ),
-            )
-    except Exception:
-        logger.exception("[STORAGE] payload write failed for %s; rolling back registry row", session_id)
-        try:
-            delete_session(session_id)
-        except Exception:
-            logger.exception("[STORAGE] could not roll back registry row for %s", session_id)
-        raise
+        conn.execute(
+            """
+            INSERT INTO session_payloads
+                (session_id, codec, holdings, transactions, sips, meta, byte_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (session_id) DO UPDATE SET
+                codec = EXCLUDED.codec,
+                holdings = EXCLUDED.holdings,
+                transactions = EXCLUDED.transactions,
+                sips = EXCLUDED.sips,
+                meta = EXCLUDED.meta,
+                byte_size = EXCLUDED.byte_size
+            """,
+            (
+                session_id, payload["codec"], payload["holdings"],
+                payload["transactions"], payload["sips"],
+                Jsonb(payload["meta"]), payload["byte_size"],
+            ),
+        )
 
     return session_id
 
-def _load_legacy_frames(conn: sqlite3.Connection, session_id: str):
-    """
-    Read a session written before the payload codec, from the old mf_* tables.
-
-    LEGACY - remove once no database predating `session_payloads` is in use. In
-    production this is already unreachable (the disk is wiped on every deploy, and
-    nothing survives the 24h sweep), but a developer's local database predates the
-    change and would otherwise report every existing session as empty.
-    """
-    frames = []
-    for table in _MF_INDEXED_TABLES:
-        try:
-            df = pd.read_sql(f"SELECT * FROM {table} WHERE session_id=?", conn, params=(session_id,))
-            df.drop(columns=["session_id"], inplace=True, errors="ignore")
-            # These tables stored datetimes as ISO strings, so restore the dtype every
-            # downstream consumer (FIFO lots, XIRR, rolling returns) expects.
-            if not df.empty and "Date" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["Date"]):
-                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        except Exception:
-            df = pd.DataFrame()
-        frames.append(df)
-    return tuple(frames)
-
-
 def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]]:
     """
-    Reconstructs the portfolio from SQLite using the session_id.
+    Reconstruct a session's frames.
 
-    One round trip for the payload where the previous version took three, on a path
-    that became routine rather than exceptional once the in-memory store gained a
-    resident cap.
+    One round trip for the payload, and one for the registry flag. The mf_* version
+    took four, on a path that became routine rather than exceptional once the
+    in-memory store gained a resident cap.
     """
     try:
         with _connect() as conn:
-            cursor = conn.execute("SELECT is_partial FROM sessions WHERE session_id = ?", (session_id,))
-            row = cursor.fetchone()
-            if not row:
-                return None
-            is_partial = bool(row[0])
-
-            payload_row = conn.execute(
-                "SELECT holdings, transactions, sips, meta FROM session_payloads "
-                "WHERE session_id = ?",
+            row = conn.execute(
+                """
+                SELECT s.is_partial, p.holdings, p.transactions, p.sips, p.meta
+                FROM sessions s
+                LEFT JOIN session_payloads p ON p.session_id = s.session_id
+                WHERE s.session_id = %s
+                """,
                 (session_id,),
             ).fetchone()
 
-            if payload_row is None:
-                df_h, df_t, df_s = _load_legacy_frames(conn, session_id)
-            else:
-                df_h, df_t, df_s = decode_payload({
-                    "holdings": payload_row[0],
-                    "transactions": payload_row[1],
-                    "sips": payload_row[2],
-                    "meta": payload_row[3],
-                })
+        if row is None:
+            return None
 
-        return df_h, df_t, df_s, is_partial
+        is_partial, holdings, transactions, sips, meta = row
+        # A LEFT JOIN with no payload means the registry row exists but its frames do
+        # not. Reported as empty rather than missing, so the 404 stays reserved for
+        # "no such session".
+        df_h, df_t, df_s = decode_payload({
+            "holdings": holdings,
+            "transactions": transactions,
+            "sips": sips,
+            "meta": meta,
+        })
+        return df_h, df_t, df_s, bool(is_partial)
     except Exception as e:
-        logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {e}")
         return None
 
-def get_history(pan_id: str = None, upload_type: str = None) -> list:
+
+def get_history(user_id: str = None, upload_type: str = None) -> list:
     """
-    Returns a chronological list of all uploaded CAS sessions for a given PAN and upload_type.
+    The caller's uploads, newest first.
+
+    Selects named columns rather than `*`: the payload table is separate, but the
+    registry now carries a `summary` jsonb and there is no reason to ship columns the
+    timeline does not render.
     """
-    with _connect() as conn:
-        conn.row_factory = sqlite3.Row
-        
-        query = "SELECT * FROM sessions WHERE 1=1"
-        params = []
-        
-        if pan_id:
-            query += " AND pan_id = ?"
-            params.append(pan_id)
-            
-        if upload_type:
-            query += " AND upload_type = ?"
-            params.append(upload_type)
-            
-        query += " ORDER BY created_at DESC"
-        
-        cursor = conn.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
+    query = [
+        "SELECT session_id, user_id, upload_type, created_at, updated_at,",
+        "       total_value, total_invested, num_funds, is_partial,",
+        "       statement_period, summary",
+        "FROM sessions WHERE TRUE",
+    ]
+    params = []
+
+    if user_id:
+        query.append("AND user_id = %s")
+        params.append(user_id)
+    if upload_type:
+        query.append("AND upload_type = %s")
+        params.append(upload_type)
+    query.append("ORDER BY created_at DESC")
+
+    with _connect(row_factory=dict_row) as conn:
+        rows = conn.execute(" ".join(query), params).fetchall()
+
+    # user_id is a uuid; stringify so the response serialises without a custom encoder.
+    for row in rows:
+        if row.get("user_id") is not None:
+            row["user_id"] = str(row["user_id"])
+    return rows
+
 
 def delete_session(session_id: str) -> bool:
     """
-    Deletes a session from the SQLite registry and its associated dataframes.
+    Delete one session and everything hanging off it.
+
+    session_payloads and tax_payloads declare ON DELETE CASCADE, so this is a single
+    statement where the SQLite version had to name each child table and tolerate the
+    ones that did not exist yet.
     """
     try:
         with _connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            conn.execute("DELETE FROM session_payloads WHERE session_id = ?", (session_id,))
-            # LEGACY - see _load_legacy_frames. Rows only exist in databases that
-            # predate the payload codec, but a purge must not leave them behind.
-            for table in _MF_INDEXED_TABLES:
-                try:
-                    conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
-                except sqlite3.OperationalError:
-                    pass  # table never created
-            conn.commit()
+            conn.execute("DELETE FROM sessions WHERE session_id = %s", (session_id,))
         return True
     except Exception as e:
-        logger.error(f"[STORAGE ERROR] Failed to delete session {session_id}: {str(e)}")
+        logger.error(f"[STORAGE ERROR] Failed to delete session {session_id}: {e}")
         return False
 
-def delete_all_for_pan(pan_id: str) -> int:
-    """
-    Deletes every session associated with a PAN, plus the PAN's own user row.
-    Returns the number of sessions deleted.
 
-    Two things were wrong here. It looped `delete_session(sid)` while holding an
-    open connection, so N sessions meant 1 + 4N statements across N nested
-    connections with N commits - the shape that produces `database is locked` the
-    moment WAL and any concurrency are in play. And it left the `users` row behind,
-    so a PAN that asked to have all its data "permanently deleted" stayed in the
-    database forever. Both are fixed by collecting the ids, then issuing one
-    executemany batch per table in a single transaction.
+def delete_all_for_user(user_id: str) -> int:
+    """
+    Delete every session belonging to a user, plus the account itself.
+
+    The point of a purge request is that nothing identifying survives it, so this
+    removes the `users` row too - `identities`, `profiles` and `sessions` all cascade
+    from it, and `session_payloads` / `tax_payloads` cascade from those. One
+    statement, where the SQLite version fanned out across five tables and used to
+    loop `delete_session()` inside an open connection.
     """
     with _connect() as conn:
-        session_ids = [
-            row[0] for row in conn.execute(
-                "SELECT session_id FROM sessions WHERE pan_id = ?", (pan_id,)
-            ).fetchall()
-        ]
+        count = conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE user_id = %s", (user_id,)
+        ).fetchone()[0]
+        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
-        if session_ids:
-            rows = [(sid,) for sid in session_ids]
-            conn.executemany("DELETE FROM session_payloads WHERE session_id = ?", rows)
-            # LEGACY - see _load_legacy_frames.
-            for table in _MF_INDEXED_TABLES:
-                try:
-                    conn.executemany(f"DELETE FROM {table} WHERE session_id = ?", rows)
-                except sqlite3.OperationalError:
-                    pass  # table not created yet
-            conn.executemany("DELETE FROM sessions WHERE session_id = ?", rows)
-
-        # The point of a purge request is that nothing identifying survives it.
-        conn.execute("DELETE FROM users WHERE pan_id = ?", (pan_id,))
-        conn.commit()
-
-    logger.info("[STORAGE] purged %d sessions for %s", len(session_ids), _mask_pan(pan_id))
-    return len(session_ids)
+    logger.info("[STORAGE] purged account %s and %d session(s)", user_id, count)
+    return count

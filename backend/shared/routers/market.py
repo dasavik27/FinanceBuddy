@@ -55,12 +55,9 @@ def update_market_config(ttl: int):
     config.CACHE_TTL_MINUTES = ttl
 
     with db.connect() as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute(
-            db.sql(
-                "INSERT INTO app_settings (key, value) VALUES ('cache_ttl', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-            ),
+            "INSERT INTO app_settings (key, value) VALUES ('cache_ttl', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             (str(ttl),)
         )
         

@@ -15,25 +15,38 @@ import json
 # Time-To-Live (TTL) for in-memory and disk persistence layers (NAV & CAS Records)
 # Set via environment variable 'FINANCEBUDDY_CACHE_TTL' (Default: 60 minutes).
 # A value <= 0 triggers real-time direct fetching across all network providers.
-from shared import db
-
 def _get_ttl_from_db():
-    # Went through shared.db rather than a bare sqlite3.connect on a path assembled
-    # here: that third spelling of the database location could drift from the other
-    # two, and it opened without the busy timeout, so this ran at import time with no
-    # tolerance for a concurrent write holding the lock.
+    """
+    The operator-configured cache TTL, falling back to the environment.
+
+    Read lazily rather than at import. It used to open the database at module import
+    time, which was survivable against a local file and is not against a pooled
+    network one: importing this module would build a connection pool as a side
+    effect, and any blip made the whole application fail to start over a tunable
+    that has a perfectly good default.
+    """
+    from shared import db
+
     try:
         with db.connect() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
-            cursor = conn.execute("SELECT value FROM app_settings WHERE key='cache_ttl'")
-            row = cursor.fetchone()
+            row = conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'cache_ttl'"
+            ).fetchone()
             if row:
                 return int(row[0])
     except Exception:
         pass
     return int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
 
-CACHE_TTL_MINUTES = _get_ttl_from_db()
+
+CACHE_TTL_MINUTES = int(os.getenv("FINANCEBUDDY_CACHE_TTL", 60))
+
+
+def refresh_cache_ttl() -> int:
+    """Reload the TTL from the database. Called at startup, and after /market/config."""
+    global CACHE_TTL_MINUTES
+    CACHE_TTL_MINUTES = _get_ttl_from_db()
+    return CACHE_TTL_MINUTES
 
 # Absolute directory path for disk-backed JSON cache storage.
 #
