@@ -3,7 +3,7 @@ routers/market.py
 Live market indices and global clock.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from shared.services.cache import get_cache_headers
 from shared.services.market_indices import fetch_live_market_summary
@@ -49,7 +49,19 @@ MIN_CACHE_TTL_MINUTES = 1
 
 @router.post("/config")
 def update_market_config(ttl: int):
-    from shared import config, db
+    """
+    Tune the market-data cache TTL.
+
+    Requires a signed-in caller. It writes a persisted, deployment-wide setting, so
+    while the floor above stops anyone disabling caching outright, an anonymous
+    caller could still drive the TTL to the minimum and multiply upstream load for
+    every user. Not per-user data, so any authenticated caller is enough - this is a
+    rate-limiting concern, not an ownership one.
+    """
+    from shared import config, db, identity
+
+    if not identity.current_user_id():
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
     ttl = max(MIN_CACHE_TTL_MINUTES, ttl)
     config.CACHE_TTL_MINUTES = ttl

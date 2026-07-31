@@ -27,6 +27,48 @@ def seeded(clean_db):
     return clean_db
 
 
+def test_row_factory_does_not_leak_between_pooled_connections(clean_db):
+    """
+    A connection borrowed with dict_row must go back to the pool as it came.
+
+    This was a live bug, and a quiet one. `connect(row_factory=dict_row)` set the
+    factory on a pooled connection and never restored it, so the next borrower got
+    dicts where it expected tuples - and unpacking a dict yields its *keys*, so
+    `is_partial, holdings, ... = row` bound `holdings` to the string "holdings"
+    rather than raising. It surfaced as a decode failure deep inside load_session,
+    nowhere near the call that changed the setting.
+
+    Only reproducible against a real pool, which is why it survived until the suite
+    could run against Postgres.
+    """
+    from psycopg.rows import dict_row
+
+    with db.connect(row_factory=dict_row) as conn:
+        assert isinstance(conn.execute("SELECT 1 AS n").fetchone(), dict)
+
+    with db.connect() as conn:
+        row = conn.execute("SELECT 1 AS n").fetchone()
+    assert isinstance(row, tuple), (
+        f"pooled connection came back configured as {type(row).__name__}; "
+        "a later caller expecting tuples would unpack column names instead of values"
+    )
+
+
+def test_a_dict_row_read_does_not_break_the_next_session_load(clean_db):
+    """
+    The end-to-end shape of the leak: get_history uses dict_row, load_session does
+    not, and in production one routinely follows the other on the same connection.
+    """
+    df_h = pd.DataFrame([{"Fund": "F", "Units": 1.0, "Market Value": 100.0, "Invested": 90.0}])
+    storage.save_session("sid-factory", df_h, pd.DataFrame(), pd.DataFrame(), is_partial=False)
+
+    storage.get_history()                         # borrows with dict_row
+    loaded = storage.load_session("sid-factory")  # expects tuples
+
+    assert loaded is not None, "load_session broke after a dict_row query on the same pool"
+    assert not loaded[0].empty
+
+
 def test_session_payload_lookup_is_a_primary_key_seek(clean_db):
     """
     load_session reads the payload with `WHERE session_id=?` on a table holding every
@@ -47,11 +89,17 @@ def test_session_payload_lookup_is_a_primary_key_seek(clean_db):
         plan = conn.execute(
             "EXPLAIN "
             "SELECT holdings, transactions, sips, meta FROM session_payloads "
-            "WHERE session_id = ?",
+            "WHERE session_id = %s",
             ("sid-index-test",),
         ).fetchall()
     text = " ".join(str(row) for row in plan)
-    assert "SEARCH" in text, f"payload lookup is not an index seek: {text}"
+    # Postgres plan vocabulary, not SQLite's: "Index Scan" / "Index Only Scan"
+    # where EXPLAIN QUERY PLAN used to say "SEARCH", and "Seq Scan" where it said
+    # "SCAN". Asserting the absence of a Seq Scan as well, because on a table this
+    # small the planner could legitimately prefer one - if it ever does, this test
+    # is measuring fixture size rather than schema and should be reconsidered.
+    assert "Index Scan" in text, f"payload lookup is not an index seek: {text}"
+    assert "Seq Scan" not in text, f"payload lookup fell back to a table scan: {text}"
 
 
 def test_session_payload_write_is_one_row_per_session(clean_db):
@@ -61,7 +109,7 @@ def test_session_payload_write_is_one_row_per_session(clean_db):
 
     with db.connect() as conn:
         count = conn.execute(
-            "SELECT COUNT(*) FROM session_payloads WHERE session_id = ?", ("sid-one-row",)
+            "SELECT COUNT(*) FROM session_payloads WHERE session_id = %s", ("sid-one-row",)
         ).fetchone()[0]
     assert count == 1
 

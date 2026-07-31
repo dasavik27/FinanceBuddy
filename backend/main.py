@@ -19,11 +19,11 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from shared import db, oidc, users
+from shared import db, identity, oidc, users
 from shared.identity import identity_scope
 from shared.services.cache import cache_stats, request_scope
 
@@ -342,5 +342,12 @@ def health_cache():
 
     Useful for answering "is the cache actually working" after a deploy, rather
     than asserting that it is.
+
+    Authenticated, unlike `/health`. It carries no user data, but hit/miss/eviction
+    counters do reveal how much traffic the deployment is handling and when - which
+    is not something to publish. `/health` stays open because the platform's health
+    check calls it before anything could be signed in.
     """
+    if not identity.current_user_id():
+        raise HTTPException(status_code=401, detail="Authentication required.")
     return cache_stats()

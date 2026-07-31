@@ -335,19 +335,25 @@ def forget(session_id: str) -> bool:
 
 def evict_for_user(user_id: str) -> int:
     """
-    Drop a PAN's resident sessions. Returns how many were dropped.
+    Drop a user's resident sessions. Returns how many were dropped.
 
-    Required by the purge path: deleting the SQLite rows left the portfolios sitting
-    in memory, so data the user asked to have permanently deleted stayed readable for
-    up to the session TTL by anyone holding the id - and, with the registry row gone,
-    the registry could no longer say who owned it. The tax store already did this; the
-    mutual-fund store did not.
+    Required by the purge path: deleting the rows left the portfolios sitting in
+    memory, so data the user asked to have permanently deleted stayed readable for up
+    to the session TTL by anyone holding the id - and, with the registry row gone, the
+    registry could no longer say who owned it.
+
+    Compared exactly, with no case folding. The owner used to be a PAN, which is
+    conventionally upper-case, so this upper-cased before comparing; it is now a
+    lower-case uuid, and that leftover `.upper()` made the comparison never match.
+    Eviction silently became a no-op that still reported success - so a purge left
+    every portfolio resident and readable, which is precisely the bug this function
+    exists to prevent.
     """
     target = str(user_id or "")
     with _SESSIONS_LOCK:
         doomed = [
             sid for sid, entry in _SESSIONS.items()
-            if (entry.get("owner") or "").upper() == target
+            if str(entry.get("owner") or "") == target
         ]
         for sid in doomed:
             _SESSIONS.pop(sid, None)

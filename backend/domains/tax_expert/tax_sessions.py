@@ -32,9 +32,7 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
-from psycopg.types.json import Jsonb
-
-from shared import db, identity
+from shared import crypto, db, identity
 from shared.identity import mask_pan
 
 logger = logging.getLogger(__name__)
@@ -115,12 +113,14 @@ def _load_from_disk_locked():
                     expired.append(sid)
                     continue
                 try:
-                    session = json.loads(blob) if isinstance(blob, (str, bytes)) else blob
+                    session = crypto.decrypt_json(blob, aad=sid)
                     if not isinstance(session, dict):
                         raise TypeError(f"expected an object, got {type(session).__name__}")
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Discarding unreadable tax session {sid}: {e}")
-                    expired.append(sid)
+                except (crypto.DecryptionFailed, ValueError, TypeError) as e:
+                    # Not deleted: an undecryptable row is far more likely a
+                    # misconfigured key than a corrupt session, and dropping it would
+                    # turn a recoverable config mistake into permanent data loss.
+                    logger.error(f"Skipping unreadable tax session {sid}: {e}")
                     continue
                 session.setdefault("_version", 0)
                 session["_last_access"] = updated_at or time.time()
@@ -169,10 +169,10 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     if updated_at and updated_at < time.time() - SESSION_TTL_SECONDS:
         return None
     try:
-        session = json.loads(blob) if isinstance(blob, (str, bytes)) else blob
+        session = crypto.decrypt_json(blob, aad=session_id)
         if not isinstance(session, dict):
             raise TypeError(f"expected an object, got {type(session).__name__}")
-    except (ValueError, TypeError) as e:
+    except (crypto.DecryptionFailed, ValueError, TypeError) as e:
         logger.warning(f"Discarding unreadable tax session {session_id}: {e}")
         return None
 
@@ -262,14 +262,17 @@ def _persist_one(session_id: str):
             conn.execute(
                 """
                 INSERT INTO sessions
-                    (session_id, user_id, upload_type, data_hash, summary, updated_at)
+                    (session_id, user_id, upload_type, data_hash, metrics, updated_at)
                 VALUES (%s, %s, 'tax_expert', %s, %s, now())
                 ON CONFLICT (session_id) DO UPDATE SET
                     data_hash = EXCLUDED.data_hash,
-                    summary = EXCLUDED.summary,
+                    metrics = EXCLUDED.metrics,
                     updated_at = now()
                 """,
-                (session_id, user_id, fingerprint, Jsonb(summary)),
+                # gross_salary lives in here, so the timeline summary is encrypted
+                # alongside the document rather than left queryable.
+                (session_id, user_id, fingerprint,
+                 crypto.encrypt_json({"summary": summary}, aad=session_id)),
             )
             conn.execute(
                 """
@@ -280,7 +283,7 @@ def _persist_one(session_id: str):
                     version = EXCLUDED.version,
                     updated_at = now()
                 """,
-                (session_id, Jsonb(snapshot), version),
+                (session_id, crypto.encrypt_json(snapshot, aad=session_id), version),
             )
     except Exception as e:
         logger.error(f"Failed to persist tax session {session_id}: {e}")
@@ -632,7 +635,7 @@ def get_sessions_by_user(user_id: str) -> list:
         with db.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT session_id, created_at, updated_at, summary
+                SELECT session_id, created_at, updated_at, metrics
                 FROM sessions
                 WHERE user_id = %s AND upload_type = 'tax_expert'
                 ORDER BY created_at DESC
@@ -644,8 +647,14 @@ def get_sessions_by_user(user_id: str) -> list:
         return []
 
     results = []
-    for session_id, created_at, updated_at, summary in rows:
-        summary = summary or {}
+    for session_id, created_at, updated_at, metrics_blob in rows:
+        try:
+            summary = (crypto.decrypt_json(metrics_blob, aad=session_id) or {}).get("summary") or {}
+        except crypto.DecryptionFailed:
+            # One damaged row must not hide the rest of the history; it lists with
+            # blank fields and a working timestamp.
+            logger.exception("Cannot decrypt metrics for tax session %s", session_id)
+            summary = {}
         results.append({
             "session_id": session_id,
             # Timestamps were absent from this response entirely, which is why the

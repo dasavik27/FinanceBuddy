@@ -17,7 +17,7 @@ import time
 from collections import OrderedDict
 from typing import Optional, Tuple
 
-from shared import db, identity
+from shared import crypto, db, identity
 from shared.identity import Caller
 
 logger = logging.getLogger(__name__)
@@ -134,18 +134,20 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
             # assert someone else's. The legacy path passes one in only because it
             # *is* the credential there, and it is written to the profile below.
             profile = conn.execute(
-                "SELECT pan FROM profiles WHERE user_id = %s", (user_id,)
+                "SELECT pan_encrypted FROM profiles WHERE user_id = %s", (user_id,)
             ).fetchone()
-            stored_pan = profile[0] if profile else None
+            # Bound to the user id, so a PAN ciphertext copied into another account's
+            # profile row fails to decrypt rather than being served as theirs.
+            stored_pan = _decrypt_pan(profile[0], user_id) if profile else None
 
             if pan and pan != stored_pan:
                 conn.execute(
                     """
-                    INSERT INTO profiles (user_id, pan) VALUES (%s, %s)
+                    INSERT INTO profiles (user_id, pan_encrypted) VALUES (%s, %s)
                     ON CONFLICT (user_id) DO UPDATE
-                        SET pan = EXCLUDED.pan, updated_at = now()
+                        SET pan_encrypted = EXCLUDED.pan_encrypted, updated_at = now()
                     """,
-                    (user_id, pan),
+                    (user_id, crypto.encrypt_text(pan, aad=str(user_id))),
                 )
                 stored_pan = pan
 
@@ -159,14 +161,32 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
         return None
 
 
+def _decrypt_pan(blob, user_id) -> Optional[str]:
+    """
+    Decrypt a stored PAN, degrading to None rather than failing the request.
+
+    A PAN that will not decrypt costs the CAS-password autofill - the upload form
+    asks for a password instead. That is a far better outcome than 500-ing every
+    authenticated request, which is what raising here would do: this runs inside
+    identity resolution, on the path of every single call.
+    """
+    if blob is None:
+        return None
+    try:
+        return crypto.decrypt_text(blob, aad=str(user_id))
+    except crypto.DecryptionFailed:
+        logger.exception("[AUTH] cannot decrypt stored PAN for user %s", user_id)
+        return None
+
+
 def find_pan(user_id: str) -> Optional[str]:
     """The PAN on a user's profile, if they have set one."""
     try:
         with db.connect() as conn:
             row = conn.execute(
-                "SELECT pan FROM profiles WHERE user_id = %s", (user_id,)
+                "SELECT pan_encrypted FROM profiles WHERE user_id = %s", (user_id,)
             ).fetchone()
-        return row[0] if row else None
+        return _decrypt_pan(row[0], user_id) if row else None
     except Exception as e:
         logger.error("[AUTH] profile lookup failed: %s", e)
         return None
@@ -180,11 +200,11 @@ def set_pan(user_id: str, raw_pan: str) -> Optional[str]:
     with db.connect() as conn:
         conn.execute(
             """
-            INSERT INTO profiles (user_id, pan) VALUES (%s, %s)
+            INSERT INTO profiles (user_id, pan_encrypted) VALUES (%s, %s)
             ON CONFLICT (user_id) DO UPDATE
-                SET pan = EXCLUDED.pan, updated_at = now()
+                SET pan_encrypted = EXCLUDED.pan_encrypted, updated_at = now()
             """,
-            (user_id, pan),
+            (user_id, crypto.encrypt_text(pan, aad=str(user_id))),
         )
     # The cached Caller carries the old PAN, and it is read as the CAS password
     # default - a stale one silently fails every upload until the TTL expires.

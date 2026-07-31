@@ -22,7 +22,9 @@ import { useNavigate } from 'react-router-dom'
 import { useIsFetching, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useMarketSummary, useMarketConfig } from '../../hooks/useMarket'
 import { useEffect, useState } from 'react'
-import { useSessionId, useLastSynced, useRefreshTrigger, usePan, useLogout, useAppStore } from '../../store/appStore'
+import { useSessionId, useLastSynced, useRefreshTrigger, usePan, useLogout, useIsAuthenticated, useAppStore } from '../../store/appStore'
+import ProfilePanDialog from '../ProfilePanDialog'
+import BadgeIcon from '@mui/icons-material/Badge'
 import { apiClient } from '../../api/client'
 
 interface TopbarProps {
@@ -35,7 +37,19 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const queryClient = useQueryClient()
   const sid = useSessionId()
   const pan = usePan()
+  const email = useAppStore((s) => s.email)
+  const isAuthenticated = useIsAuthenticated()
+  const [panDialogOpen, setPanDialogOpen] = useState(false)
+  const [promptDismissed, setPromptDismissed] = useState(false)
   const logout = useLogout()
+
+  // A Google account has no PAN until the user adds one, so neither the avatar nor
+  // the label can assume there is one to slice.
+  // Prompt once per visit for a signed-in account with no PAN. Not persisted: a
+  // dismissal that outlived the session would leave no way back except the menu.
+  const promptForPan = isAuthenticated && !pan && !promptDismissed
+  const accountLabel = pan ?? email ?? 'Account'
+  const avatarInitials = (pan ?? email ?? '?').substring(0, 2).toUpperCase()
   // Selector form: the destructured `useAppStore()` re-rendered this whole component
   // (two MUI Menus with large inline sx objects) on every unrelated store write.
   const clearSession = useAppStore((s) => s.clearSession)
@@ -249,16 +263,16 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
           </Box>
           )}
 
-            {pan && (
+            {isAuthenticated && (
               <>
                 <Box 
                   onClick={(e) => setProfileAnchor(e.currentTarget)}
                   sx={{ display: 'flex', alignItems: 'center', gap: 1.5, background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%)', borderRadius: '100px', p: 0.5, pr: 1.5, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.3s ease', '&:hover': { borderColor: 'rgba(99,102,241,0.4)', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(30, 41, 59, 0.8) 100%)' } }}
                 >
                   <Box sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: alpha('#6366F1', 0.2), color: '#818CF8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, border: '1px solid rgba(99,102,241,0.3)' }}>
-                    {pan.substring(0, 2)}
+                    {avatarInitials}
                   </Box>
-                  <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.75rem', letterSpacing: 0.5 }}>{pan}</Typography>
+                  <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.75rem', letterSpacing: 0.5 }}>{accountLabel}</Typography>
                 </Box>
 
                 <Menu
@@ -296,14 +310,26 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                 >
                   <Box sx={{ px: 1, py: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <Box sx={{ width: 36, height: 36, borderRadius: '10px', background: 'linear-gradient(135deg, #6366F1 0%, #38BDF8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: '0.8rem', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)' }}>
-                      {pan.substring(0, 2)}
+                      {avatarInitials}
                     </Box>
                     <Box>
-                      <Typography sx={{ fontWeight: 800, fontSize: '0.875rem', color: '#F8FAFC', lineHeight: 1.2 }}>{pan}</Typography>
+                      <Typography sx={{ fontWeight: 800, fontSize: '0.875rem', color: '#F8FAFC', lineHeight: 1.2 }}>{accountLabel}</Typography>
                       <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>ACTIVE ACCOUNT</Typography>
                     </Box>
                   </Box>
 
+
+                  <MenuItem
+                    onClick={() => { setProfileAnchor(null); setPanDialogOpen(true); }}
+                    sx={{ color: '#F8FAFC' }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
+                      <BadgeIcon sx={{ fontSize: 18, color: pan ? '#38BDF8' : '#FBBF24' }} />
+                      <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>
+                        {pan ? 'Update PAN' : 'Add your PAN'}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
 
                   <MenuItem 
                     onClick={() => { setProfileAnchor(null); navigate('/dashboard/accounts'); }}
@@ -428,6 +454,14 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
             </MenuItem>
           </Menu>
       </Toolbar>
+
+      {/* Opens by itself once for an account that has no PAN yet, and on demand from
+          the account menu. Dismissable: nothing breaks without a PAN, the upload form
+          just asks for the CAS password manually. */}
+      <ProfilePanDialog
+        open={panDialogOpen || promptForPan}
+        onClose={() => { setPanDialogOpen(false); setPromptDismissed(true) }}
+      />
     </AppBar>
   )
 }

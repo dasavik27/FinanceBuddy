@@ -24,7 +24,7 @@ to protect (`identity.owns_record`).
 
 ### PAN is no longer identity
 
-Ownership is `users.id`, a uuid this application issues. PAN moved to `profiles.pan`
+Ownership is `users.id`, a uuid this application issues. PAN moved to `profiles.pan_encrypted`
 — still the CAS PDF password default and the AIS matching key, set once by the user
 after signing in via `PUT /auth/profile/pan` — but it decides nothing about access.
 
@@ -38,7 +38,7 @@ cannot see each other's data.** `test_pan_is_not_identity` pins it.
 | Purging another user's data | Closed — `DELETE /accounts/me` takes no target |
 | A caller who knows a PAN impersonating its owner | Closed — there is no PAN credential to present |
 
-## Storage is durable, and that is the current open item
+## Storage is durable, and what that changed
 
 User data now persists in Postgres. This is a deliberate change and it moved risk
 rather than removing it: sessions hold holdings, capital gains, income and PAN, and
@@ -51,14 +51,8 @@ they no longer evaporate when the container restarts.
 | Access / portability (DPDP) | Closed — `GET /accounts/me/export` |
 | Erasure (DPDP) | Closed — one `DELETE`, cascading to every child table |
 | RLS as a backstop | Closed — enabled with no permissive policy (migration 0002) |
-| **Encryption at rest for PAN and income columns** | **Open** |
-| **Operational: backups, and who can read them** | **Open** |
-
-The last two are the real remaining exposure. Volume-level encryption is whatever the
-host provides; it does not protect against a leaked connection string, and neither
-does RLS, because the application connects as the table owner. Column-level
-encryption (pgcrypto, or application-side envelope encryption) is the honest fix and
-has not been done.
+| Encryption at rest for PAN, income, holdings and portfolio value | Closed — see below |
+| **Operational: backups, and who holds the key** | **Open** |
 
 Handling Indian financial data makes the DPDP Act 2023 applicable. Access, erasure
 and portability are implemented above; consent capture and breach notification are
@@ -75,8 +69,8 @@ portfolio without going through those two functions.
 
 - **not in a request** — an in-process caller (GC daemon, migration, test suite).
   Trusted, because it did not arrive over HTTP.
-- **in a request, no valid PAN** — anonymous HTTP caller. Denied any owned record.
-- **in a request with a PAN** — allowed on exact match only.
+- **in a request, no verified token** — anonymous HTTP caller. Denied any owned record.
+- **in a request as a user** — allowed on exact `user_id` match only.
 
 The first rule is safe *only* because `IdentityMiddleware` wraps every HTTP request,
 so no request can observe that state. `tests/test_authorization.py` asserts the
@@ -107,21 +101,47 @@ deletion of the user's own statements, so it is gone and retention is theirs.
 never accurate and is now clearly wrong. The accurate claim is: *the uploaded document
 is never retained; derived data persists until the user deletes it.*
 
-## Data at rest is not encrypted
+## Data at rest
 
-`tax_payloads.data` is jsonb containing salary, capital gains, deductions and PAN.
-`session_payloads` holds the portfolio as compressed JSON — compressed, which is not
-encrypted and should not be mistaken for it.
+Encrypted by the application before it reaches the database — AES-256-GCM in
+`shared/crypto.py`, keyed from `FINANCEBUDDY_ENCRYPTION_KEYS`. Required, with no
+plaintext fallback: unconfigured, the app raises rather than writing this data in the
+clear, because encryption that silently no-ops is worse than none — the deployment
+reports itself as encrypted and is not.
 
-This used to be recorded as acceptable *because the deployment disk was ephemeral*.
-**That premise is gone.** Data now persists indefinitely, so this is a live data-at-rest
-finding rather than a deferred one.
+| Column | Holds |
+|---|---|
+| `profiles.pan_encrypted` | PAN |
+| `sessions.metrics` | net worth, amount invested, fund count, tax summary incl. gross salary |
+| `session_payloads.holdings/transactions/sips` | the full CAS portfolio and ledger |
+| `tax_payloads.data` | the parsed AIS: salary, capital gains, deductions |
 
-Volume-level encryption is whatever the host provides and does not protect against a
-leaked connection string. Row-level security (migration 0002) does not either — the
-application connects as the table owner. The honest fix is column-level encryption of
-the sensitive fields, either with pgcrypto or application-side with a key from the
-environment. Not done.
+Deliberately left plaintext, because each is either non-reversible or needed for
+queries the encryption would break: `sessions.data_hash` (a SHA-256 salted with
+user_id, needed for dedup equality lookups), `created_at` and `upload_type` (every
+WHERE and ORDER BY), `session_payloads.meta` (column names and datetime units —
+schema, not data), and `identities.email` (already known to the identity provider).
+
+Two properties worth stating because they are not automatic:
+
+- **Randomised.** A fresh nonce per write, so equal plaintexts give different
+  ciphertexts. A deterministic scheme would leak equality — an observer could tell
+  which accounts share a PAN, or which sessions hold an identical portfolio, without
+  decrypting anything.
+- **Bound to its row.** Every ciphertext is authenticated against its `session_id` or
+  `user_id` as GCM associated data. This closes an attack encryption alone does not:
+  someone with write access but no key could otherwise copy one user's encrypted
+  holdings into another user's row, and the application would decrypt and serve it.
+  Covered by `test_a_payload_moved_to_another_session_will_not_decrypt`.
+
+What this does **not** cover: an attacker who has compromised the running application
+has the key by definition. It protects a leaked connection string, a stolen backup,
+or read access at the hosting provider — precisely the cases volume encryption and
+RLS leave open, because the database decrypts for anyone who authenticates and this
+application connects as the table owner.
+
+The remaining operational item is key custody: a backup taken alongside the key is a
+backup with the lock and the key in the same box. See DEPLOYMENT.md.
 
 ## Logging
 
@@ -152,13 +172,10 @@ user-derived payload with a market-data type.
 
 ## Known-open items
 
-1. **Data at rest is not encrypted** (above). The largest remaining item, because
-   storage became durable. Gates using this with real data.
-2. **`POST /market/config` is still unauthenticated.** It can no longer disable
-   caching outright — the TTL is floored at 1 minute — but any caller can still lower
-   it and increase upstream load. It should require a signed-in caller.
-3. **`/health/cache` and `/tax-expert/tax/cache-stats` are unauthenticated.** They leak
-   no user data — counters only — but do reveal activity volume.
+1. **Key custody and backups.** The encryption key must not live where the database
+   backups do, and losing it loses the data. This is process, not code.
+2. **Consent capture and breach notification** (DPDP). Access, erasure and
+   portability are implemented; these two are not, and are also process.
 
 Closed during the pre-production pass, listed so the history is visible: the
 `"empty_ledger"` shared dedup hash, unscoped `/accounts/summary`, unauthenticated
@@ -166,5 +183,7 @@ account purge, `Cache-Control: public` on portfolio data, the unlocked tax sessi
 store, destructive tax-session eviction, unpurged `users` rows, unmasked PAN logging,
 the `auth.py` first-login migration that claimed orphaned sessions for whoever logged
 in first after a restart, the body-supplied PAN on `POST /auth/logout` that let anyone
-destroy a named user's tax sessions, PAN itself being the owner column, and — once
-Google sign-in was in place — the `X-User-PAN` header and `POST /auth/login` entirely.
+destroy a named user's tax sessions, PAN itself being the owner column, the
+`X-User-PAN` header and `POST /auth/login` entirely once Google sign-in was in place,
+unauthenticated `POST /market/config` and cache-stats endpoints, and plaintext
+storage of PAN, salary, holdings and portfolio value.

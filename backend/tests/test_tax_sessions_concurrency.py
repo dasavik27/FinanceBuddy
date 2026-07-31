@@ -27,6 +27,7 @@ someone refactors these functions later:
 """
 
 import threading
+import uuid
 
 
 def _as_user(subject, fn):
@@ -85,7 +86,7 @@ def test_concurrent_create_and_iterate_does_not_raise():
     Writers inserting (and evicting) while readers iterate the store.
 
     Against the unlocked version this raises RuntimeError from list_sessions() or
-    get_sessions_by_pan() - the reachable 500 whenever /accounts/summary overlapped
+    get_sessions_by_user() - the reachable 500 whenever /accounts/summary overlapped
     any tax request.
     """
     errors = []
@@ -108,7 +109,9 @@ def test_concurrent_create_and_iterate_does_not_raise():
         try:
             while not stop.is_set():
                 tax_sessions.list_sessions()
-                tax_sessions.get_sessions_by_pan("W0I0")
+                # Reads the registry rather than the in-memory dict now, so it also
+                # exercises the pool concurrently with the writers above.
+                tax_sessions.get_sessions_by_user(str(uuid.uuid4()))
                 with created_lock:
                     snapshot = list(created)
                 for sid in snapshot[-3:]:

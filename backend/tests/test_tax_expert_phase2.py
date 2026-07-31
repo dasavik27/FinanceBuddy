@@ -105,7 +105,12 @@ def session_id(owner):
         "cg_real_estate": [], "cg_unlisted": [], "cg_bonds_gold": [],
         "refunds": [{"sr": 1, "amount": 5_000, "financial_year": "2024-25"}],
     }
-    sid = _as_user(owner.user_id, lambda: tax_sessions.create_tax_session(ais))
+    # identity_scope with the resolved owner, not _as_user: that helper takes a
+    # provider *subject* and resolves it, so passing a user_id would mint a second,
+    # different account - and the client below authenticates as the first one.
+    from shared import identity
+    with identity.identity_scope(owner):
+        sid = tax_sessions.create_tax_session(ais)
     # Brought-forward losses: another rule the old aggregation skipped.
     tax_sessions.update_overrides(sid, {"bf_losses": {"ltcl": 50_000, "stcl": 10_000}})
     yield sid

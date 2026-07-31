@@ -44,6 +44,39 @@ statement does not survive that; the failure only appears under concurrency.
 latency lever and it is free. Cross-region is ~90 ms per query; a page issuing ten
 becomes a second of waiting.
 
+## Encryption at rest
+
+The columns holding PAN, salary, holdings and portfolio value are encrypted by the
+application (AES-256-GCM, `shared/crypto.py`) before they reach the database. This is
+**required** - there is no plaintext fallback, and the app refuses to write rather
+than store this data unencrypted.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `FINANCEBUDDY_ENCRYPTION_KEYS` | **yes** | Keyring, `id:base64key[,id2:base64key2]`. Each key is 32 raw bytes, base64-encoded. |
+| `FINANCEBUDDY_ENCRYPTION_ACTIVE_KEY` | only with >1 key | Which key new writes use. |
+
+Generate one:
+
+```
+python -c "import base64,os;print('k1:'+base64.b64encode(os.urandom(32)).decode())"
+```
+
+**Losing the key loses the data.** There is no recovery path and that is the point -
+the whole design is that the database alone is not enough. Store it wherever your
+other production secrets live, and back it up separately from the database (a backup
+containing both is a backup with the lock and the key in the same box).
+
+Rotation is additive. Add the new key, point `ACTIVE_KEY` at it, and leave the old
+one in the ring - existing rows still decrypt, and each re-encrypts under the active
+key the next time it is written. Only drop the old entry once nothing is reading it;
+a row whose key has gone reports a decryption error rather than returning empty.
+
+Not covered by this: an attacker who has compromised the running application has the
+key by definition. This protects a leaked connection string, a stolen backup, or
+read access at the hosting provider - which is exactly what volume encryption and
+RLS do not.
+
 ## Authentication
 
 OIDC ID tokens, verified locally against the provider's JWKS. There is no PAN-based

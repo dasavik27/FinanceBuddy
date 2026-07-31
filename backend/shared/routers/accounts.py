@@ -10,7 +10,7 @@ import logging
 
 from psycopg.rows import dict_row
 
-from shared import db, identity, storage, users
+from shared import crypto, db, identity, storage, users
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def export_account_data():
     with db.connect(row_factory=dict_row) as conn:
         account = conn.execute(
             """
-            SELECT u.id, u.created_at, u.last_seen_at, p.pan, p.display_name
+            SELECT u.id, u.created_at, u.last_seen_at, p.pan_encrypted, p.display_name
             FROM users u
             LEFT JOIN profiles p ON p.user_id = u.id
             WHERE u.id = %s
@@ -95,7 +95,7 @@ def export_account_data():
         rows = conn.execute(
             """
             SELECT s.session_id, s.upload_type, s.created_at, s.statement_period,
-                   s.total_value, s.total_invested, s.num_funds, s.summary,
+                   s.metrics,
                    p.holdings, p.transactions, p.sips, p.meta,
                    t.data AS tax_data
             FROM sessions s
@@ -109,27 +109,46 @@ def export_account_data():
 
     exported = []
     for row in rows:
+        session_id = row["session_id"]
+        # An export that silently omits a row the user owns is worse than one that
+        # says it could not be read: this is the artefact someone checks *before*
+        # deleting their account.
+        try:
+            metrics = crypto.decrypt_json(row["metrics"], aad=session_id) or {}
+        except crypto.DecryptionFailed:
+            logger.exception("[EXPORT] cannot decrypt metrics for %s", session_id)
+            metrics = {"error": "could not be decrypted"}
+
         entry = {
-            "session_id": row["session_id"],
+            "session_id": session_id,
             "module": row["upload_type"],
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
             "statement_period": row["statement_period"],
-            "summary": row["summary"],
+            "metrics": metrics,
         }
-        if row["upload_type"] == "tax_expert":
-            entry["ais_data"] = row["tax_data"]
-        else:
-            df_h, df_t, df_s = storage.decode_payload(row)
-            entry["holdings"] = df_h.to_dict(orient="records")
-            entry["transactions"] = df_t.to_dict(orient="records")
-            entry["sips"] = df_s.to_dict(orient="records")
+        try:
+            if row["upload_type"] == "tax_expert":
+                entry["ais_data"] = crypto.decrypt_json(row["tax_data"], aad=session_id)
+            else:
+                df_h, df_t, df_s = storage.decode_payload({
+                    "holdings": crypto.decrypt(row["holdings"], aad=session_id),
+                    "transactions": crypto.decrypt(row["transactions"], aad=session_id),
+                    "sips": crypto.decrypt(row["sips"], aad=session_id),
+                    "meta": row["meta"],
+                })
+                entry["holdings"] = df_h.to_dict(orient="records")
+                entry["transactions"] = df_t.to_dict(orient="records")
+                entry["sips"] = df_s.to_dict(orient="records")
+        except crypto.DecryptionFailed:
+            logger.exception("[EXPORT] cannot decrypt payload for %s", session_id)
+            entry["error"] = "this session's data could not be decrypted"
         exported.append(entry)
 
     return {
         "account": {
             "user_id": str(account["id"]),
             "created_at": account["created_at"].isoformat() if account["created_at"] else None,
-            "pan": account["pan"],
+            "pan": users.find_pan(caller.user_id),
             "display_name": account["display_name"],
         } if account else None,
         # Deliberately no `subject`: it is the provider's identifier for this person

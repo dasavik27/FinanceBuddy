@@ -33,7 +33,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from shared import db
+from shared import crypto, db
 
 import logging
 logger = logging.getLogger(__name__)
@@ -346,29 +346,42 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
     if ledger_hash is None:
         ledger_hash = compute_ledger_hash(df_t, user_id)
 
-    total_value = float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0
-    total_invested = float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0
-    num_funds = len(df_h)
+    # total_value is the user's net worth, so these are encrypted alongside the
+    # payload rather than left as queryable doubles. Nothing filters or sorts on them
+    # in SQL - the history timeline just displays them.
+    metrics = {
+        "total_value": float(df_h["Market Value"].sum()) if not df_h.empty and "Market Value" in df_h.columns else 0.0,
+        "total_invested": float(df_h["Invested"].sum()) if not df_h.empty and "Invested" in df_h.columns else 0.0,
+        "num_funds": len(df_h),
+    }
 
-    # Compressing outside the transaction keeps a ~300 ms CPU-bound encode off the
-    # connection, which would otherwise hold it (and its share of a small pool) idle.
+    # Compressing and encrypting outside the transaction keeps ~300 ms of CPU-bound
+    # work off the connection, which would otherwise hold it (and its share of a
+    # small pool) idle.
     payload = encode_payload(df_h, df_t, df_s)
+    # Bound to the session id: a ciphertext copied into another session's row fails
+    # to decrypt rather than being served to the wrong owner.
+    encrypted = {
+        name: crypto.encrypt(payload[name], aad=session_id)
+        for name in _PAYLOAD_FRAMES
+    }
+    encrypted_metrics = crypto.encrypt_json(metrics, aad=session_id)
 
     with _connect() as conn:
         row = conn.execute(
             """
             INSERT INTO sessions (
                 session_id, user_id, upload_type, data_hash,
-                total_value, total_invested, num_funds, is_partial, statement_period
+                metrics, is_partial, statement_period
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (data_hash, user_id) WHERE data_hash IS NOT NULL
             DO NOTHING
             RETURNING session_id
             """,
             (
                 session_id, user_id, upload_type, ledger_hash,
-                total_value, total_invested, num_funds, is_partial, statement_period,
+                encrypted_metrics, is_partial, statement_period,
             ),
         ).fetchone()
 
@@ -405,8 +418,10 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
                 byte_size = EXCLUDED.byte_size
             """,
             (
-                session_id, payload["codec"], payload["holdings"],
-                payload["transactions"], payload["sips"],
+                session_id, payload["codec"], encrypted["holdings"],
+                encrypted["transactions"], encrypted["sips"],
+                # meta stays plaintext jsonb: it holds column names and datetime
+                # units, which is schema rather than data.
                 Jsonb(payload["meta"]), payload["byte_size"],
             ),
         )
@@ -441,12 +456,22 @@ def load_session(session_id: str) -> Optional[Tuple[pd.DataFrame, pd.DataFrame, 
         # not. Reported as empty rather than missing, so the 404 stays reserved for
         # "no such session".
         df_h, df_t, df_s = decode_payload({
-            "holdings": holdings,
-            "transactions": transactions,
-            "sips": sips,
+            "holdings": crypto.decrypt(holdings, aad=session_id),
+            "transactions": crypto.decrypt(transactions, aad=session_id),
+            "sips": crypto.decrypt(sips, aad=session_id),
             "meta": meta,
         })
         return df_h, df_t, df_s, bool(is_partial)
+    except crypto.DecryptionFailed:
+        # Deliberately not folded into the generic handler below. Returning None here
+        # renders as "session not found", which for a decryption failure would mean a
+        # misconfigured key silently looks like an empty account across every session
+        # at once. Re-raised so it surfaces as a 500 with the reason in the log.
+        logger.exception(
+            "[STORAGE] cannot decrypt session %s - check FINANCEBUDDY_ENCRYPTION_KEYS",
+            session_id,
+        )
+        raise
     except Exception as e:
         logger.error(f"[STORAGE ERROR] Failed to load session {session_id}: {e}")
         return None
@@ -456,14 +481,13 @@ def get_history(user_id: str = None, upload_type: str = None) -> list:
     """
     The caller's uploads, newest first.
 
-    Selects named columns rather than `*`: the payload table is separate, but the
-    registry now carries a `summary` jsonb and there is no reason to ship columns the
-    timeline does not render.
+    Selects named columns rather than `*`, and flattens the encrypted `metrics` blob
+    back into the same keys the timeline has always read - so the API contract is
+    unchanged by the columns having moved inside encryption.
     """
     query = [
         "SELECT session_id, user_id, upload_type, created_at, updated_at,",
-        "       total_value, total_invested, num_funds, is_partial,",
-        "       statement_period, summary",
+        "       is_partial, statement_period, metrics",
         "FROM sessions WHERE TRUE",
     ]
     params = []
@@ -479,10 +503,28 @@ def get_history(user_id: str = None, upload_type: str = None) -> list:
     with _connect(row_factory=dict_row) as conn:
         rows = conn.execute(" ".join(query), params).fetchall()
 
-    # user_id is a uuid; stringify so the response serialises without a custom encoder.
     for row in rows:
+        # user_id is a uuid; stringify so the response serialises without a custom
+        # encoder.
         if row.get("user_id") is not None:
             row["user_id"] = str(row["user_id"])
+
+        # Flatten metrics back to top-level keys. A row whose metrics will not
+        # decrypt still lists - the timeline degrades to showing the date and the
+        # restore button rather than the whole history vanishing, which is the more
+        # useful failure when one row is damaged.
+        blob = row.pop("metrics", None)
+        try:
+            metrics = crypto.decrypt_json(blob, aad=row["session_id"]) or {}
+        except crypto.DecryptionFailed:
+            logger.exception(
+                "[STORAGE] cannot decrypt metrics for session %s", row["session_id"]
+            )
+            metrics = {}
+        row["total_value"] = metrics.get("total_value")
+        row["total_invested"] = metrics.get("total_invested")
+        row["num_funds"] = metrics.get("num_funds")
+        row["summary"] = metrics.get("summary") or {}
     return rows
 
 

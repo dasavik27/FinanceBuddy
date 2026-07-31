@@ -91,8 +91,21 @@ _pool_lock = threading.Lock()
 
 
 def _configure(conn: psycopg.Connection) -> None:
-    """Applied once per physical connection, not per checkout."""
+    """
+    Applied once per physical connection, not per checkout.
+
+    The commit is required, not tidiness. These connections are not autocommit, so
+    the SET opens a transaction and leaves the connection INTRANS - and psycopg's
+    pool rejects any connection a configure function hands back in that state,
+    discarding it and retrying forever. The symptom is every checkout timing out
+    with "couldn't get a connection", which reads like the server is unreachable
+    rather than like a bug here.
+
+    `SET` rather than `SET LOCAL` so the setting survives this commit and applies to
+    every transaction on the connection.
+    """
     conn.execute(f"SET statement_timeout = {STATEMENT_TIMEOUT_MS}")
+    conn.commit()
 
 
 def get_pool() -> ConnectionPool:
@@ -170,14 +183,25 @@ def connect(row_factory=None) -> Iterator[psycopg.Connection]:
 
     Pass row_factory=dict_row where a query wants column access by name; the default
     tuple factory is the cheapest and is what most callers here want.
+
+    The factory is restored before the connection goes back to the pool, and that
+    restore is load-bearing. A pooled connection is reused: setting row_factory on it
+    and walking away leaves the *next* borrower silently receiving dicts where it
+    expects tuples. That does not raise - `a, b, c = row` on a dict unpacks its
+    **keys** - so a caller ends up with the string "holdings" where it wanted the
+    holdings blob, several frames away from the code that changed the setting.
     """
     pool = get_pool()
     with pool.connection() as conn:
+        previous_row_factory = conn.row_factory
         if row_factory is not None:
             conn.row_factory = row_factory
-        # psycopg's connection context manager already commits on clean exit and
-        # rolls back on exception, so no explicit handling is needed here.
-        yield conn
+        try:
+            # psycopg's connection context manager already commits on clean exit and
+            # rolls back on exception, so no explicit handling is needed here.
+            yield conn
+        finally:
+            conn.row_factory = previous_row_factory
 
 
 __all__ = [

@@ -18,6 +18,13 @@
 -- Only gen_random_uuid() is assumed, which is core Postgres from 13 on, so this
 -- schema applies unchanged to Supabase, Neon, RDS, Railway or a local server.
 
+-- gen_random_uuid() is core Postgres only from 13 onward; on 11 and 12 it lives in
+-- pgcrypto. Creating the extension is a no-op where the function is already built in,
+-- so this one line makes the schema apply unchanged from 11 through 17 - which
+-- matters because the deployment target and a developer's local server are rarely
+-- the same major version.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ── Identity ─────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS users (

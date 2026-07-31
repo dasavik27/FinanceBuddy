@@ -114,8 +114,16 @@ def test_health_does_not_claim_unverified_optimizations(client):
         assert claim not in flat, f"/health still asserts {claim!r}"
 
 
-def test_health_cache_reports_live_counters(client):
-    body = client.get("/health/cache").json()
+def test_health_cache_requires_authentication(client):
+    """
+    The counters carry no user data, but they do reveal traffic volume and timing.
+    /health stays open for the platform's liveness probe; this one does not.
+    """
+    assert client.get("/health/cache").status_code == 401
+
+
+def test_health_cache_reports_live_counters(client, signed_in):
+    body = client.get("/health/cache", headers=signed_in).json()
     assert "tiers" in body
     assert len(body["tiers"]) >= 1
 
@@ -125,17 +133,17 @@ def test_health_cache_reports_live_counters(client):
     assert isinstance(tier["hits"], int)
 
 
-def test_health_cache_reflects_real_activity(client):
+def test_health_cache_reflects_real_activity(client, signed_in):
     from shared.services.cache import DERIVED_CACHE
 
     DERIVED_CACHE.clear()
-    before = client.get("/health/cache").json()
+    before = client.get("/health/cache", headers=signed_in).json()
     derived_before = [t for t in before["tiers"] if t["name"] == "L1-derived"][0]
 
     DERIVED_CACHE.get_or_compute("probe", lambda: "v", 60)
     DERIVED_CACHE.get_or_compute("probe", lambda: "v", 60)  # hit
 
-    after = client.get("/health/cache").json()
+    after = client.get("/health/cache", headers=signed_in).json()
     derived_after = [t for t in after["tiers"] if t["name"] == "L1-derived"][0]
 
     assert derived_after["hits"] > derived_before["hits"], (

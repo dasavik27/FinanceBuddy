@@ -1,3 +1,4 @@
+import base64
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -15,6 +16,14 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AUTH_JWKS_URL", "https://example-test-issuer.invalid/jwks.json")
 os.environ.setdefault("AUTH_ISSUER", "https://example-test-issuer.invalid/auth/v1")
 os.environ.setdefault("AUTH_AUDIENCE", "authenticated")
+
+# A fixed, obviously-fake key so the storage tests can round-trip encrypted columns.
+# setdefault, not a plain assignment: test_crypto.py drives its own keyring through
+# monkeypatch and must not be pinned to this one.
+os.environ.setdefault(
+    "FINANCEBUDDY_ENCRYPTION_KEYS",
+    "test:" + base64.b64encode(b"financebuddy-test-key-do-not-use").decode(),
+)
 
 from main import app
 
@@ -69,7 +78,14 @@ def db_schema():
 
     def _configure_with_schema(conn):
         previous_configure(conn)
-        conn.execute(f'SET search_path TO "{schema}"')
+        # `public` stays on the path as a fallback so extension functions remain
+        # resolvable - gen_random_uuid() comes from pgcrypto, which is installed
+        # once per database into public, not per schema. Tables still land in the
+        # test schema because unqualified CREATE uses the first entry.
+        conn.execute(f'SET search_path TO "{schema}", public')
+        # Same reason as db._configure: the pool discards a connection returned
+        # INTRANS, which surfaces as every checkout timing out.
+        conn.commit()
 
     db._configure = _configure_with_schema
     db.reset_pool()
@@ -88,11 +104,25 @@ def db_schema():
 
 @pytest.fixture
 def clean_db(db_schema):
-    """Empty every table before a test, keeping the schema."""
-    from shared import db
+    """
+    Empty every table before a test, keeping the schema.
+
+    Also clears the in-process caches that mirror those tables. Truncating alone is
+    not enough: users.resolve() memoises (issuer, subject) -> user_id, so the next
+    resolve returns a uuid whose row has just been deleted, and the first insert
+    referencing it fails on the foreign key - several frames from the truncate that
+    caused it. The session stores hold the same kind of stale state.
+    """
+    from shared import db, users
+    from domains.mutual_funds import sessions as mf_sessions
+    from domains.tax_expert import tax_sessions
 
     with db.connect() as conn:
         conn.execute("TRUNCATE users, sessions RESTART IDENTITY CASCADE")
+
+    users.invalidate()
+    mf_sessions.clear_all()
+    tax_sessions.clear_all()
     yield db_schema
 
 
@@ -142,6 +172,31 @@ def fake_bearer_auth(monkeypatch):
         return {"Authorization": f"Bearer {issuer}|{subject}|{email}"}
 
     return _header
+
+
+@pytest.fixture
+def signed_in(monkeypatch):
+    """
+    Authenticate without a database. Returns headers to pass to the client.
+
+    For tests whose subject is not identity - cache counters, response headers -
+    but which sit behind an auth check anyway. fake_bearer_auth is not usable
+    there: it resolves a real account, which needs Postgres, and would drag
+    otherwise-DB-free tests behind TEST_DATABASE_URL.
+
+    Stubs the resolution step rather than the check, so the middleware, the
+    ContextVar and the route's own `current_user_id()` all still run for real.
+    """
+    from shared import oidc, users
+    from shared.identity import Caller
+
+    caller = Caller(user_id="00000000-0000-0000-0000-0000000000ff", pan=None)
+    monkeypatch.setattr(users, "resolve", lambda *a, **k: caller)
+    monkeypatch.setattr(
+        oidc.OidcJwtVerifier, "verify",
+        lambda self, token: oidc.Principal(issuer=TEST_ISSUER, subject="stub-subject"),
+    )
+    return {"Authorization": "Bearer stub-token"}
 
 
 # ---------------------------------------------------------------------------
