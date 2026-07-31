@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
 import authClient from './shared/auth/authClient'
+import apiClient from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import { TabFallback } from './shared/components/ui'
 
@@ -31,6 +32,9 @@ export default function App() {
     const unsubscribe = authClient.onAuthStateChange((user) => {
       if (user) {
         setIdentity({ userId: user.id, email: user.email })
+        apiClient.getMe().then((me) => {
+          setIdentity({ userId: user.id, email: user.email, pan: me.pan })
+        }).catch((e) => console.error('Failed to fetch profile', e))
       } else {
         clearIdentity()
       }
