@@ -5,6 +5,7 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import SavingsIcon from '@mui/icons-material/Savings'
 import ShowChartIcon from '@mui/icons-material/ShowChart'
 import BalanceIcon from '@mui/icons-material/Balance'
+import HistoryIcon from '@mui/icons-material/History'
 import { TabFallback } from '../../../shared/components/ui'
 
 // Lazy for the same reason as the mutual-fund tabs: these five were statically
@@ -15,6 +16,7 @@ const TaxIncomeTab       = lazy(() => import('./tax/TaxIncomeTab'))
 const TaxSavingsTab      = lazy(() => import('./tax/TaxSavingsTab'))
 const TaxCapitalGainsTab = lazy(() => import('./tax/TaxCapitalGainsTab'))
 const TaxITRCompareTab   = lazy(() => import('./tax/TaxITRCompareTab'))
+const TaxHistoryTab      = lazy(() => import('./tax/TaxHistoryTab'))
 
 const TAX_TABS = [
   { label: 'Tax Summary', icon: <SummarizeIcon /> },
@@ -22,6 +24,7 @@ const TAX_TABS = [
   { label: 'Tax Savings', icon: <SavingsIcon /> },
   { label: 'Capital Gains', icon: <ShowChartIcon /> },
   { label: 'Compare ITR', icon: <BalanceIcon /> },
+  { label: 'Filing History', icon: <HistoryIcon /> },
 ]
 
 export default function TaxStrategyTab() {
@@ -68,6 +71,7 @@ export default function TaxStrategyTab() {
         {tab === 2 && <TaxSavingsTab />}
         {tab === 3 && <TaxCapitalGainsTab />}
         {tab === 4 && <TaxITRCompareTab />}
+        {tab === 5 && <TaxHistoryTab />}
       </Suspense>
     </Box>
   )
