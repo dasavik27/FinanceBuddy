@@ -321,7 +321,7 @@ export default function UploadHistory() {
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                     <Box>
                       <Typography variant="subtitle2" sx={{ color: '#fff', fontWeight: 800 }}>
-                        {formatDate(h.created_at + 'Z')}
+                        {formatDate(h.created_at)}
                       </Typography>
                       {h.statement_period && (
                         <Typography variant="caption" sx={{ color: '#38BDF8', fontWeight: 700, mt: 0.5, display: 'block' }}>
@@ -399,7 +399,7 @@ export default function UploadHistory() {
                          const baseline = history.find(h => h.session_id === compareResult.baseline_session)
                          const current = history.find(h => h.session_id === compareResult.current_session)
                          if (baseline && current) {
-                           return `From ${formatDate(baseline.created_at + 'Z')} to ${formatDate(current.created_at + 'Z')}`
+                            return `From ${formatDate(baseline.created_at)} to ${formatDate(current.created_at)}`
                          }
                          return 'Cryptographic Delta Analysis'
                       })()}

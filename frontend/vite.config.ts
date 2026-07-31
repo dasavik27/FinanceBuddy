@@ -5,6 +5,12 @@ export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
     force: true,
+    include: [
+      '@emotion/react', 
+      '@emotion/styled', 
+      '@mui/material/Tooltip',
+      '@mui/material/Popper'
+    ],
   },
   build: {
 

@@ -39,7 +39,7 @@ function fmtDate(iso: string) {
   return new Intl.DateTimeFormat('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso + 'Z'))
+  }).format(new Date(iso))
 }
 
 function fmtINR(v: number) {
