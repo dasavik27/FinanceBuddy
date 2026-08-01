@@ -409,7 +409,12 @@ export const apiClient = {
   },
 
   getEquityHistory: async (): Promise<any> => {
-    const { data } = await api.get('/history/', { headers: { 'X-Upload-Type': 'equity' } })
+    const { data } = await api.get('/history/', { headers: { 'x-upload-type': 'equity' } })
+    return data
+  },
+
+  deleteHistorySession: async (sid: string): Promise<any> => {
+    const { data } = await api.delete(`/history/${sid}`)
     return data
   },
 }
