@@ -230,20 +230,14 @@ def decode_payload(row: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.
     )
 
 
-def compute_ledger_hash(df_t: pd.DataFrame, user_id: Optional[str] = None) -> str:
+def compute_ledger_hash(df_t: pd.DataFrame, user_id: Optional[str] = None, df_holdings: Optional[pd.DataFrame] = None) -> str:
     """
-    Deterministic SHA-256 fingerprint of a transaction ledger, scoped to its owner.
+    Computes a deterministic fingerprint for a transaction ledger.
 
-    The fingerprint exists to skip re-processing a CAS the same user already
-    uploaded. Two properties are load-bearing for that to be safe:
-
-    1. An empty ledger gets a **unique** value, not a shared constant. It
-       previously returned the literal string "empty_ledger", so every
-       transaction-less CAS (a Summary statement carries holdings with no
-       transaction rows) collided on one data_hash - and because the dedup lookup
-       returned a session_id, the second user to upload one was handed the first
-       user's portfolio. An unowned unique value means an empty ledger simply
-       never dedups, which is the correct behaviour: there is nothing to compare.
+    1. An empty ledger (with no holdings) gets a **unique** value.
+       However, if holdings are present (e.g. live API syncs without tradebook),
+       we hash the holdings. This allows idempotent dedup of live syncs for the same user,
+       while preventing cross-user collisions (since user_id is in the hash).
 
     2. The owner is part of the hash. Dedup is a per-user optimisation; a hash
        match across two accounts must never resolve to the other user's session.
@@ -251,17 +245,30 @@ def compute_ledger_hash(df_t: pd.DataFrame, user_id: Optional[str] = None) -> st
        depth rather than the only guard.
     """
     if df_t.empty:
+        if df_holdings is not None and not df_holdings.empty:
+            cols = sorted(df_holdings.columns.tolist())
+            sorted_h = df_holdings[cols].sort_values(by=cols).copy()
+            row_strings = sorted_h.apply(lambda row: "_".join(str(v) for v in row.values), axis=1)
+            full_ledger_string = f"holdings_only|{user_id or ''}|" + "|".join(row_strings.values.astype(str))
+            return hashlib.sha256(full_ledger_string.encode('utf-8')).hexdigest()
+        
         return f"empty_ledger_{uuid.uuid4().hex}"
 
     # Sort transactions chronologically to ensure deterministic ordering
-    sorted_df = df_t.sort_values(by=["Date", "Fund", "Type"]).copy()
-
-    # Create a string representation of the critical columns for each row
-    # We round floats to prevent precision differences from failing the hash
-    row_strings = sorted_df.apply(
-        lambda row: f"{row['Date']}_{row.get('Fund', '')}_{row.get('Type', '')}_{round(row.get('Units', 0.0), 3)}_{round(row.get('Amount', 0.0), 2)}",
-        axis=1
-    )
+    if "date" in df_t.columns and "symbol" in df_t.columns:
+        # Equity format
+        sorted_df = df_t.sort_values(by=["date", "symbol", "type"]).copy()
+        row_strings = sorted_df.apply(
+            lambda row: f"{row['date']}_{row.get('symbol', '')}_{row.get('type', '')}_{round(row.get('quantity', 0.0), 3)}_{round(row.get('price', 0.0), 2)}",
+            axis=1
+        )
+    else:
+        # Mutual fund format
+        sorted_df = df_t.sort_values(by=["Date", "Fund", "Type"]).copy()
+        row_strings = sorted_df.apply(
+            lambda row: f"{row['Date']}_{row.get('Fund', '')}_{row.get('Type', '')}_{round(row.get('Units', 0.0), 3)}_{round(row.get('Amount', 0.0), 2)}",
+            axis=1
+        )
 
     # Concatenate all rows into a single giant string and hash it, prefixed with the
     # owner so identical ledgers under different PANs produce different fingerprints.
@@ -344,7 +351,7 @@ def save_session(session_id: str, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: 
     connection would itself error with "current transaction is aborted".
     """
     if ledger_hash is None:
-        ledger_hash = compute_ledger_hash(df_t, user_id)
+        ledger_hash = compute_ledger_hash(df_t, user_id, df_holdings=df_h)
 
     # total_value is the user's net worth, so these are encrypted alongside the
     # payload rather than left as queryable doubles. Nothing filters or sorts on them

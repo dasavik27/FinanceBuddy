@@ -20,6 +20,8 @@ Groww Holdings CSV columns:
 """
 
 import io
+import json
+import os
 import pandas as pd
 import logging
 
@@ -27,63 +29,40 @@ logger = logging.getLogger(__name__)
 
 # ── Column normalisation maps ──────────────────────────────────────────────────
 
-_ZERODHA_HOLDINGS_COLUMNS = {
-    "tradingsymbol": "symbol",
-    "isin": "isin",
-    "realised quantity": "quantity",
-    "authorised quantity": "quantity",
-    "opening quantity": "quantity",
-    "average price": "avg_price",
-    "last price": "ltp",
-    "close price": "close_price",
-    "pnl": "unrealized_pnl",
-    "day change": "day_change",
-    "day change percentage": "day_change_pct",
-    "exchange": "exchange",
-}
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "broker_config.json")
+try:
+    with open(_CONFIG_PATH, "r") as f:
+        _BROKER_CONFIG = json.load(f)
+except Exception as e:
+    logger.error("Failed to load broker_config.json: %s", e)
+    _BROKER_CONFIG = {"zerodha": {}, "groww": {}, "generic": {}}
 
-_GROWW_HOLDINGS_COLUMNS = {
-    "nse symbol": "symbol",
-    "stock name": "name",
-    "quantity": "quantity",
-    "average price": "avg_price",
-    "current price": "ltp",
-    "current value": "current_value",
-    "total investment": "invested",
-    "bse/nse": "exchange",
-}
+_ZERODHA_HOLDINGS_COLUMNS = _BROKER_CONFIG.get("zerodha", {})
+_GROWW_HOLDINGS_COLUMNS = _BROKER_CONFIG.get("groww", {})
+_GENERIC_COLUMNS = _BROKER_CONFIG.get("generic", {})
+_ZERODHA_TRADEBOOK_COLUMNS = _BROKER_CONFIG.get("zerodha_tradebook", {})
 
-_GENERIC_COLUMNS = {
-    "symbol": "symbol",
-    "stock": "symbol",
-    "scrip": "symbol",
-    "isin": "isin",
-    "qty": "quantity",
-    "quantity": "quantity",
-    "shares": "quantity",
-    "avg price": "avg_price",
-    "avg. price": "avg_price",
-    "average price": "avg_price",
-    "ltp": "ltp",
-    "current price": "ltp",
-    "last price": "ltp",
-    "invested": "invested",
-    "invested value": "invested",
-    "current value": "current_value",
-    "p&l": "unrealized_pnl",
-    "pnl": "unrealized_pnl",
-    "gain/loss": "unrealized_pnl",
-}
-
+def _clean_preface_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Removes junk header rows (e.g. Zerodha Console Excel exports)."""
+    if df.empty:
+        return df
+    if any(str(c).startswith("Unnamed") for c in df.columns):
+        for i in range(min(30, len(df))):
+            row_vals = [str(x).lower().strip() for x in df.iloc[i].values]
+            if "symbol" in row_vals or "tradingsymbol" in row_vals or "nse symbol" in row_vals:
+                df.columns = [str(c) for c in df.iloc[i].values]
+                df = df.iloc[i+1:].reset_index(drop=True)
+                break
+    return df
 
 def _detect_broker(df: pd.DataFrame) -> str:
     """Auto-detect the broker format from column names."""
-    cols = set(c.lower().strip() for c in df.columns)
-    if "tradingsymbol" in cols and "pnl" in cols:
+    cols = set(str(c).lower().strip() for c in df.columns)
+    if ("tradingsymbol" in cols and "pnl" in cols) or ("symbol" in cols and "unrealized p&l" in cols):
         return "zerodha"
     if "stock name" in cols and "nse symbol" in cols:
         return "groww"
-    if "trade_date" in cols and "transaction_type" in cols:
+    if ("trade_date" in cols and "transaction_type" in cols) or ("trade_date" in cols and "trade_type" in cols):
         return "zerodha_tradebook"
     return "generic"
 
@@ -92,7 +71,7 @@ def _normalize_cols(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
     """Rename columns using a case-insensitive map."""
     rename = {}
     for col in df.columns:
-        key = col.lower().strip()
+        key = str(col).lower().strip()
         if key in col_map:
             target = col_map[key]
             if target not in rename.values():  # avoid duplicate targets
@@ -100,9 +79,9 @@ def _normalize_cols(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
     return df.rename(columns=rename)
 
 
-def parse_holdings_csv(raw: bytes) -> tuple[pd.DataFrame, str | None]:
+def parse_holdings_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, str | None]:
     """
-    Parse a holdings CSV from any supported broker.
+    Parse a holdings CSV or XLSX from any supported broker.
 
     Returns (df_holdings, error_message).
     df_holdings columns (standardized):
@@ -111,8 +90,13 @@ def parse_holdings_csv(raw: bytes) -> tuple[pd.DataFrame, str | None]:
       exchange, broker
     """
     try:
-        text = raw.decode("utf-8", errors="replace")
-        df = pd.read_csv(io.StringIO(text))
+        if filename and filename.lower().endswith('.xlsx'):
+            df = pd.read_excel(io.BytesIO(raw))
+        else:
+            text = raw.decode("utf-8", errors="replace")
+            df = pd.read_csv(io.StringIO(text))
+        
+        df = _clean_preface_rows(df)
     except Exception as e:
         return pd.DataFrame(), f"Could not read CSV: {e}"
 
@@ -124,7 +108,7 @@ def parse_holdings_csv(raw: bytes) -> tuple[pd.DataFrame, str | None]:
 
     if broker == "zerodha":
         df = _normalize_cols(df, _ZERODHA_HOLDINGS_COLUMNS)
-        # Zerodha uses "Realised quantity" for actual held qty
+        # Zerodha uses "Realised quantity" for actual held qty if legacy
         if "quantity" not in df.columns and "authorised quantity" in df.columns:
             df = df.rename(columns={"authorised quantity": "quantity"})
     elif broker == "groww":
@@ -182,37 +166,31 @@ def parse_holdings_csv(raw: bytes) -> tuple[pd.DataFrame, str | None]:
     return df, None
 
 
-def parse_tradebook_csv(raw: bytes) -> tuple[pd.DataFrame, str | None]:
+def parse_tradebook_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, str | None]:
     """
-    Parse a Zerodha tradebook CSV for realized P&L and transaction history.
-
-    Zerodha Tradebook columns:
-      trade_date, exchange, tradingsymbol, transaction_type,
-      quantity, average_price, trade_type, order_id, trade_id
+    Parse a tradebook CSV or XLSX. Returns (df_trades, error_message).
+    df_trades columns (standardized):
+      date, symbol, type (buy/sell), quantity, price
     """
     try:
-        text = raw.decode("utf-8", errors="replace")
-        df = pd.read_csv(io.StringIO(text))
+        if filename and filename.lower().endswith('.xlsx'):
+            df = pd.read_excel(io.BytesIO(raw))
+        else:
+            text = raw.decode("utf-8", errors="replace")
+            df = pd.read_csv(io.StringIO(text))
+        
+        df = _clean_preface_rows(df)
     except Exception as e:
         return pd.DataFrame(), f"Could not read Tradebook CSV: {e}"
 
     if df.empty:
         return pd.DataFrame(), "Tradebook CSV is empty."
 
-    cols = set(c.lower().strip() for c in df.columns)
-    if "trade_date" not in cols and "tradingsymbol" not in cols:
-        return pd.DataFrame(), "This does not look like a Zerodha Tradebook. Expected columns: trade_date, tradingsymbol, transaction_type."
+    broker = _detect_broker(df)
+    if broker != "zerodha_tradebook":
+        return pd.DataFrame(), "This does not look like a Zerodha Tradebook. Expected columns: trade_date, symbol, trade_type."
 
-    rename_map = {
-        "trade_date": "date",
-        "tradingsymbol": "symbol",
-        "transaction_type": "type",
-        "quantity": "quantity",
-        "average_price": "price",
-        "exchange": "exchange",
-    }
-    rename = {c: rename_map[c.lower().strip()] for c in df.columns if c.lower().strip() in rename_map}
-    df = df.rename(columns=rename)
+    df = _normalize_cols(df, _ZERODHA_TRADEBOOK_COLUMNS)
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")

@@ -1,0 +1,62 @@
+{
+  "zerodha": {
+    "tradingsymbol": "symbol",
+    "symbol": "symbol",
+    "isin": "isin",
+    "realised quantity": "quantity",
+    "authorised quantity": "quantity",
+    "opening quantity": "quantity",
+    "quantity available": "quantity",
+    "average price": "avg_price",
+    "last price": "ltp",
+    "close price": "close_price",
+    "previous closing price": "ltp",
+    "pnl": "unrealized_pnl",
+    "unrealized p&l": "unrealized_pnl",
+    "day change": "day_change",
+    "day change percentage": "day_change_pct",
+    "exchange": "exchange"
+  },
+  "zerodha_tradebook": {
+    "tradingsymbol": "symbol",
+    "symbol": "symbol",
+    "trade_date": "date",
+    "transaction_type": "type",
+    "trade_type": "type",
+    "quantity": "quantity",
+    "average_price": "price",
+    "price": "price",
+    "exchange": "exchange"
+  },
+  "groww": {
+    "nse symbol": "symbol",
+    "stock name": "name",
+    "quantity": "quantity",
+    "average price": "avg_price",
+    "current price": "ltp",
+    "current value": "current_value",
+    "total investment": "invested",
+    "bse/nse": "exchange"
+  },
+  "generic": {
+    "symbol": "symbol",
+    "stock": "symbol",
+    "scrip": "symbol",
+    "isin": "isin",
+    "qty": "quantity",
+    "quantity": "quantity",
+    "shares": "quantity",
+    "avg price": "avg_price",
+    "avg. price": "avg_price",
+    "average price": "avg_price",
+    "ltp": "ltp",
+    "current price": "ltp",
+    "last price": "ltp",
+    "invested": "invested",
+    "invested value": "invested",
+    "current value": "current_value",
+    "p&l": "unrealized_pnl",
+    "pnl": "unrealized_pnl",
+    "gain/loss": "unrealized_pnl"
+  }
+}

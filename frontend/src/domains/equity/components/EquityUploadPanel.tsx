@@ -339,8 +339,8 @@ export default function EquityUploadPanel() {
     if (accepted[0]) { setTradebookFile(accepted[0]); setError(null) }
   }, [])
 
-  const holdingsDropzone = useDropzone({ onDrop: onDropHoldings, accept: { 'text/csv': ['.csv'] }, maxFiles: 1 })
-  const tradebookDropzone = useDropzone({ onDrop: onDropTradebook, accept: { 'text/csv': ['.csv'] }, maxFiles: 1 })
+  const holdingsDropzone = useDropzone({ onDrop: onDropHoldings, accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }, maxFiles: 1 })
+  const tradebookDropzone = useDropzone({ onDrop: onDropTradebook, accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }, maxFiles: 1 })
 
   const handleAnalyzeCSV = async () => {
     if (!file) return setError('Please select a Holdings CSV.')
@@ -382,7 +382,7 @@ export default function EquityUploadPanel() {
             {hasHistory ? 'Connect or Restore Portfolio' : 'Connect Your Broker'}
           </Typography>
           <Typography sx={{ color: '#64748B', fontSize: '1rem', maxWidth: 520, mx: 'auto' }}>
-            Directly connect your Zerodha account for live sync, or upload your holdings CSV from any major broker (Zerodha, Groww).
+            Directly connect your Zerodha account for live sync, or upload your holdings CSV or XLSX from any major broker (Zerodha, Groww).
           </Typography>
         </Box>
       </motion.div>
@@ -423,7 +423,7 @@ export default function EquityUploadPanel() {
                         }}
                     >
                         <Tab label="Connect Zerodha API" />
-                        <Tab label="CSV Upload" />
+                        <Tab label="CSV / XLSX Upload" />
                     </Tabs>
 
                     <Box sx={{ p: { xs: 3, md: 5 }, flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -458,7 +458,7 @@ export default function EquityUploadPanel() {
                         ) : (
                             // CSV Upload View
                             <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                                <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', mb: 2, fontWeight: 600 }}>1. Current Holdings CSV (Required)</Typography>
+                                <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', mb: 2, fontWeight: 600 }}>1. Current Holdings (CSV or XLSX)</Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
                                     <Box
                                         {...holdingsDropzone.getRootProps()}
@@ -483,8 +483,8 @@ export default function EquityUploadPanel() {
                                         ) : (
                                             <Box>
                                                 <CloudUploadIcon sx={{ fontSize: 28, color: '#10B981', mb: 1 }} />
-                                                <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.9rem' }}>Upload Holdings CSV</Typography>
-                                                <Typography sx={{ color: '#64748B', fontSize: '0.75rem', mt: 0.5 }}>Zerodha or Groww format</Typography>
+                                                <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.9rem' }}>Upload Holdings File</Typography>
+                                                <Typography sx={{ color: '#64748B', fontSize: '0.75rem', mt: 0.5 }}>CSV or XLSX (Zerodha/Groww format)</Typography>
                                             </Box>
                                         )}
                                     </Box>
@@ -497,7 +497,7 @@ export default function EquityUploadPanel() {
                                     )}
                                 </Box>
 
-                                <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', mb: 2, mt: 1, fontWeight: 600 }}>2. Tradebook CSV (Optional, for Realized P&L)</Typography>
+                                <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', mb: 2, mt: 1, fontWeight: 600 }}>2. Tradebook (Optional, for Realized P&L)</Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4 }}>
                                     <Box
                                         {...tradebookDropzone.getRootProps()}
@@ -521,8 +521,8 @@ export default function EquityUploadPanel() {
                                             </Box>
                                         ) : (
                                             <Box>
-                                                <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.9rem' }}>Upload Tradebook CSV</Typography>
-                                                <Typography sx={{ color: '#64748B', fontSize: '0.75rem', mt: 0.5 }}>For capital gains estimates</Typography>
+                                                <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.9rem' }}>Upload Tradebook File</Typography>
+                                                <Typography sx={{ color: '#64748B', fontSize: '0.75rem', mt: 0.5 }}>CSV or XLSX (Zerodha format)</Typography>
                                             </Box>
                                         )}
                                     </Box>
@@ -537,17 +537,17 @@ export default function EquityUploadPanel() {
 
                                 <Button
                                     fullWidth variant="contained" size="large"
-                                    onClick={handleAnalyzeCSV} disabled={!file}
+                                    onClick={handleAnalyzeCSV}
+                                    disabled={!file}
                                     sx={{
-                                        py: 1.8, borderRadius: '16px', fontWeight: 800, fontSize: '1.05rem',
+                                        mt: 'auto', py: 1.8, borderRadius: '16px', fontWeight: 800, fontSize: '1.05rem',
                                         background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                                        color: '#fff', mt: 'auto',
-                                        boxShadow: '0 8px 28px rgba(16,185,129,0.4)', textTransform: 'none',
-                                        '&:hover': { background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', boxShadow: '0 12px 36px rgba(16,185,129,0.5)' },
-                                        '&.Mui-disabled': { background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)' }
+                                        color: '#fff', textTransform: 'none',
+                                        '&:hover': { background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', boxShadow: '0 12px 36px rgba(16,185,129,0.3)' },
+                                        '&:disabled': { background: 'rgba(255,255,255,0.05)', color: '#475569' }
                                     }}
                                 >
-                                    Analyse Portfolio
+                                    Analyze Portfolio
                                 </Button>
                             </Box>
                         )}

@@ -40,7 +40,7 @@ def parse_equity_csv(
     Creates an equity session and returns the session_id.
     """
     raw_holdings = file.file.read()
-    df_holdings, err = parse_holdings_csv(raw_holdings)
+    df_holdings, err = parse_holdings_csv(raw_holdings, filename=file.filename)
     if err:
         raise HTTPException(status_code=422, detail=err)
     if df_holdings.empty:
@@ -49,7 +49,7 @@ def parse_equity_csv(
     df_trades = pd.DataFrame()
     if tradebook and tradebook.filename:
         raw_trades = tradebook.file.read()
-        df_trades, trade_err = parse_tradebook_csv(raw_trades)
+        df_trades, trade_err = parse_tradebook_csv(raw_trades, filename=tradebook.filename)
         if trade_err:
             raise HTTPException(status_code=422, detail=f"Tradebook parse error: {trade_err}")
 
