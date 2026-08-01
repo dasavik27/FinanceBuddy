@@ -35,8 +35,15 @@ from domains.mutual_funds.routers import (
     portfolio, overview, holdings, performance, compare, insights, rebalance, journey, planning,
 )
 
-# Domain: Equity (Indian Stocks) — placeholder
-from domains.equity import router as equity
+# Domain: Equity (Indian Stocks)
+from domains.equity.routers import (
+    portfolio as eq_portfolio,
+    overview as eq_overview,
+    holdings as eq_holdings,
+    performance as eq_performance,
+    insights as eq_insights,
+    analyzer as eq_analyzer,
+)
 
 # Domain: Tax Expert
 from domains.tax_expert.routers import (
@@ -315,9 +322,13 @@ app.include_router(rebalance.router,    prefix="/mutual-funds/rebalance",     ta
 app.include_router(journey.router,      prefix="/mutual-funds/journey",       tags=["Mutual Funds - Wealth Journey Timeline"])
 app.include_router(planning.router,     prefix="/mutual-funds/planning",      tags=["Mutual Funds - Tax Harvest & Goal Planning"])
 
-# Domain: Equity (Indian Stocks) — placeholder namespace, reserved so the frontend
-# can code against the final URL shape before the domain lands.
-app.include_router(equity.router, prefix="/equity", tags=["Equity - Indian Stocks (Coming Soon)"])
+# Domain: Equity (Indian Stocks)
+app.include_router(eq_portfolio.router,   prefix="/equity/portfolio",  tags=["Equity - Session Management"])
+app.include_router(eq_overview.router,    prefix="/equity/overview",   tags=["Equity - Overview & Allocation"])
+app.include_router(eq_holdings.router,    prefix="/equity/holdings",   tags=["Equity - Holdings & P&L"])
+app.include_router(eq_performance.router, prefix="/equity/performance", tags=["Equity - Performance vs Benchmark"])
+app.include_router(eq_insights.router,    prefix="/equity/insights",   tags=["Equity - Smart Insights"])
+app.include_router(eq_analyzer.router,    prefix="/equity/analyzer",   tags=["Equity - Stock Analyzer"])
 
 # Domain: Tax Expert — all six routers share the /tax-expert prefix and define
 # non-overlapping paths within it.

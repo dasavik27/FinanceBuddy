@@ -9,7 +9,7 @@ const pillars = [
   {
     icon: <TimelineIcon sx={{ fontSize: 32, color: '#3B82F6' }} />,
     title: 'Indian Stocks',
-    desc: 'Coming soon — direct equity tracking and analysis for individual stock holdings.',
+    desc: 'Connect with Zerodha or upload a CSV to track live equity performance, run fundamental analysis, and simulate portfolio impact.',
     color: '#3B82F6',
     glow: 'rgba(59, 130, 246, 0.15)',
     path: '/dashboard/equity'

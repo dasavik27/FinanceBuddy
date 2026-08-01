@@ -1,12 +1,13 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
 import { Box } from '@mui/material'
-import { useAppStore } from '../../../shared/store/appStore'
-import IndianStocksTab from './IndianStocksTab'
+import { useAppStore, useEquitySessionId } from '../../../shared/store/appStore'
 import { ErrorBoundary } from '../../../shared/components/ui'
+import EquityDashboard from './EquityDashboard'
+import EquityUploadPanel from './EquityUploadPanel'
 
 export default function IndianStocksDashboard() {
   const setActiveModule = useAppStore((s) => s.setActiveModule)
+  const sessionId = useEquitySessionId()
 
   useEffect(() => {
     setActiveModule('indian_stocks')
@@ -14,10 +15,13 @@ export default function IndianStocksDashboard() {
 
   return (
     <Box>
-      <Routes>
-        <Route index element={<ErrorBoundary fallbackMessage="Stocks tab encountered an error."><IndianStocksTab /></ErrorBoundary>} />
-        <Route path="*" element={<Navigate to="/dashboard/equity" replace />} />
-      </Routes>
+      <ErrorBoundary fallbackMessage="Equity Dashboard encountered an error.">
+        {sessionId ? (
+          <EquityDashboard />
+        ) : (
+          <EquityUploadPanel />
+        )}
+      </ErrorBoundary>
     </Box>
   )
 }

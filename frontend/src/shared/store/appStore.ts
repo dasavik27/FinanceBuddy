@@ -43,6 +43,7 @@ interface AppState {
 
   mfSessionId: string | null
   taxSessionId: string | null
+  equitySessionId: string | null
   
   parseData: any | null
   filters: Filters
@@ -89,6 +90,7 @@ export const useAppStore = create<AppState>()(
           pan: null,
           mfSessionId: null,
           taxSessionId: null,
+          equitySessionId: null,
           parseData: null,
           isPartial: false,
         }),
@@ -108,6 +110,7 @@ export const useAppStore = create<AppState>()(
 
       mfSessionId: null,
       taxSessionId: null,
+      equitySessionId: null,
 
       parseData: null,
       isPartial: false,
@@ -130,6 +133,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           mfSessionId: type === 'mutual_funds' ? id : state.mfSessionId,
           taxSessionId: type === 'tax_expert' ? id : state.taxSessionId,
+          equitySessionId: type === 'equity' ? id : state.equitySessionId,
           parseData: data,
           isPartial: data?.is_partial ?? false,
           lastSynced: Date.now(),
@@ -146,6 +150,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           mfSessionId: type === 'mutual_funds' ? id : state.mfSessionId,
           taxSessionId: type === 'tax_expert' ? id : state.taxSessionId,
+          equitySessionId: type === 'equity' ? id : state.equitySessionId,
           lastSynced: Date.now(),
           filters: { benchmark: 'Nifty 50', categories: [], amcs: [], plan: 'All', minAlloc: 0 },
         })),
@@ -157,11 +162,13 @@ export const useAppStore = create<AppState>()(
       // passing a MouseEvent in here, just narrower.
       clearSession: (type) =>
         set((state) => {
-          const clearsMf = !type || type === 'mutual_funds' || type === 'indian_stocks'
-          const clearsTax = !type || type === 'tax_expert' || type === 'indian_stocks'
+          const clearsMf = !type || type === 'mutual_funds'
+          const clearsTax = !type || type === 'tax_expert'
+          const clearsEquity = !type || type === 'equity'
           return {
             mfSessionId: clearsMf ? null : state.mfSessionId,
             taxSessionId: clearsTax ? null : state.taxSessionId,
+            equitySessionId: clearsEquity ? null : state.equitySessionId,
             parseData: null,
             isPartial: false,
             lastSynced: Date.now(),
@@ -192,6 +199,7 @@ export const useAppStore = create<AppState>()(
           pan: null,
           mfSessionId: null,
           taxSessionId: null,
+          equitySessionId: null,
           parseData: null,
           isPartial: false,
           taxRegime: 'new',
@@ -228,10 +236,12 @@ export const useAppStore = create<AppState>()(
 export const useSessionId = () => useAppStore((s) => {
   if (s.activeModule === 'mutual_funds') return s.mfSessionId
   if (s.activeModule === 'tax_expert') return s.taxSessionId
+  if (s.activeModule === 'indian_stocks') return s.equitySessionId
   return null
 })
 export const useMfSessionId = () => useAppStore((s) => s.mfSessionId)
 export const useTaxSessionId = () => useAppStore((s) => s.taxSessionId)
+export const useEquitySessionId = () => useAppStore((s) => s.equitySessionId)
 export const useFilters = () => useAppStore((s) => s.filters)
 export const useParseData = () => useAppStore((s) => s.parseData)
 export const useIsPartial = () => useAppStore((s) => s.isPartial)
