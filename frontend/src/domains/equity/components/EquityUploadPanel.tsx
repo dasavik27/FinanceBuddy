@@ -296,7 +296,7 @@ export default function EquityUploadPanel() {
     try {
       await apiClient.deleteHistorySession(sid)
       setHistory(h => h.filter(x => x.session_id !== sid))
-      if (useAppStore.getState().sessions.equity === sid) {
+      if (useAppStore.getState().equitySessionId === sid) {
         setSessionById('', 'equity')
       }
     } catch (e) {
