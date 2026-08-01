@@ -340,6 +340,8 @@ In order, because each step depends on the previous one working:
 | `FINANCEBUDDY_SLOW_REQUEST_MS` | no (1500) | — | requests slower than this get logged |
 | `FINANCEBUDDY_MAX_RESIDENT_SESSIONS` | no (3) | — | memory cache size |
 | `FINANCEBUDDY_MAX_TAX_SESSIONS` | no (8) | — | memory cache size |
+| `ZERODHA_API_KEY` | no | — | only for Kite live sync |
+| `ZERODHA_API_SECRET` | no | — | only for Kite live sync |
 
 ### Frontend
 

@@ -8,8 +8,7 @@ income-tax portal.
   rebalancing plans, rolling returns, tax-harvest opportunities
 - **Tax expert** — AIS parsing, capital-gains computation with grandfathering and
   Section 50AA, old-vs-new regime comparison, broker reconciliation, filed-ITR
-  comparison
-- **Equity** — placeholder
+- **Equity** — CSV/XLSX uploads (Zerodha/Groww formats natively detected), direct live sync via Zerodha Kite API, portfolio allocation, sector analysis, historical performance tracking
 
 Upload a statement, get analytics. Sign-in is Google; your data persists to your own
 Postgres and is encrypted before it gets there.

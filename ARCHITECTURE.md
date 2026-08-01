@@ -299,7 +299,7 @@ backend/
 └── domains/
     ├── mutual_funds/           # 9 routers, finance.py, parser.py, sessions.py
     ├── tax_expert/             # 6 routers, tax_engine.py, AIS/ITR/broker parsers
-    └── equity/                 # placeholder
+    └── equity/                 # 4 routers, parser.py, sessions.py, kite_client.py
 ```
 
 Two invariants are enforced by tests rather than convention:
@@ -321,7 +321,7 @@ frontend/src/
 ├── domains/
 │   ├── mutual-funds/           # components/, hooks/useData.ts
 │   ├── tax-expert/             # components/, hooks/useTaxExpert.ts
-│   └── equity/                 # placeholder
+│   └── equity/                 # components/, hooks/useEquity.ts
 └── shared/
     ├── auth/authClient.ts      # the only file importing supabase-js
     ├── api/client.ts           # axios + Bearer interceptor + 401 handling
@@ -343,7 +343,7 @@ one file, because the backend already accepts any OIDC issuer.
 | Infrastructure | `/auth` `/market` `/accounts` `/history` | `GET /accounts/summary` |
 | Mutual funds | `/mutual-funds/{portfolio,overview,holdings,performance,compare,insights,rebalance,journey,planning}` | `GET /mutual-funds/overview/{sid}/summary` |
 | Tax expert | `/tax-expert` (one namespace, six routers) | `GET /tax-expert/{sid}/tax/summary` |
-| Equity | `/equity` (placeholder) | `GET /equity/status` |
+| Equity | `/equity/{portfolio,overview,holdings,performance,analyzer,insights}` | `GET /equity/overview/{sid}/summary` |
 
 ---
 
