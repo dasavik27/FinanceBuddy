@@ -14,17 +14,20 @@ from typing import Any
 import pandas as pd
 
 from domains.equity.sector_map import get_sector
+from shared.services.cache import MARKET_CACHE, ttl_for
+from shared.services.equity_quotes import is_valid_symbol, to_yahoo_ticker
 
 logger = logging.getLogger(__name__)
+
+
+class UnknownSymbol(ValueError):
+    """Raised when a symbol is not well-formed enough to look up."""
 
 
 # ── NSE → Yahoo Finance ticker conversion ────────────────────────────────────
 
 def _to_yf_ticker(symbol: str) -> str:
-    s = symbol.upper().strip().replace("-EQ", "")
-    if not s.endswith(".NS"):
-        return s + ".NS"
-    return s
+    return to_yahoo_ticker(symbol)
 
 
 def _clean_symbol(symbol: str) -> str:
@@ -125,10 +128,35 @@ def search_stocks(query: str, limit: int = 10) -> list[dict]:
 
 def analyze_stock(symbol: str) -> dict[str, Any]:
     """
-    Fetch comprehensive fundamental + technical data for a single NSE stock.
-    Uses yfinance. Returns a rich analysis card.
+    Fundamental + technical data for one NSE stock.
+
+    Cached in L1 under the symbol. A stock's fundamentals are user-independent, so two
+    users researching the same name share one entry; without this, every request paid
+    3-5 upstream round trips and the response was only cached in the *browser* via a
+    Cache-Control header, which does nothing for a second user or a second device.
     """
     clean = _clean_symbol(symbol)
+    if not is_valid_symbol(clean):
+        # Rejected here rather than concatenated into an upstream URL. The symbol was
+        # only upper-cased and stripped before, so a value containing path separators
+        # or query characters was interpolated straight into the provider request.
+        raise UnknownSymbol(f"{symbol!r} is not a valid NSE symbol.")
+
+    # Honours the process-wide cache kill-switch, same as every mutual-fund provider
+    # path does. Without this, POST /market/config with ttl=0 would still serve
+    # fundamentals from L1.
+    from shared import config
+    if config.CACHE_TTL_MINUTES <= 0:
+        return _analyze_stock_uncached(clean)
+
+    return MARKET_CACHE.get_or_compute(
+        f"equity_analysis_v1:{clean}",
+        lambda: _analyze_stock_uncached(clean),
+        ttl_for("comparison_data"),
+    )
+
+
+def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     ticker = _to_yf_ticker(clean)
     sector, industry = get_sector(clean)
 
@@ -145,12 +173,21 @@ def analyze_stock(symbol: str) -> dict[str, Any]:
         import yfinance as yf
         hist = yf.download(ticker, period="1y", interval="1d", auto_adjust=True, progress=False)
         if not hist.empty:
-            prices = hist["Close"].dropna()
-            price_dates = [d.strftime("%Y-%m-%d") for d in prices.index]
-            price_values = [round(float(v), 2) for v in prices.values]
-            current_price = price_values[-1] if price_values else 0
-            year_start = price_values[0] if price_values else 0
+            close = hist["Close"]
+            # A single ticker can still come back with MultiIndex columns depending on
+            # the yfinance version; take the first column rather than assuming a Series.
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            prices = close.dropna()
+            # The year figures need the endpoints; the chart needs the tail. Compute the
+            # returns from the series and only materialise Python lists for the 90 points
+            # actually sent - this used to build two ~250-element lists and discard 64%.
+            current_price = round(float(prices.iloc[-1]), 2) if len(prices) else 0
+            year_start = float(prices.iloc[0]) if len(prices) else 0
             year_return = round((current_price / year_start - 1) * 100, 2) if year_start else 0.0
+            tail = prices.iloc[-90:]
+            price_dates = [d.strftime("%Y-%m-%d") for d in tail.index]
+            price_values = [round(float(v), 2) for v in tail.values]
         else:
             price_dates, price_values, current_price, year_return = [], [], 0, 0.0
     except Exception as e:
@@ -186,8 +223,8 @@ def analyze_stock(symbol: str) -> dict[str, Any]:
         "year_return": year_return,
         "description": (_f("longBusinessSummary", "")[:400] + "...") if _f("longBusinessSummary") else "",
         "chart": {
-            "dates": price_dates[-90:],   # Last 3 months for chart
-            "prices": price_values[-90:],
+            "dates": price_dates,   # last ~3 months, sliced before materialising
+            "prices": price_values,
         },
     }
 

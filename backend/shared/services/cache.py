@@ -59,6 +59,11 @@ CACHE_CONFIG: Dict[str, Dict[str, Any]] = {
     # `immutable` policy is right for settled historical series and badly wrong for a
     # price the UI polls every minute.
     "market_quote":        {"ttl": 60,        "visibility": "public",  "description": "Live index quote"},
+    # A listed equity's last traded price. Public for the same reason as an index
+    # level - a share price is identical for every holder - and short-lived because it
+    # is a price. 5 minutes rather than 60s: unlike the index tile, this is not polled
+    # by the UI, it is resolved in bulk when a portfolio is opened or synced.
+    "equity_quote":        {"ttl": 300,       "visibility": "public",  "description": "Live equity last-traded price"},
 
     # --- derived from the user's own holdings: private, never shared-cacheable ---
     "portfolio_summary":   {"ttl": 300, "visibility": "no-store", "description": "Portfolio XIRR, gain, allocation"},

@@ -5,6 +5,10 @@ import type {
   ParseResponse, Summary, OverviewData, Holding, FundResult,
   PerformanceData, AllocationData, InsightsData,
 } from './types'
+import type {
+  EquityAllocation, EquityHoldingsResponse, EquityInsights, EquityPerformance,
+  EquityPnl, EquitySummary, EquityUploadResult, StockAnalysis, StockSearchResult,
+} from '../../domains/equity/types'
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
@@ -326,7 +330,7 @@ export const apiClient = {
   // ── Equity API ──────────────────────────────────────────────────────────────
 
   /** Upload a Zerodha/Groww Holdings CSV (and optionally a Tradebook CSV). */
-  parseEquityCsv: async (holdingsFile: File, tradebookFile?: File): Promise<any> => {
+  parseEquityCsv: async (holdingsFile: File, tradebookFile?: File): Promise<EquityUploadResult> => {
     const fd = new FormData()
     fd.append('file', holdingsFile)
     if (tradebookFile) fd.append('tradebook', tradebookFile)
@@ -334,16 +338,26 @@ export const apiClient = {
     return data
   },
 
-  /** Get Zerodha OAuth login URL. */
-  getKiteLoginUrl: async (): Promise<{ login_url: string }> => {
+  /**
+   * Get Zerodha OAuth login URL, plus the `state` that binds the return leg to this
+   * browser. Stash the state and hand it back to connectKite.
+   */
+  getKiteLoginUrl: async (): Promise<{ login_url: string; state: string }> => {
     const { data } = await api.get('/equity/portfolio/kite/login-url')
     return data
   },
 
-  /** Exchange Zerodha request_token for access_token and sync holdings. */
-  connectKite: async (requestToken: string): Promise<any> => {
+  /**
+   * Exchange Zerodha request_token for an access_token and sync holdings.
+   *
+   * `state` is required: without it the endpoint accepts any request_token from
+   * anybody, so a victim induced to submit an attacker's token would ingest the
+   * attacker's holdings into their own account.
+   */
+  connectKite: async (requestToken: string, state: string): Promise<EquityUploadResult> => {
     const fd = new FormData()
     fd.append('request_token', requestToken)
+    fd.append('state', state)
     const { data } = await api.post('/equity/portfolio/kite/connect', fd)
     return data
   },
@@ -355,49 +369,49 @@ export const apiClient = {
   },
 
   /** Equity portfolio summary KPIs. */
-  getEquitySummary: async (sid: string): Promise<any> => {
+  getEquitySummary: async (sid: string): Promise<EquitySummary> => {
     const { data } = await api.get(`/equity/overview/${sid}/summary`)
     return data
   },
 
   /** Equity sector allocation. */
-  getEquityAllocation: async (sid: string): Promise<any> => {
+  getEquityAllocation: async (sid: string): Promise<EquityAllocation> => {
     const { data } = await api.get(`/equity/overview/${sid}/allocation`)
     return data
   },
 
   /** Equity holdings table. */
-  getEquityHoldings: async (sid: string, params: Record<string, any> = {}): Promise<any> => {
+  getEquityHoldings: async (sid: string, params: Record<string, any> = {}): Promise<EquityHoldingsResponse> => {
     const { data } = await api.get(`/equity/holdings/${sid}/holdings`, { params })
     return data
   },
 
   /** Equity P&L analysis (STCG/LTCG). */
-  getEquityPnl: async (sid: string): Promise<any> => {
+  getEquityPnl: async (sid: string): Promise<EquityPnl> => {
     const { data } = await api.get(`/equity/holdings/${sid}/pnl`)
     return data
   },
 
   /** Portfolio vs benchmark performance over time. */
-  getEquityPerformance: async (sid: string, params: Record<string, any> = {}): Promise<any> => {
+  getEquityPerformance: async (sid: string, params: Record<string, any> = {}): Promise<EquityPerformance> => {
     const { data } = await api.get(`/equity/performance/${sid}/performance`, { params })
     return data
   },
 
   /** Smart insights: top movers, concentrated positions, tax-loss harvest. */
-  getEquityInsights: async (sid: string): Promise<any> => {
+  getEquityInsights: async (sid: string): Promise<EquityInsights> => {
     const { data } = await api.get(`/equity/insights/${sid}/insights`)
     return data
   },
 
   /** Search NSE stocks by symbol or name. */
-  searchStocks: async (q: string): Promise<any> => {
+  searchStocks: async (q: string): Promise<{ results: StockSearchResult[] }> => {
     const { data } = await api.get('/equity/analyzer/search', { params: { q } })
     return data
   },
 
   /** Full fundamental + technical analysis for a stock. */
-  analyzeStock: async (symbol: string): Promise<any> => {
+  analyzeStock: async (symbol: string): Promise<StockAnalysis> => {
     const { data } = await api.get(`/equity/analyzer/analyze/${symbol}`)
     return data
   },

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+from domains.tax_expert.routers.session import _read_upload
+
+
 @router.post("/{session_id}/tax/itr")
 def upload_itr(session_id: str, file: UploadFile = File(...)):
     """Upload a filed ITR PDF and extract summary figures for comparison.
@@ -29,14 +32,20 @@ def upload_itr(session_id: str, file: UploadFile = File(...)):
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
 
-    raw = file.file.read()
+    # get_tax_session above already authorized the caller, so no separate identity gate
+    # is needed here - unlike parse_ais, this endpoint cannot create an unowned session.
+    raw = _read_upload(file.file, "The ITR PDF")
     try:
         itr_data = parse_itr_pdf(raw)
         update_itr_data(session_id, itr_data)
         return {"status": "success", "itr_data": itr_data}
-    except Exception as e:
-        logger.error(f"Failed to parse ITR PDF: {e}")
-        raise HTTPException(status_code=422, detail=f"Failed to parse ITR document: {str(e)}")
+    except Exception:
+        logger.error("Failed to parse ITR PDF", exc_info=True)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read that ITR document. Upload the filed ITR PDF as "
+                   "downloaded from the income-tax portal.",
+        )
 
 
 @router.get("/{session_id}/tax/itr")

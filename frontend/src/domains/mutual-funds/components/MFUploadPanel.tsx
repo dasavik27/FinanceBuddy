@@ -27,100 +27,35 @@ import CloseIcon           from '@mui/icons-material/Close'
 import AccountBalanceIcon  from '@mui/icons-material/AccountBalance'
 import { apiClient }       from '../../../shared/api/client'
 import { useAppStore }     from '../../../shared/store/appStore'
+import { SwitchSessionButton } from '../../../shared/components/dashboard/SwitchSessionButton'
+import { UploadHistoryList } from '../../../shared/components/dashboard/UploadHistoryList'
+import type { UploadHistoryListProps } from '../../../shared/components/dashboard/UploadHistoryList'
 
 // ────────────────────────────────────────────────────────────────
 // Shared helpers
 // ────────────────────────────────────────────────────────────────
 
-function fmtDate(iso: string) {
-  return new Intl.DateTimeFormat('en-IN', {
-    day: 'numeric', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso))
-}
 
-function fmtINR(v: number) {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
-  }).format(v)
-}
 
 // ────────────────────────────────────────────────────────────────
 // HistoryList — reused in both modes
 // ────────────────────────────────────────────────────────────────
 
-interface HistoryListProps {
-  history: any[]
-  onSelect: (sid: string) => void
-  activeSessionId?: string | null
-  compact?: boolean
-}
-
-function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryListProps) {
-  if (history.length === 0) return (
-    <Box sx={{ textAlign: 'center', py: compact ? 2 : 4 }}>
-      <Typography sx={{ color: '#475569', fontSize: '0.85rem' }}>No previous uploads found</Typography>
-    </Box>
-  )
-
+// Shared with the equity panel; see shared/components/dashboard/UploadHistoryList.
+function HistoryList(props: Omit<UploadHistoryListProps, 'accent' | 'itemLabel' | 'renderBadges'>) {
   return (
-    <Stack spacing={compact ? 1 : 1.5}>
-      {history.slice(0, 5).map((h, i) => {
-        const isActive = h.session_id === activeSessionId
-        return (
-          <motion.div
-            key={h.session_id}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.06 }}
-          >
-            <Box
-              onClick={() => onSelect(h.session_id)}
-              sx={{
-                display: 'flex', alignItems: 'center',
-                p: compact ? 1.5 : 2,
-                background: isActive
-                  ? 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(79,70,229,0.08) 100%)'
-                  : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-                border: `1px solid ${isActive ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.07)'}`,
-                borderRadius: '16px',
-                cursor: isActive ? 'default' : 'pointer',
-                transition: 'all 0.25s ease',
-                '&:hover': isActive ? {} : {
-                  background: 'linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(79,70,229,0.05) 100%)',
-                  borderColor: 'rgba(99,102,241,0.35)',
-                  transform: 'translateY(-1px)',
-                  '& .chevron': { color: '#818CF8', transform: 'translateX(3px)' },
-                },
-              }}
-            >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <Typography sx={{ color: '#CBD5E1', fontWeight: 700, fontSize: compact ? '0.78rem' : '0.88rem' }}>
-                    {fmtDate(h.created_at)}
-                  </Typography>
-                  {isActive && (
-                    <Chip label="Active" size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(99,102,241,0.25)', color: '#818CF8', borderRadius: '6px' }} />
-                  )}
-                </Box>
-                {h.statement_period && (
-                  <Typography sx={{ color: '#38BDF8', fontWeight: 600, fontSize: '0.7rem', mb: 0.5 }}>
-                    Period: {h.statement_period}
-                  </Typography>
-                )}
-                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
-                  <Chip label={`${h.num_funds} Funds`} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: '#E2E8F0', borderRadius: '6px' }} />
-                  <Chip label={fmtINR(h.total_value)} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 800, background: 'rgba(78,222,147,0.1)', color: '#4EDE93', borderRadius: '6px' }} />
-                </Box>
-              </Box>
-              {!isActive && (
-                <ChevronRightIcon className="chevron" sx={{ color: '#475569', fontSize: 18, transition: 'all 0.25s ease', flexShrink: 0 }} />
-              )}
-            </Box>
-          </motion.div>
-        )
-      })}
-    </Stack>
+    <UploadHistoryList
+      {...props}
+      accent="indigo"
+      itemLabel="Funds"
+      renderBadges={(h) =>
+        h.statement_period ? (
+          <Typography sx={{ color: '#38BDF8', fontWeight: 600, fontSize: '0.7rem' }}>
+            Period: {h.statement_period}
+          </Typography>
+        ) : null
+      }
+    />
   )
 }
 
@@ -250,101 +185,35 @@ interface SwitchPopoverProps {
 }
 
 export function SwitchStatementButton({ sessionId }: SwitchPopoverProps) {
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const [history, setHistory]   = useState<any[]>([])
   const setSessionById = useAppStore((s) => s.setSessionById)
   const pan = useAppStore((s) => s.pan)
-  const open = Boolean(anchorEl)
 
-  const fetchHistory = useCallback(() => {
-    if (!pan) return
-    apiClient.getHistory('mutual_funds')
-      .then((res) => { if (res?.history) setHistory(res.history) })
-      .catch(console.error)
+  const fetchHistory = useCallback(async () => {
+    if (!pan) return []
+    const res = await apiClient.getHistory('mutual_funds')
+    return res?.history ?? []
   }, [pan])
 
-  useEffect(() => {
-    if (open) fetchHistory()
-  }, [open, fetchHistory])
-
-  const handleSelect = (sid: string) => {
-    setSessionById(sid, 'mutual_funds')
-    setAnchorEl(null)
-  }
-
   return (
-    <>
-      <Tooltip title="Switch portfolio statement or upload a new CAS" placement="bottom">
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<SwapHorizIcon sx={{ fontSize: 16 }} />}
-          onClick={(e) => setAnchorEl(e.currentTarget)}
-          sx={{
-            borderColor: 'rgba(99,102,241,0.35)',
-            color: '#94A3B8',
-            textTransform: 'none',
-            fontWeight: 700,
-            fontSize: '0.82rem',
-            borderRadius: '10px',
-            px: 1.5,
-            '&:hover': { borderColor: '#6366F1', color: '#818CF8', background: 'rgba(99,102,241,0.08)' },
-          }}
-        >
-          Switch Statement
-        </Button>
-      </Tooltip>
-
-      <Popover
-        open={open}
-        anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        PaperProps={{
-          sx: {
-            mt: 1, width: 360, borderRadius: '20px',
-            background: 'rgba(15,23,42,0.97)',
-            border: '1px solid rgba(99,102,241,0.2)',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 40px rgba(99,102,241,0.1)',
-            backdropFilter: 'blur(20px)',
-            overflow: 'hidden',
-          }
-        }}
-      >
-        {/* Header */}
-        <Box sx={{ px: 2.5, pt: 2.5, pb: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HistoryIcon sx={{ color: '#6366F1', fontSize: 18 }} />
-            <Typography sx={{ fontWeight: 800, fontSize: '0.9rem', color: '#F8FAFC' }}>Portfolio Statements</Typography>
-          </Box>
-          <IconButton size="small" onClick={() => setAnchorEl(null)} sx={{ color: '#475569', '&:hover': { color: '#94A3B8' } }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </Box>
-
-        <Box sx={{ px: 2.5, pb: 1.5 }}>
-          <HistoryList history={history} onSelect={handleSelect} activeSessionId={sessionId} compact />
-        </Box>
-
-        <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)', mx: 2.5 }} />
-
-        {/* Upload new */}
-        <Box sx={{ px: 2.5, pt: 2, pb: 2.5 }}>
-          <Typography sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', mb: 1.5 }}>
-            Import New Statement
+    <SwitchSessionButton
+      sessionId={sessionId}
+      fetchHistory={fetchHistory}
+      onSelect={(sid) => setSessionById(sid, 'mutual_funds')}
+      accent="indigo"
+      buttonLabel="Switch Statement"
+      tooltip="Switch portfolio statement or upload a new CAS"
+      popoverTitle="Portfolio Statements"
+      itemLabel="Funds"
+      renderBadges={(h) =>
+        h.statement_period ? (
+          <Typography sx={{ color: '#38BDF8', fontWeight: 600, fontSize: '0.7rem' }}>
+            Period: {h.statement_period}
           </Typography>
-          <MiniDropzone onUploaded={() => setAnchorEl(null)} />
-        </Box>
-
-        <Box sx={{ px: 2.5, pb: 2, textAlign: 'center' }}>
-          <Typography variant="caption" sx={{ color: '#334155', fontSize: '0.68rem' }}>
-            <ShieldIcon sx={{ fontSize: 10, verticalAlign: 'middle', mr: 0.5, color: '#4EDE93' }} />
-            Processed on your backend only
-          </Typography>
-        </Box>
-      </Popover>
-    </>
+        ) : null
+      }
+      footerTitle="Import New Statement"
+      renderFooter={(close) => <MiniDropzone onUploaded={close} />}
+    />
   )
 }
 

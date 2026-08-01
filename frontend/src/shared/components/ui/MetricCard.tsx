@@ -1,5 +1,6 @@
 import { Box, Typography, Skeleton, alpha, Tooltip as MuiTooltip } from '@mui/material'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import type { SvgIconComponent } from '@mui/icons-material'
 import { motion } from 'framer-motion'
 
 interface MetricCardProps {
@@ -9,9 +10,17 @@ interface MetricCardProps {
   accent?:  'success' | 'danger' | 'info' | 'warn' | 'none'
   loading?: boolean
   info?:    string
+  /**
+   * Optional leading icon, rendered in a tinted chip beside the label.
+   *
+   * Added so the equity dashboard could adopt this component rather than keep its own
+   * near-identical StatCard, whose only real difference was the icon. Takes the accent
+   * colour, so callers do not pass a raw hex and drift from the palette.
+   */
+  icon?:    SvgIconComponent
 }
 
-export function MetricCard({ label, value, sub, accent, loading, info }: MetricCardProps) {
+export function MetricCard({ label, value, sub, accent, loading, info, icon: Icon }: MetricCardProps) {
   const accentColor = (theme: any) => ({
     success: theme.palette.secondary.main,
     danger: theme.palette.error.main,
@@ -63,9 +72,22 @@ export function MetricCard({ label, value, sub, accent, loading, info }: MetricC
         />
 
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: '0.1em', display: 'block', m: 0 }}>
-            {label}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+            {Icon && (
+              <Box
+                sx={{
+                  width: 36, height: 36, borderRadius: '12px', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: (theme) => alpha(accentColor(theme) || '#94A3B8', 0.12),
+                }}
+              >
+                <Icon sx={{ fontSize: 20, color: (theme) => accentColor(theme) || 'text.secondary' }} />
+              </Box>
+            )}
+            <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 700, letterSpacing: '0.1em', display: 'block', m: 0 }}>
+              {label}
+            </Typography>
+          </Box>
           {info && (
             <MuiTooltip title={info} placement="top" arrow sx={{ '& .MuiTooltip-tooltip': { bgcolor: '#0F172A', color: '#fff', fontSize: 12, p: 1.5, borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' } }}>
               <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', opacity: 0.6, cursor: 'pointer', '&:hover': { opacity: 1, color: 'primary.main' } }} />

@@ -35,8 +35,14 @@ def delete_session(session_id: str):
     # Evict from memory as well as disk. Deleting only the registry row left the
     # portfolio resident and, with no row left to name its owner, readable by anyone
     # holding the id.
+    #
+    # Every domain with a resident store has to be named here. A session id is not
+    # tagged by domain at this layer, so we ask each of them to forget it rather than
+    # trying to work out which one owns it; forget() on an absent id is a no-op.
     from domains.mutual_funds import sessions as mf_sessions
+    from domains.equity import sessions as eq_sessions
     mf_sessions.forget(session_id)
+    eq_sessions.forget(session_id)
 
     success = storage.delete_session(session_id)
     if not success:

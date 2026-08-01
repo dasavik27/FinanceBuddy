@@ -43,14 +43,27 @@ class KiteClient:
                 )
         return self._kite
 
-    def get_login_url(self) -> str:
+    def get_login_url(self, state: str | None = None) -> str:
         """
         Return the Zerodha login URL to redirect the user to.
-        After login, Zerodha redirects to the configured redirect_url
-        with ?request_token=<token>&action=login&status=success
+
+        After login, Zerodha redirects to the configured redirect_url with
+        ?request_token=<token>&action=login&status=success - and with &state=<state>
+        echoed back when one was supplied. The caller uses that to verify the return leg
+        belongs to the request that started the flow; see routers/portfolio.py.
+
+        `state` is appended rather than passed to login_url() because the kiteconnect
+        SDK's signature has varied across versions, and an unexpected keyword would
+        break the flow outright.
         """
         kite = self._get_kite()
-        return kite.login_url()
+        url = kite.login_url()
+        if state:
+            from urllib.parse import quote
+
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}state={quote(state, safe='')}"
+        return url
 
     def exchange_token(self, request_token: str) -> dict[str, Any]:
         """

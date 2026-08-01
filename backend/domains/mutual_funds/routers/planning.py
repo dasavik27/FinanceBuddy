@@ -8,7 +8,7 @@ turning the portfolio from a rear-view mirror into a planning tool for future
 investment decisions.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 import pandas as pd
 from domains.mutual_funds.sessions import get_session
 from domains.mutual_funds.finance import (
@@ -35,11 +35,15 @@ def get_tax_harvest(session_id: str):
 @router.get("/{session_id}/sip-projection")
 def get_sip_projection(
     session_id: str,
-    years: int = 10,
-    annual_return: float = 12.0,
-    stepup_pct: float = 10.0,
-    monthly_sip: float = 0.0,
-    lumpsum: float = 0.0,
+    # Bounded because it is a loop count, not a preference: finance.py runs
+    # `for year in range(1, years + 1): for _ in range(12)` and appends a dict per month,
+    # so an unbounded value is arbitrary CPU and memory from one GET. 50 years is longer
+    # than any real projection horizon.
+    years: int = Query(10, ge=1, le=50),
+    annual_return: float = Query(12.0, ge=-50.0, le=100.0),
+    stepup_pct: float = Query(10.0, ge=0.0, le=100.0),
+    monthly_sip: float = Query(0.0, ge=0.0),
+    lumpsum: float = Query(0.0, ge=0.0),
     include_existing_corpus: bool = True,
 ):
     """
@@ -109,7 +113,14 @@ def get_mandate_overlap(session_id: str):
 
 
 @router.get("/{session_id}/what-if")
-def get_what_if(session_id: str, scheme_code: str, monthly_amount: float = 10000.0, years: int = 5):
+def get_what_if(
+    session_id: str,
+    scheme_code: str = Query(..., max_length=32),
+    monthly_amount: float = Query(10000.0, gt=0, le=10_000_000),
+    # Also a loop bound, and it additionally sizes the NAV history request below
+    # (`days=years * 365 + 60`), so an unbounded value is an unbounded upstream fetch.
+    years: int = Query(5, ge=1, le=50),
+):
     """
     "If I'd invested Rs.X/month in THIS candidate fund for the last N years" —
     replays real historical NAVs (mfapi scheme code), not a projection. Use

@@ -79,6 +79,10 @@ def test_public_only_for_user_independent_market_data():
                 "comparison_data",
                 # A live index quote (Nifty level + 1D change). Same for everyone; 60s TTL.
                 "market_quote",
+                # A listed equity's last traded price, keyed by NSE symbol. A share
+                # price is identical for every holder; how many of them a given user
+                # owns is in the session payload, never here. 5-minute TTL.
+                "equity_quote",
             }, f"{cache_type} marked public - confirm it contains no user-specific data"
 
 

@@ -7,7 +7,7 @@ Dedicated REST gateway for the Holdings tab. Orchestrates multi-threaded real-ti
 7-day price change calculations, transaction history pagination, and live institutional fund metadata.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from domains.mutual_funds.sessions import get_session, df_to_records
 from shared.config import CATEGORY_COLORS
 from shared.services.market_data import (
@@ -19,16 +19,41 @@ from concurrent.futures import ThreadPoolExecutor
 router = APIRouter()
 
 @router.get("/{session_id}/holdings")
-def get_holdings(session_id: str, sort_by: str = "Market Value", ascending: str = "false", search: str = "", cap_filter: str = "All", refresh: bool = False):
+def get_holdings(
+    session_id: str,
+    sort_by: str = "Market Value",
+    ascending: str = "false",
+    # Bounded. Even with regex disabled below, an unbounded needle is scanned against
+    # every fund name; more importantly the length was the exponent in the blow-up this
+    # parameter used to permit.
+    search: str = Query("", max_length=100),
+    cap_filter: str = "All",
+    refresh: bool = False,
+):
     portfolio = get_session(session_id)
     df_h = portfolio.df_h.copy()
-    
+
     if df_h.empty:
         return {"holdings": [], "total": 0, "cap_types": []}
 
     # 1. Search Filter
+    #
+    # regex=False is load-bearing, not tidiness. pandas' str.contains defaults to
+    # regex=True, so this query parameter was compiled and executed as a regular
+    # expression against every fund name. Two consequences, both reachable by anyone
+    # who could call this endpoint:
+    #
+    #   - CPU exhaustion. A backtracking pattern like "(a+)+$" costs exponential time
+    #     in the length of the subject: measured here at 0.15s for 18 characters, 6.7s
+    #     for 24, and over two minutes for 30 - on ONE row, in ONE request, on a shared
+    #     vCPU. `search` had no length limit, so the caller chose the exponent.
+    #   - A 500. An invalid pattern - "(" is enough - raises re.PatternError, which no
+    #     handler catches.
+    #
+    # A substring match is also what the UI actually wants; nobody was typing regexes
+    # into a fund-name search box on purpose.
     if search:
-        df_h = df_h[df_h["Fund"].str.contains(search, case=False, na=False)]
+        df_h = df_h[df_h["Fund"].str.contains(search, case=False, na=False, regex=False)]
 
     # 2. Market Cap Filter
     if cap_filter != "All":

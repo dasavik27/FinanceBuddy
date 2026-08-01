@@ -45,20 +45,28 @@ def set_profile_pan(req: ProfileRequest):
 @router.post("/logout")
 def logout_user():
     """
-    Clears the caller's own resident tax sessions.
+    Clears the caller's own resident sessions across every domain.
 
     Stored data is untouched - this only drops the in-memory cache, which is
-    rehydrated from the database on next access.
+    rehydrated from the database on next access. All three domains are named because
+    signing out and leaving a portfolio resident defeats the point of signing out on a
+    shared machine; this used to evict tax sessions only.
     """
     caller = identity.current_caller()
     if caller is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    from domains.tax_expert.tax_sessions import evict_for_user
+    from domains.tax_expert import tax_sessions as tax_store
+    from domains.mutual_funds import sessions as mf_sessions
+    from domains.equity import sessions as eq_sessions
 
-    evicted = evict_for_user(caller.user_id)
+    evicted = (
+        tax_store.evict_for_user(caller.user_id)
+        + mf_sessions.evict_for_user(caller.user_id)
+        + eq_sessions.evict_for_user(caller.user_id)
+    )
     logger.info(
-        "[AUTH] signed out %s; evicted %d resident tax session(s)",
+        "[AUTH] signed out %s; evicted %d resident session(s)",
         caller.user_id, evicted,
     )
     return {"status": "success"}

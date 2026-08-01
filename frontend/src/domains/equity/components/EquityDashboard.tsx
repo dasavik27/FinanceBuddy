@@ -1,16 +1,21 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Box, Typography, Tabs, Tab } from '@mui/material'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SwitchEquityStatementButton } from './EquityUploadPanel'
+import { ErrorBoundary } from '../../../shared/components/ui/ErrorBoundary'
 import { useEquitySessionId } from '../../../shared/store/appStore'
+import { EquityTabSkeleton } from './tabs/shared'
 
-import OverviewTab from './tabs/OverviewTab'
-import HoldingsTab from './tabs/HoldingsTab'
-import PLTab from './tabs/PLTab'
-import SectorTab from './tabs/SectorTab'
-import PerformanceTab from './tabs/PerformanceTab'
-import StockAnalyzerTab from './tabs/StockAnalyzerTab'
-import InsightsTab from './tabs/InsightsTab'
+// Lazily loaded, as the mutual-funds dashboard already does. Statically importing all
+// seven meant opening Overview also downloaded Performance, the Stock Analyzer and its
+// recharts surface — the exact pattern the MF dashboard's comment describes fixing.
+const OverviewTab = lazy(() => import('./tabs/OverviewTab'))
+const HoldingsTab = lazy(() => import('./tabs/HoldingsTab'))
+const PLTab = lazy(() => import('./tabs/PLTab'))
+const SectorTab = lazy(() => import('./tabs/SectorTab'))
+const PerformanceTab = lazy(() => import('./tabs/PerformanceTab'))
+const StockAnalyzerTab = lazy(() => import('./tabs/StockAnalyzerTab'))
+const InsightsTab = lazy(() => import('./tabs/InsightsTab'))
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -84,13 +89,20 @@ export default function EquityDashboard() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.25, ease: 'easeOut' }}
           >
-            {activeTabId === 'overview' && <OverviewTab />}
-            {activeTabId === 'holdings' && <HoldingsTab />}
-            {activeTabId === 'pnl' && <PLTab />}
-            {activeTabId === 'sectors' && <SectorTab />}
-            {activeTabId === 'performance' && <PerformanceTab />}
-            {activeTabId === 'analyzer' && <StockAnalyzerTab />}
-            {activeTabId === 'insights' && <InsightsTab />}
+            {/* Per-tab boundary, as the MF dashboard does. With only one boundary
+                around the whole module, a render throw in any single tab blanked the
+                entire dashboard including the tab bar, leaving no way to navigate out. */}
+            <ErrorBoundary key={activeTabId}>
+              <Suspense fallback={<EquityTabSkeleton rows={6} />}>
+                {activeTabId === 'overview' && <OverviewTab />}
+                {activeTabId === 'holdings' && <HoldingsTab />}
+                {activeTabId === 'pnl' && <PLTab />}
+                {activeTabId === 'sectors' && <SectorTab />}
+                {activeTabId === 'performance' && <PerformanceTab />}
+                {activeTabId === 'analyzer' && <StockAnalyzerTab />}
+                {activeTabId === 'insights' && <InsightsTab />}
+              </Suspense>
+            </ErrorBoundary>
           </motion.div>
         </AnimatePresence>
       </Box>

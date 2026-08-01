@@ -27,6 +27,98 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# ── Upload limits ──────────────────────────────────────────────────────────────
+#
+# The deployment target is a single uvicorn worker on ~512 MB of RAM, and the parse
+# endpoint was unauthenticated with no limits at all: `file.file.read()` on an
+# arbitrary body, then `pd.read_excel` with no row cap. An .xlsx is a zip container, so
+# a few hundred KB declaring a huge used range decompresses into gigabytes - a
+# single-request OOM. These are the guards.
+
+# Largest upload we will read. A Zerodha holdings export for a 500-stock portfolio is
+# well under 200 KB; 8 MB is generous for a multi-year tradebook with room to spare.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+# Rows we will parse. Beyond this the file is not a retail portfolio, and the row cap is
+# what stops a bomb from being expanded in the first place. Applied as `nrows`, so
+# pandas stops reading rather than reading everything and then being truncated.
+MAX_ROWS = 20_000
+
+# Extensions we accept, mapped to how they are read. The filename is attacker-supplied,
+# so this is an allowlist that decides whether to parse at all - not, as before, a
+# suffix test that only chose between two parsers and rejected nothing.
+_CSV_EXTENSIONS = (".csv", ".txt")
+_EXCEL_EXTENSIONS = (".xlsx", ".xls")
+
+
+class UploadTooLarge(ValueError):
+    """Raised when an upload exceeds MAX_UPLOAD_BYTES."""
+
+
+class UnsupportedUploadType(ValueError):
+    """Raised when a filename does not carry an accepted extension."""
+
+
+def read_upload(file_obj, filename: str = "") -> bytes:
+    """
+    Read an upload with a hard byte ceiling.
+
+    Reads MAX_UPLOAD_BYTES + 1 and rejects on overflow, so an oversized body is never
+    fully materialised: `.read()` with no argument pulls the whole thing into memory
+    before anyone can object to its size.
+    """
+    _require_supported_extension(filename)
+    raw = file_obj.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise UploadTooLarge(
+            f"File is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB. "
+            "Export just your holdings or tradebook rather than a full account dump."
+        )
+    if not raw:
+        raise UnsupportedUploadType("The uploaded file is empty.")
+    return raw
+
+
+def _require_supported_extension(filename: str) -> str:
+    name = (filename or "").lower().strip()
+    if name.endswith(_EXCEL_EXTENSIONS):
+        return "excel"
+    if name.endswith(_CSV_EXTENSIONS):
+        return "csv"
+    raise UnsupportedUploadType(
+        "Unsupported file type. Upload a .csv or .xlsx export from your broker."
+    )
+
+
+def _read_tabular(raw: bytes, filename: str) -> pd.DataFrame:
+    """
+    Decode an upload into a DataFrame, row-capped.
+
+    Reads from BytesIO rather than `raw.decode(...)` into a StringIO: the decode path
+    held the bytes, a full str copy and StringIO's own copy alive simultaneously, ~3x
+    the upload's size at peak, with up to 8 of those coexisting on the sync threadpool.
+    pandas decodes incrementally from bytes.
+    """
+    kind = _require_supported_extension(filename)
+
+    if kind == "excel":
+        # nrows bounds what openpyxl materialises. Without it, a crafted sheet's
+        # declared dimensions decide how much memory this call takes.
+        df = pd.read_excel(io.BytesIO(raw), nrows=MAX_ROWS)
+    else:
+        df = pd.read_csv(
+            io.BytesIO(raw),
+            nrows=MAX_ROWS,
+            encoding="utf-8",
+            encoding_errors="replace",
+        )
+
+    if len(df) >= MAX_ROWS:
+        logger.warning(
+            "[equity/parser] upload hit the %d-row cap; extra rows were not read", MAX_ROWS
+        )
+    return df
+
 # ── Column normalisation maps ──────────────────────────────────────────────────
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "broker_config.json")
@@ -50,8 +142,22 @@ def _clean_preface_rows(df: pd.DataFrame) -> pd.DataFrame:
         for i in range(min(30, len(df))):
             row_vals = [str(x).lower().strip() for x in df.iloc[i].values]
             if "symbol" in row_vals or "tradingsymbol" in row_vals or "nse symbol" in row_vals:
-                df.columns = [str(c) for c in df.iloc[i].values]
-                df = df.iloc[i+1:].reset_index(drop=True)
+                # De-duplicate the promoted header. A preface row with a repeated value
+                # (or several blanks) otherwise produces duplicate column labels, and
+                # `df["symbol"]` then returns a DataFrame instead of a Series - which
+                # fails much later, somewhere unrelated.
+                promoted = [str(c) for c in df.iloc[i].values]
+                seen: dict[str, int] = {}
+                unique: list[str] = []
+                for name in promoted:
+                    if name in seen:
+                        seen[name] += 1
+                        unique.append(f"{name}_{seen[name]}")
+                    else:
+                        seen[name] = 0
+                        unique.append(name)
+                df.columns = unique
+                df = df.iloc[i + 1:].reset_index(drop=True)
                 break
     return df
 
@@ -90,18 +196,20 @@ def parse_holdings_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, st
       exchange, broker
     """
     try:
-        if filename and filename.lower().endswith('.xlsx'):
-            df = pd.read_excel(io.BytesIO(raw))
-        else:
-            text = raw.decode("utf-8", errors="replace")
-            df = pd.read_csv(io.StringIO(text))
-        
-        df = _clean_preface_rows(df)
+        df = _clean_preface_rows(_read_tabular(raw, filename))
+    except (UploadTooLarge, UnsupportedUploadType) as e:
+        return pd.DataFrame(), str(e)
     except Exception as e:
-        return pd.DataFrame(), f"Could not read CSV: {e}"
+        # The message the user sees is fixed; the pandas internals go to the log. The
+        # previous `f"Could not read CSV: {e}"` put raw parser internals in the response.
+        logger.warning("[equity/parser] holdings read failed (%s): %s", filename, e)
+        return pd.DataFrame(), (
+            "Could not read that file. Check it is an unmodified holdings export "
+            "from your broker."
+        )
 
     if df.empty:
-        return pd.DataFrame(), "The uploaded CSV is empty."
+        return pd.DataFrame(), "The uploaded file has no rows."
 
     broker = _detect_broker(df)
     logger.info("[equity/parser] detected broker format: %s (%d rows)", broker, len(df))
@@ -124,10 +232,23 @@ def parse_holdings_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, st
         return pd.DataFrame(), f"CSV is missing required columns: {', '.join(missing)}. Detected format: {broker}."
 
     # ── Coerce numeric columns ───────────────────────────────────────────────
+    # Only route through strings when the column is not already numeric. The
+    # unconditional `.astype(str).str.replace(...)` boxed every value in an already-clean
+    # float column into a Python string and back, per column, which was the dominant CPU
+    # cost of parsing a large export.
     for col in ["quantity", "avg_price", "ltp", "current_value", "invested",
                 "unrealized_pnl", "day_change", "day_change_pct"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", "").str.replace("₹", ""), errors="coerce")
+        if col not in df.columns:
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        cleaned = (
+            df[col].astype(str)
+            .str.replace(",", "", regex=False)
+            .str.replace("₹", "", regex=False)
+            .str.strip()
+        )
+        df[col] = pd.to_numeric(cleaned, errors="coerce")
 
     # ── Derive missing columns ───────────────────────────────────────────────
     if "invested" not in df.columns or df["invested"].isna().all():
@@ -173,18 +294,18 @@ def parse_tradebook_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, s
       date, symbol, type (buy/sell), quantity, price
     """
     try:
-        if filename and filename.lower().endswith('.xlsx'):
-            df = pd.read_excel(io.BytesIO(raw))
-        else:
-            text = raw.decode("utf-8", errors="replace")
-            df = pd.read_csv(io.StringIO(text))
-        
-        df = _clean_preface_rows(df)
+        df = _clean_preface_rows(_read_tabular(raw, filename))
+    except (UploadTooLarge, UnsupportedUploadType) as e:
+        return pd.DataFrame(), str(e)
     except Exception as e:
-        return pd.DataFrame(), f"Could not read Tradebook CSV: {e}"
+        logger.warning("[equity/parser] tradebook read failed (%s): %s", filename, e)
+        return pd.DataFrame(), (
+            "Could not read that tradebook. Check it is an unmodified export from "
+            "your broker."
+        )
 
     if df.empty:
-        return pd.DataFrame(), "Tradebook CSV is empty."
+        return pd.DataFrame(), "The uploaded tradebook has no rows."
 
     broker = _detect_broker(df)
     if broker != "zerodha_tradebook":
