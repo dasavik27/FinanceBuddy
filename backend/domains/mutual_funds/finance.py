@@ -26,6 +26,31 @@ def _to_date(d) -> date:
     return d
 
 
+def normalize_txn_type(raw: object) -> str:
+    """
+    Canonical form of a CAS transaction type, for substring classification.
+
+    The parser stores `str(tx.type)` verbatim, which for casparser is the *enum repr* -
+    "TransactionType.SWITCH_IN", underscore-separated. Every classifier in this codebase
+    tests hyphenated names ("SWITCH-IN", "SWITCH-OUT", "STP-IN"), so none of them ever
+    matched a switch. In `_get_standard_ledger` that was masked by the `units > 0` /
+    `units < 0` sign test, which is why XIRR and FIFO lots stayed correct. The unitized
+    simulation has no such fallback: switches fell through every branch and their units
+    were never added or removed, so anyone who has done a Regular-to-Direct switch got a
+    silently wrong portfolio curve on Overview, Performance, Drawdown and Journey - while
+    the XIRR headline beside it stayed right.
+
+    Strips the enum prefix and maps "_" to "-", so SWITCH_IN, SWITCH-IN and
+    TransactionType.SWITCH_IN all normalise to the same token. SWITCH_IN_MERGER contains
+    "SWITCH-IN" and SWITCH_OUT_MERGER contains "SWITCH-OUT", so the merger variants
+    classify correctly for free.
+    """
+    s = str(raw or "").upper().strip()
+    if "." in s:
+        s = s.rsplit(".", 1)[-1]
+    return s.replace("_", "-")
+
+
 def _get_standard_ledger(df_t: pd.DataFrame) -> List[Dict]:
     """
     Convert raw transaction DataFrame into a standardised cashflow ledger.
@@ -80,6 +105,8 @@ def _get_standard_ledger(df_t: pd.DataFrame) -> List[Dict]:
         # Skip dividend reinvestment — no real external cashflow
         if any(x in t_type for x in ("REINVEST", "BONUS", "IDCW_REINVEST", "GROWTH_OPTION")):
             continue
+
+        t_type = normalize_txn_type(t_type)
 
         if units > 0 or any(x in t_type for x in ("BUY", "PURCHASE", "SIP", "STP-IN", "SWITCH-IN")):
             # Purchase / subscription / switch-in → money leaves investor's account
@@ -1219,23 +1246,51 @@ def compute_period_comparison(
             if j is None:                       # fund has no NAV series -> skipped
                 continue
 
-            t_type  = str(_t_type[r]).upper()
+            t_type  = normalize_txn_type(_t_type[r])
             amt     = abs(float(_t_amt[r] or 0))
-            units_t = abs(float(_t_units[r] or 0))
+            signed  = float(_t_units[r] or 0)
+            units_t = abs(signed)
             nav_t   = float(_t_nav[r] or 0)
 
             if amt == 0 and units_t > 0 and nav_t > 0:
                 amt = units_t * nav_t
 
-            if "BUY" in t_type or "PURCHASE" in t_type or "SIP" in t_type or "SWITCH-IN" in t_type:
+            # Signed units lead, the type string is the fallback - the same order
+            # _get_standard_ledger uses. That ordering is why the ledger survived the
+            # SWITCH_IN/"SWITCH-IN" mismatch and this loop did not; matching it here
+            # removes the whole class of "a type we did not enumerate is silently
+            # dropped", which also covers REVERSAL and the *_MERGER variants.
+            is_in = signed > 0 or (
+                signed == 0 and any(
+                    x in t_type for x in ("BUY", "PURCHASE", "SIP", "STP-IN", "SWITCH-IN")
+                )
+            )
+            is_out = signed < 0 or (
+                signed == 0 and any(
+                    x in t_type for x in ("SELL", "REDEMPTION", "SWP", "STP-OUT", "SWITCH-OUT")
+                )
+            )
+            # Unit-creating events with no external cashflow: dividend reinvestment,
+            # bonus units, and side-pocketing (SEGREGATION), which was dropped entirely.
+            units_only = any(x in t_type for x in ("REINVEST", "BONUS", "SEGREGATION"))
+
+            if units_only:
+                units_now[j] += units_t
+            elif is_in:
                 units_now[j] += units_t
                 net_cashflow += amt
-            elif "SELL" in t_type or "REDEMPTION" in t_type or "SWP" in t_type or "SWITCH-OUT" in t_type:
+            elif is_out:
                 units_now[j] -= units_t
                 units_now[j] = max(0.0, units_now[j])
                 net_cashflow -= amt
-            elif "REINVEST" in t_type or "BONUS" in t_type:
-                units_now[j] += units_t
+            elif any(x in t_type for x in ("TAX", "DUTY", "FEE", "STT")):
+                # Zero-unit money leaving the portfolio. _get_standard_ledger already
+                # books these as EXPENSE, so dropping them here made the two engines
+                # disagree on cashflow basis for the same statement.
+                net_cashflow -= amt
+            elif any(x in t_type for x in ("DIVIDEND", "PAYOUT")):
+                # Paid out to the investor, so it leaves the portfolio's value.
+                net_cashflow -= amt
 
         cashflow[k] = net_cashflow
         change_days.append(k)

@@ -15,6 +15,7 @@ Implements both Old and New Regime tax computation including:
 
 import json
 import os
+import re
 from typing import Optional
 from datetime import datetime
 
@@ -206,27 +207,73 @@ def _round_down_100(amount: float) -> float:
     return (int(amount) // 100) * 100
 
 
+def _normalize_fy(raw: object) -> Optional[str]:
+    """
+    Canonical "YYYY-YY" for a financial year, or None if it cannot be read.
+
+    The AIS is not consistent about this: challan rows carry "2025-26", the document
+    header may say "F.Y. 2025-2026", and some tables use "2025 - 26". Comparing the raw
+    strings would silently classify every challan as belonging to another year, which -
+    now that the comparison actually gates a tax credit - would be worse than not
+    filtering at all.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    m = re.search(r"(20\d{2})\s*[-/]\s*(\d{2,4})", text)
+    if not m:
+        m = re.fullmatch(r"\s*(20\d{2})\s*", text)
+        if not m:
+            return None
+        start = int(m.group(1))
+        return f"{start}-{str(start + 1)[2:]}"
+    start = int(m.group(1))
+    end = m.group(2)
+    end_2 = end[-2:]
+    return f"{start}-{end_2}"
+
+
 def _grandfathered_gain(trade: dict) -> float:
     """
-    Effective LTCG for a Section 112A trade, applying 31-Jan-2018 grandfathering
-    ONLY when the acquisition date is known to be before the cut-off. Otherwise the
-    already-computed gain is returned unchanged (conservative — never understates gain
-    for post-2018 lots where AIS may still carry an FMV figure).
+    Effective LTCG for a Section 112A trade, applying 31-Jan-2018 grandfathering.
+
+    This used to additionally require a known acquisition date before the cut-off, which
+    made the whole function dead code: the AIS capital-gains schedules carry only
+    "DATE OF SALE/ TRANSFER" (see ais_schemas.capital_gains_equity / capital_gains_mf),
+    so `acquired_date` was never populated by the parser and the branch never fired. The
+    only places those keys appear in the repo are the tests that inject them - so the
+    tests passed while every pre-2018 holding was taxed on its full historical gain.
+
+    The gate is now the FMV itself, which is the correct signal: the AIS "FAIR MARKET
+    VALUE" column *is* the 31-Jan-2018 FMV, and a reporting entity populates it only for
+    holdings acquired on or before that date. When an acquisition date does happen to be
+    available (e.g. threaded in from a broker file) it is still honoured as a veto, so a
+    post-2018 lot carrying a spurious FMV cannot be under-taxed.
+
+    Grandfathering can only ever reduce a gain - gf_cost >= cost by construction - so the
+    direction of any residual error is toward the taxpayer's disadvantage, not the
+    exchequer's.
     """
     if trade.get("type") != "LTCG":
         return _safe_float(trade.get("gain", 0))
 
     fmv = _safe_float(trade.get("fmv_31jan2018", trade.get("fair_market_value", 0)))
+    if fmv <= 0:
+        return _safe_float(trade.get("gain", 0))
+
     acq = _parse_iso(trade.get("acquired_date") or trade.get("purchase_date"))
     cutoff = _GRANDFATHER_CUTOFF
+    if acq is not None and cutoff is not None and acq > cutoff:
+        # Acquisition is known and post-cut-off: not eligible, whatever the FMV says.
+        return _safe_float(trade.get("gain", 0))
 
-    if fmv > 0 and acq is not None and cutoff is not None and acq <= cutoff:
-        sale = _safe_float(trade.get("consideration", 0))
-        cost = _safe_float(trade.get("cost", 0))
-        # Cost of acquisition = higher of (actual cost) and (lower of FMV and sale value).
-        gf_cost = max(cost, min(fmv, sale))
-        return sale - gf_cost
-    return _safe_float(trade.get("gain", 0))
+    sale = _safe_float(trade.get("consideration", 0))
+    cost = _safe_float(trade.get("cost", 0))
+    # Cost of acquisition = higher of (actual cost) and (lower of FMV and sale value).
+    gf_cost = max(cost, min(fmv, sale))
+    return sale - gf_cost
 
 
 def _compute_80d(deductions: dict, age: int) -> float:
@@ -452,11 +499,32 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
     for t in other_assets:
         (slab_fund_assets if _is_slab_fund(t) else non_slab_assets).append(t)
 
-    ltcg_other = sum(t.get("gain", 0) for t in non_slab_assets if t.get("type") == "LTCG")
-    stcg_other = sum(t.get("gain", 0) for t in non_slab_assets if t.get("type") == "STCG")
+    # `cost_unknown` entries are excluded from every taxable total. The AIS reports an
+    # immovable-property transaction value but never the cost of acquisition, and the
+    # same SFT-012 / TDS-194IA code covers both sides of a conveyance - so treating the
+    # consideration as gain taxed a *purchase* as though it were pure profit. They are
+    # still returned to the caller (counted below) so the UI can ask for a cost basis.
+    def _taxable(t: dict) -> bool:
+        return not t.get("cost_unknown")
+
+    ltcg_other = sum(
+        _safe_float(t.get("gain", 0))
+        for t in non_slab_assets if t.get("type") == "LTCG" and _taxable(t)
+    )
+    stcg_other = sum(
+        _safe_float(t.get("gain", 0))
+        for t in non_slab_assets if t.get("type") == "STCG" and _taxable(t)
+    )
+    cost_unknown_count = sum(1 for t in other_assets if t.get("cost_unknown"))
+    cost_unknown_value = sum(
+        _safe_float(t.get("consideration", 0)) for t in other_assets if t.get("cost_unknown")
+    )
     # Specified-fund gains flow into normal income at slab rates (losses are not netted
     # against salary here — only positive gains are added).
-    slab_taxed_cg = max(0.0, sum(_safe_float(t.get("gain", 0)) for t in slab_fund_assets))
+    slab_taxed_cg = max(
+        0.0,
+        sum(_safe_float(t.get("gain", 0)) for t in slab_fund_assets if _taxable(t)),
+    )
 
     # Direct capital gains overrides (e.g. when AIS lacks cost basis or user overrides)
     cg_overrides = overrides.get("capital_gains", {})
@@ -651,7 +719,16 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
     
     # ── 9. Rebate u/s 87A ─────────────────────────────────────────────
     # Rebate is checked against TOTAL income, not just normal income.
-    total_taxable_income = taxable_normal_income + ltcg_equity + stcg_equity + ltcg_other
+    # Each capital-gains head floored at zero. A head that nets to a loss contributes
+    # nothing to total income - it does not *reduce* it. Unfloored, a Rs 3 lakh capital
+    # loss dragged total income below the Rs 12 lakh threshold and handed out a Rs 60,000
+    # rebate the taxpayer was not entitled to. `normal_income` already floors its own CG
+    # contribution (`slab_rate_cg = max(0, stcg_other) + slab_taxed_cg`); these two
+    # aggregate bases did not.
+    total_taxable_income = (
+        taxable_normal_income
+        + max(0.0, ltcg_equity) + max(0.0, stcg_equity) + max(0.0, ltcg_other)
+    )
     rebate = 0
     rebate_limit = 0
     
@@ -718,7 +795,13 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
     total_tax_before_cess = tax_after_rebate + total_cg_tax + total_special_tax
     
     # ── 11. Surcharge (with 15% CG cap, New-Regime 25% ceiling, marginal relief) ──
-    total_income_for_surcharge = taxable_normal_income + ltcg_equity + stcg_equity + ltcg_other + crypto_income + gaming_income
+    # Same flooring as the rebate base above: a loss must not drop the taxpayer out of a
+    # surcharge band.
+    total_income_for_surcharge = (
+        taxable_normal_income
+        + max(0.0, ltcg_equity) + max(0.0, stcg_equity) + max(0.0, ltcg_other)
+        + crypto_income + gaming_income
+    )
     # Tax surcharged at the full applicable rate: slab tax (post-rebate) + crypto/gaming.
     normal_and_special_tax = tax_after_rebate + total_special_tax
     # Tax surcharged at min(rate, 15%): 111A STCG + 112/112A LTCG (post-rebate).
@@ -738,8 +821,24 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
     tds_paid = overrides.get("manual_tds")
     if tds_paid is None:
         tds_paid = ais_data.get("tds_total", ais_data.get("salary", {}).get("tds_deducted", 0))
-    advance_tax = sum(p.get("total", 0) for p in ais_data.get("tax_payments", []))
-    
+    tds_paid = _safe_float(tds_paid)
+
+    # Only challans for the year being assessed. The AIS Tax Payments table spans several
+    # financial years and the parser already captures `fy` per row, but nothing filtered
+    # on it - so a prior year's advance tax was credited against this year, overstating
+    # the refund and suppressing 234B/234C interest. Rows with no FY recorded are still
+    # counted: dropping them would understate a credit the user really has.
+    assessed_fy = _normalize_fy(ais_data.get("fy"))
+    advance_tax = 0.0
+    advance_tax_other_years = 0.0
+    for p in ais_data.get("tax_payments", []) or []:
+        amount = _safe_float(p.get("total", 0))
+        row_fy = _normalize_fy(p.get("fy"))
+        if row_fy and assessed_fy and row_fy != assessed_fy:
+            advance_tax_other_years += amount
+        else:
+            advance_tax += amount
+
     manual_tax_paid = _safe_float(overrides.get("manual_taxes", 0))
     total_tax_paid = tds_paid + advance_tax + manual_tax_paid
 
@@ -885,9 +984,18 @@ def compute_tax(ais_data: dict, regime: str = "new", overrides: Optional[dict] =
         # Tax Payments
         "tds_paid": round(tds_paid, 0),
         "advance_tax": round(advance_tax, 0),
+        # Challans the AIS reports against a *different* financial year. Excluded from
+        # the credit above, surfaced so the figure is explainable rather than just
+        # smaller than the user expects.
+        "advance_tax_other_years": round(advance_tax_other_years, 0),
+        "assessed_financial_year": assessed_fy,
         "manual_tax_paid": round(manual_tax_paid, 0),
         "total_tax_paid": round(total_tax_paid, 0),
         "refund_or_due": round(refund_or_due, 0),
+        # Transactions the AIS reported without a cost basis (immovable property).
+        # Excluded from every taxable total; the UI should prompt for a cost.
+        "cost_unknown_count": cost_unknown_count,
+        "cost_unknown_value": round(cost_unknown_value, 0),
         
         # Detailed Breakdowns
         "dividends_detail": ais_data.get("dividends", []),

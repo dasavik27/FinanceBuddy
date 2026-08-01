@@ -343,7 +343,21 @@ def _evict_locked():
                 break
     for sid in dropped:
         _tax_sessions.pop(sid, None)
+
     if dropped:
+        # Drop the memoized computations too. Each cache entry holds the session's AIS
+        # detail lists *by reference*, so evicting the session here freed nothing while a
+        # cached computation still pointed at it - and the cache holds up to 24 entries
+        # against this store's 8, so it could pin three times as many AIS documents as
+        # the store is allowed to. Imported locally: computation_cache imports this
+        # module for get_session_version, so a top-level import would be circular.
+        try:
+            from domains.tax_expert.computation_cache import invalidate_session
+            for sid in dropped:
+                invalidate_session(sid)
+        except Exception as e:
+            logger.warning("Could not invalidate computations for evicted sessions: %s", e)
+
         logger.info(
             f"Evicted {len(dropped)} tax session(s) from memory "
             f"(idle TTL / LRU cap {MAX_SESSIONS}); recoverable from the database."

@@ -114,7 +114,13 @@ def _load_tax_rates() -> dict:
             "LTCG_EXEMPTION":     cg["ltcg_equity_exemption"],  # ₹1.25 Lakh annual tax-exempt threshold
             "STCG_DEBT":          cg["stcg_debt_rate"],         # Marginal tax slab proxy for Debt instruments
             "EQUITY_LTCG_DAYS":   cg["equity_ltcg_days"],       # Holding period after which equity gains are LTCG
-            "DEBT_LTCG_DAYS":     cg["debt_ltcg_days"],         # Holding period for pre-Apr-2023 debt units' LTCG
+            # 24 months, not 36. Finance (No. 2) Act 2024 set a single 24-month
+            # long-term threshold for every non-equity capital asset from 23-Jul-2024;
+            # the old 36-month figure taxed genuinely long-term debt gains as short-term.
+            "DEBT_LTCG_DAYS":     cg["debt_ltcg_days"],         # Pre-Apr-2023 debt units' LTCG threshold
+            # Gold/commodity and international funds: non-equity, so 24 months, but NOT
+            # Section 50AA specified funds, so they keep an LTCG concept.
+            "OTHER_LTCG_DAYS":    cg.get("other_ltcg_days", cg["debt_ltcg_days"]),
             "ELSS_LOCKIN_DAYS":   cg["elss_lockin_days"],       # ELSS statutory lock-in
             "DEBT_REGIME_CUTOFF": cg["debt_regime_cutoff"],     # Finance Act 2023 (Sec 50AA) cutoff, ISO date string
         }
@@ -123,7 +129,8 @@ def _load_tax_rates() -> dict:
         # Mutual Funds tax engine from crashing outright rather than blocking on a hard read.
         return {
             "LTCG_EQUITY": 0.125, "STCG_EQUITY": 0.20, "LTCG_EXEMPTION": 125000, "STCG_DEBT": 0.30,
-            "EQUITY_LTCG_DAYS": 365, "DEBT_LTCG_DAYS": 1095, "ELSS_LOCKIN_DAYS": 1095,
+            "EQUITY_LTCG_DAYS": 365, "DEBT_LTCG_DAYS": 730, "OTHER_LTCG_DAYS": 730,
+            "ELSS_LOCKIN_DAYS": 1095,
             "DEBT_REGIME_CUTOFF": "2023-04-01",
         }
 

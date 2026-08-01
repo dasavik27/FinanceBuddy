@@ -88,7 +88,8 @@
     "ltcg_equity_exemption": 125000,
     "stcg_debt_rate": 0.3,
     "equity_ltcg_days": 365,
-    "debt_ltcg_days": 1095,
+    "debt_ltcg_days": 730,
+    "other_ltcg_days": 730,
     "elss_lockin_days": 1095,
     "debt_regime_cutoff": "2023-04-01",
     "grandfather_date": "2018-01-31"

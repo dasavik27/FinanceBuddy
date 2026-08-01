@@ -198,9 +198,20 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
                     validate_schema("salary_annexure", raw_headers)
                     _process_salary_annexure(df, headers, result)
                 elif code.startswith("SFT-016") or code.startswith("TDS-194A"):
-                    if "INTERESTAMOUNT" not in headers: current_info_code = None; continue
-                    validate_schema("interest_sb", raw_headers)
-                    _process_interest(df, headers, result)
+                    # Two different table shapes share this branch. SFT-016 reports
+                    # "INTEREST AMOUNT"; a 194A child table reports "AMOUNT
+                    # PAID/CREDITED" + "TDS DEDUCTED". Dispatch on the columns actually
+                    # present rather than assuming the SFT shape - assuming it meant
+                    # every 194A table failed the guard and was dropped whole.
+                    if "INTERESTAMOUNT" in headers:
+                        validate_schema("interest_sb", raw_headers)
+                        _process_interest(df, headers, result)
+                    elif "AMOUNTPAIDCREDITED" in headers:
+                        validate_schema("dividend_tds", raw_headers)
+                        _process_interest_tds(df, headers, result)
+                    else:
+                        current_info_code = None
+                        continue
                 elif code.startswith("SFT-17-LES"):
                     if "SALESCONSIDERATION" not in headers: current_info_code = None; continue
                     if "COSTOFACQUISITION" in headers:
@@ -235,9 +246,7 @@ def parse_ais_pdf(raw_bytes: bytes) -> dict:
         if not result["dividends"]:
             result["dividends"] = _extract_dividends_fallback(full_text)
             
-        salary_tds = sum(q["tds_deducted"] for q in result["salary"]["quarterly"])
-        dividend_tds = sum(d.get("tds_deducted", 0.0) for d in result["dividends"])
-        result["tds_total"] = salary_tds + dividend_tds
+        _finalise_tds_total(result)
 
     finally:
         os.remove(tmp_path)
@@ -274,7 +283,7 @@ def _process_salary_tds(df, headers, result, source=""):
 
     # Map row data to result["salary"]["quarterly"]
     col = _col_map(headers)
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             amt = _clean_amount(row[col["AMOUNTPAIDCREDITED"]])
             tds = _clean_amount(row[col["TDSDEDUCTED"]])
@@ -292,7 +301,7 @@ def _process_salary_tds(df, headers, result, source=""):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_salary_annexure(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             gross = _clean_amount(row[headers.index("GROSSSALARY")])
             perq_col = next((h for h in headers if "PERQUISITE" in h), None)
@@ -307,7 +316,7 @@ def _process_salary_annexure(df, headers, result):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_dividend_sft(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             amt = _clean_amount(row[headers.index("DIVIDENDAMOUNT")])
             if amt > 0:
@@ -315,7 +324,7 @@ def _process_dividend_sft(df, headers, result):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_dividend_tds(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             amt = _clean_amount(row[headers.index("AMOUNTPAIDCREDITED")])
             tds = _clean_amount(row[headers.index("TDSDEDUCTED")]) if "TDSDEDUCTED" in headers else 0.0
@@ -328,8 +337,37 @@ def _process_dividend_tds(df, headers, result):
                 })
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
+def _finalise_tds_total(result: dict) -> None:
+    """
+    Sum every head that can carry TDS into `tds_total`, in place.
+
+    This used to add salary and dividends only. Interest TDS - which for anyone with a
+    fixed deposit is the second-largest credit they have - was simply absent, so tax
+    already deducted at source went uncredited and the balance payable was overstated.
+    Extracted from the parse function so the arithmetic is testable on its own.
+    """
+    salary_tds = sum(
+        _safe_num(q.get("tds_deducted")) for q in result.get("salary", {}).get("quarterly", [])
+    )
+    dividend_tds = sum(_safe_num(d.get("tds_deducted")) for d in result.get("dividends", []))
+    interest_tds = sum(
+        _safe_num(i.get("tds_deducted"))
+        for i in (result.get("interest_deposits", []) + result.get("interest_savings", []))
+    )
+    other_tds = sum(_safe_num(r.get("tds_deducted")) for r in result.get("rent_received", []))
+    result["tds_total"] = salary_tds + dividend_tds + interest_tds + other_tds
+
+
+def _safe_num(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _process_interest(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    """SFT-016-shaped interest table, keyed on INTEREST AMOUNT."""
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             amt = _clean_amount(row[headers.index("INTERESTAMOUNT")])
             if amt > 0:
@@ -340,9 +378,36 @@ def _process_interest(df, headers, result):
                     result["interest_deposits"].append({"amount": amt, "type": "term_deposit"})
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
+
+def _process_interest_tds(df, headers, result):
+    """
+    TDS-194A interest table, keyed on AMOUNT PAID/CREDITED.
+
+    A 194A child table has the *TDS* shape - "AMOUNT PAID/CREDITED" and "TDS DEDUCTED",
+    like dividend_tds - not the SFT-016 shape with "INTEREST AMOUNT". Both codes were
+    routed to _process_interest, whose guard requires INTERESTAMOUNT, so every 194A table
+    hit `current_info_code = None; continue` and was discarded whole. Bank and FD interest
+    reported under 194A never reached income, and the tax deducted on it never reached
+    tds_total - understating the income and the credit, with no error at any log level.
+    """
+    for row in df.iloc[1:].itertuples(index=False, name=None):
+        try:
+            amt = _clean_amount(row[headers.index("AMOUNTPAIDCREDITED")])
+            tds = _clean_amount(row[headers.index("TDSDEDUCTED")]) if "TDSDEDUCTED" in headers else 0.0
+            if amt > 0:
+                # 194A covers interest other than on securities - deposits, not a savings
+                # account (banks do not deduct on SB interest), so it books as a deposit.
+                result["interest_deposits"].append({
+                    "amount": amt,
+                    "type": "term_deposit",
+                    "source": "TDS-194A",
+                    "tds_deducted": tds,
+                })
+        except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
+
 def _process_cg_equity(df, headers, result):
     col = _col_map(headers)
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             if "STATUS" in col and "inactive" in str(row[col["STATUS"]]).lower():
                 continue
@@ -383,7 +448,7 @@ def _process_cg_equity(df, headers, result):
 
 def _process_cg_mf(df, headers, result):
     col = _col_map(headers)
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             if "STATUS" in col and "inactive" in str(row[col["STATUS"]]).lower():
                 continue
@@ -430,25 +495,39 @@ def _extract_dividends_fallback(text: str) -> list:
     return divs
 
 def _process_real_estate(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             if "STATUS" in headers and "inactive" in str(row[headers.index("STATUS")]).lower():
                 continue
             amt = _clean_amount(row[headers.index("TRANSACTIONVALUE")])
             if amt > 0:
+                # `gain` is 0 and `cost_unknown` is set, deliberately.
+                #
+                # This used to record `cost: 0, gain: amt` - the entire transaction value
+                # booked as a capital gain. The AIS reports an immovable-property
+                # transaction value; it never reports your cost of acquisition, and under
+                # SFT-012 / TDS-194IA the same code covers both sides of a conveyance. So
+                # buying a Rs 1 crore flat manufactured Rs 1 crore of LTCG and roughly
+                # Rs 12.5 lakh of tax. `needs_review` was set but tax_engine summed the
+                # fabricated gain into ltcg_other and taxed it regardless.
+                #
+                # The transaction is still surfaced - suppressing it would hide a real
+                # reporting event - but it contributes nothing taxable until the user
+                # supplies a cost. See _sum_real_estate_gains in tax_engine.
                 result["cg_real_estate"].append({
-                    "type": "LTCG", # Defaulting to LTCG for real estate if missing term
+                    "type": "LTCG",  # Immovable property is long-term after 24 months.
                     "security": str(row[headers.index("PROPERTYDESCRIPTION")]).strip()[:50] or "Real Estate Property",
-                    "sale_price": amt, 
-                    "consideration": amt, 
-                    "cost": 0, 
-                    "gain": amt, 
-                    "needs_review": True
+                    "sale_price": amt,
+                    "consideration": amt,
+                    "cost": 0.0,
+                    "gain": 0.0,
+                    "cost_unknown": True,
+                    "needs_review": True,
                 })
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_tax_payments(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             total = _clean_amount(row[headers.index("TOTALABCD")])
             if total > 0:
@@ -463,7 +542,7 @@ def _process_tax_payments(df, headers, result):
         except Exception as e: logger.debug("AIS row skipped during parse: %s", e)
 
 def _process_refunds(df, headers, result):
-    for idx, row in df.iloc[1:].iterrows():
+    for row in df.iloc[1:].itertuples(index=False, name=None):
         try:
             amt = _clean_amount(row[headers.index("REFUNDAMOUNT")])
             if amt > 0:
