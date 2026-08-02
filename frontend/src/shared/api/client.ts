@@ -13,6 +13,10 @@ import type {
   BudgetCategoriesResponse, BudgetMatchTypes, BudgetOverview, BudgetRule,
   BudgetRuleDraft, BudgetRuleTestResult, BudgetSessionMeta, BudgetTransaction,
   BudgetTransactionsPage, BudgetTransactionUpdate, BudgetUploadResult,
+  BudgetAccountsResponse, BudgetAccountMetaUpdate, BudgetTransfersResponse,
+  BudgetRecurringResponse, BudgetForecast, BudgetAnomaliesResponse,
+  BudgetReconciliationResponse, BudgetCoverageResponse, BudgetSankey,
+  BudgetNetWorth, BudgetEnvelope,
 } from '../../domains/budget/types'
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
@@ -504,6 +508,95 @@ export const apiClient = {
   getBudgetSessions: async (): Promise<BudgetSessionMeta[]> => {
     const { data } = await api.get<{ sessions: BudgetSessionMeta[] }>('/budget/portfolio/sessions')
     return data.sessions ?? []
+  },
+
+  // ── Accounts and cards ─────────────────────────────────────────────────────
+
+  getBudgetAccounts: async (sid = 'overall'): Promise<BudgetAccountsResponse> => {
+    const { data } = await api.get<BudgetAccountsResponse>('/budget/accounts', {
+      params: { session_id: sid },
+    })
+    return data
+  },
+
+  /** Writes only what a statement cannot say: limit, statement/due day, label. */
+  updateBudgetAccount: async (
+    accountKey: string, patch: BudgetAccountMetaUpdate,
+  ): Promise<{ status: string; account_key: string }> => {
+    // encodeURIComponent because account_key contains colons ("HDFC:savings:1234").
+    const { data } = await api.put(`/budget/accounts/${encodeURIComponent(accountKey)}`, patch)
+    return data
+  },
+
+  // ── Insights ───────────────────────────────────────────────────────────────
+
+  getBudgetTransfers: async (sid: string): Promise<BudgetTransfersResponse> => {
+    const { data } = await api.get<BudgetTransfersResponse>(`/budget/insights/${sid}/transfers`)
+    return data
+  },
+
+  flagBudgetTransfer: async (txnId: string, flag: string | null): Promise<any> => {
+    const { data } = await api.post('/budget/insights/transfers/flag', { txn_id: txnId, flag })
+    return data
+  },
+
+  getBudgetRecurring: async (sid: string): Promise<BudgetRecurringResponse> => {
+    const { data } = await api.get<BudgetRecurringResponse>(`/budget/insights/${sid}/recurring`)
+    return data
+  },
+
+  getBudgetForecast: async (sid: string): Promise<BudgetForecast> => {
+    const { data } = await api.get<BudgetForecast>(`/budget/insights/${sid}/forecast`)
+    return data
+  },
+
+  getBudgetAnomalies: async (sid: string): Promise<BudgetAnomaliesResponse> => {
+    const { data } = await api.get<BudgetAnomaliesResponse>(`/budget/insights/${sid}/anomalies`)
+    return data
+  },
+
+  getBudgetReconciliation: async (sid: string): Promise<BudgetReconciliationResponse> => {
+    const { data } = await api.get<BudgetReconciliationResponse>(
+      `/budget/insights/${sid}/reconciliation`,
+    )
+    return data
+  },
+
+  getBudgetCoverage: async (sid: string): Promise<BudgetCoverageResponse> => {
+    const { data } = await api.get<BudgetCoverageResponse>(`/budget/insights/${sid}/coverage`)
+    return data
+  },
+
+  getBudgetSankey: async (sid: string): Promise<BudgetSankey> => {
+    const { data } = await api.get<BudgetSankey>(`/budget/insights/${sid}/sankey`)
+    return { nodes: data.nodes ?? [], links: data.links ?? [] }
+  },
+
+  getBudgetNetWorth: async (sid: string): Promise<BudgetNetWorth> => {
+    const { data } = await api.get<BudgetNetWorth>(`/budget/insights/${sid}/net-worth`)
+    return data
+  },
+
+  getBudgetEnvelopes: async (sid: string): Promise<BudgetEnvelope[]> => {
+    const { data } = await api.get<{ envelopes: BudgetEnvelope[] }>(
+      `/budget/insights/${sid}/envelopes`,
+    )
+    return data.envelopes ?? []
+  },
+
+  /** A null cap clears the envelope rather than setting it to zero. */
+  setBudgetEnvelope: async (category: string, monthlyCap: number | null): Promise<any> => {
+    const { data } = await api.put('/budget/insights/envelopes', {
+      category, monthly_cap: monthlyCap,
+    })
+    return data
+  },
+
+  renameBudgetMerchant: async (description: string, displayName: string): Promise<any> => {
+    const { data } = await api.put('/budget/insights/merchants/alias', {
+      description, display_name: displayName,
+    })
+    return data
   },
 
   deleteBudgetSession: async (sid: string): Promise<any> => {

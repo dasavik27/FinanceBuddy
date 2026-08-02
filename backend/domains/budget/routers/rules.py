@@ -48,7 +48,15 @@ def _require_caller() -> str:
 
 @router.get("/rules/match-types")
 def list_match_types():
-    """The match types the UI may offer, so it cannot drift from what the server accepts."""
+    """
+    The match types the UI may offer, so it cannot drift from what the server accepts.
+
+    Requires a caller even though the response is entirely static. Nothing here is
+    sensitive, but "every /budget route requires identity" is an invariant a test can
+    enforce absolutely, whereas an exception list is a thing that grows - and the next
+    route added next to an existing exemption is the one that leaks.
+    """
+    _require_caller()
     return {
         "match_types": list(MATCH_TYPES),
         "max_pattern_length": MAX_PATTERN_LENGTH,

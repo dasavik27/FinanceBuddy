@@ -7,6 +7,10 @@ import { apiClient } from '../../../shared/api/client'
 import type {
   BudgetCategoriesResponse, BudgetFilters, BudgetOverview, BudgetSessionMeta,
   BudgetTransaction, BudgetTransactionsPage, BudgetUploadResult,
+  BudgetAccountsResponse, BudgetAccountMetaUpdate, BudgetTransfersResponse,
+  BudgetRecurringResponse, BudgetForecast, BudgetAnomaliesResponse,
+  BudgetReconciliationResponse, BudgetCoverageResponse, BudgetSankey,
+  BudgetNetWorth, BudgetEnvelope,
 } from '../types'
 
 /**
@@ -221,5 +225,150 @@ export function useDeleteBudgetSession() {
   return useMutation<any, unknown, string>({
     mutationFn: (sessionId) => apiClient.deleteBudgetSession(sessionId),
     onSuccess: invalidate,
+  })
+}
+
+// ── Accounts, insights and planning ──────────────────────────────────────────
+//
+// These all derive from the same uploaded statements as the analytics queries and are
+// memoized server-side on a content hash, so they share the ANALYTICS staleTime. Each
+// is a separate query rather than one aggregate call: the Accounts tab does not need
+// the Sankey, and a tab the user never opens should cost nothing.
+
+/**
+ * Shared options. 404 means "no data for this session", which is not worth retrying.
+ *
+ * `error` is typed as Error rather than unknown: react-query infers the query's error
+ * type from this callback, and `unknown` widens every hook's result to
+ * UseQueryResult<T, unknown>, which no longer matches the declared return type.
+ */
+const notFoundAware = (count: number, error: Error) =>
+  budgetErrorStatus(error) !== 404 && count < 1
+
+const insightQuery = { staleTime: ANALYTICS, retry: notFoundAware }
+
+export function useBudgetAccounts(sessionId: string): UseQueryResult<BudgetAccountsResponse> {
+  return useQuery({
+    queryKey: ['budget', 'accounts', sessionId],
+    queryFn: () => apiClient.getBudgetAccounts(sessionId),
+    enabled: !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useUpdateBudgetAccount() {
+  const qc = useQueryClient()
+  return useMutation<any, unknown, { accountKey: string; patch: BudgetAccountMetaUpdate }>({
+    mutationFn: ({ accountKey, patch }) => apiClient.updateBudgetAccount(accountKey, patch),
+    // A credit limit changes utilisation, and an opening balance changes every balance
+    // and the net worth built on it - so this invalidates more than the accounts list.
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['budget'] }) },
+  })
+}
+
+export function useBudgetTransfers(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetTransfersResponse> {
+  return useQuery({
+    queryKey: ['budget', 'transfers', sessionId],
+    queryFn: () => apiClient.getBudgetTransfers(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetRecurring(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetRecurringResponse> {
+  return useQuery({
+    queryKey: ['budget', 'recurring', sessionId],
+    queryFn: () => apiClient.getBudgetRecurring(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetForecast(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetForecast> {
+  return useQuery({
+    queryKey: ['budget', 'forecast', sessionId],
+    queryFn: () => apiClient.getBudgetForecast(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetAnomalies(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetAnomaliesResponse> {
+  return useQuery({
+    queryKey: ['budget', 'anomalies', sessionId],
+    queryFn: () => apiClient.getBudgetAnomalies(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetReconciliation(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetReconciliationResponse> {
+  return useQuery({
+    queryKey: ['budget', 'reconciliation', sessionId],
+    queryFn: () => apiClient.getBudgetReconciliation(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetCoverage(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetCoverageResponse> {
+  return useQuery({
+    queryKey: ['budget', 'coverage', sessionId],
+    queryFn: () => apiClient.getBudgetCoverage(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetSankey(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetSankey> {
+  return useQuery({
+    queryKey: ['budget', 'sankey', sessionId],
+    queryFn: () => apiClient.getBudgetSankey(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetNetWorth(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetNetWorth> {
+  return useQuery({
+    queryKey: ['budget', 'networth', sessionId],
+    queryFn: () => apiClient.getBudgetNetWorth(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useBudgetEnvelopes(
+  sessionId: string, enabled = true,
+): UseQueryResult<BudgetEnvelope[]> {
+  return useQuery({
+    queryKey: ['budget', 'envelopes', sessionId],
+    queryFn: () => apiClient.getBudgetEnvelopes(sessionId),
+    enabled: enabled && !!sessionId,
+    ...insightQuery,
+  })
+}
+
+export function useSetBudgetEnvelope() {
+  const qc = useQueryClient()
+  return useMutation<any, unknown, { category: string; monthlyCap: number | null }>({
+    mutationFn: ({ category, monthlyCap }) => apiClient.setBudgetEnvelope(category, monthlyCap),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['budget', 'envelopes'] }) },
   })
 }

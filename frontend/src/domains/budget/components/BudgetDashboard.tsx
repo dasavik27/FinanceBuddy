@@ -45,6 +45,11 @@ import {
 } from 'recharts'
 import TransactionsTab from './TransactionsTab'
 import RulesTab from './RulesTab'
+import AccountsTab from './AccountsTab'
+import InsightsTab from './InsightsTab'
+import NetWorthRibbon from './NetWorthRibbon'
+import MoneyFlowCard from './MoneyFlowCard'
+import TransfersExcludedCard from './TransfersExcludedCard'
 import BudgetSessionsModal from './BudgetSessionsModal'
 import UploadStatementModal from './UploadStatementModal'
 import BudgetHealth503020Card from './BudgetHealth503020Card'
@@ -457,6 +462,8 @@ export default function BudgetDashboard() {
       >
         <Tab label="Overview & Analytics" />
         <Tab label={`Transactions (${transactionsTotal.toLocaleString('en-IN')})`} />
+        <Tab label="Accounts & Cards" />
+        <Tab label="Insights" />
         <Tab label="Rules Engine" />
       </Tabs>
 
@@ -954,6 +961,14 @@ export default function BudgetDashboard() {
           {/* TAB 0: OVERVIEW & ANALYTICS */}
           {activeTab === 0 && (
             <Box>
+              {/* Assets less liabilities across every domain - the one figure this
+                  application can produce that a standalone budgeting app cannot. */}
+              <NetWorthRibbon sessionId={sessionId} />
+
+              {/* Why the KPIs below are smaller than the sum of the statements. The
+                  correction is often lakhs; unexplained, it reads as a bug. */}
+              <TransfersExcludedCard sessionId={sessionId} />
+
               {/* Primary KPIs: Inflow, Outflow, Net Balance, Savings Rate */}
               <Grid container spacing={3} sx={{ mb: 3 }}>
                 <Grid item xs={12} sm={6} md={3}>
@@ -1863,6 +1878,10 @@ export default function BudgetDashboard() {
                   </Stack>
                 </Grid>
               </Grid>
+
+              {/* Income -> needs/wants/investments -> categories. The most legible way
+                  to show a budget, and the thing the donut cannot say. */}
+              <MoneyFlowCard sessionId={sessionId} />
             </Box>
           )}
 
@@ -1877,8 +1896,17 @@ export default function BudgetDashboard() {
             />
           )}
 
-          {/* TAB 2: RULES ENGINE */}
-          {activeTab === 2 && (
+          {/* TAB 2: ACCOUNTS & CARDS */}
+          {/* Mounted only when selected. Each of these tabs owns several queries, and
+              the hooks are `enabled` off their own mount - a tab the user never opens
+              should cost nothing. */}
+          {activeTab === 2 && <AccountsTab sessionId={sessionId} />}
+
+          {/* TAB 3: INSIGHTS */}
+          {activeTab === 3 && <InsightsTab sessionId={sessionId} />}
+
+          {/* TAB 4: RULES ENGINE */}
+          {activeTab === 4 && (
             <RulesTab onRulesApplied={refreshAllData} />
           )}
         </>
