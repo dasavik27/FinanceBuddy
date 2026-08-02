@@ -32,7 +32,7 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
-from shared import crypto, db, identity
+from shared import crypto, db, identity, session_stores
 from shared.identity import mask_pan
 
 logger = logging.getLogger(__name__)
@@ -177,24 +177,16 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     return session
 
 
-def purge_expired_from_disk() -> int:
-    """
-    No longer deletes anything. Returns 0.
-
-    This swept away tax sessions older than SESSION_TTL_SECONDS. It made sense when
-    the filesystem was ephemeral: the table could only grow between restarts and
-    nothing in it survived a deploy anyway.
-
-    Storage is durable now and a parsed AIS is the user's data, so a timer that
-    silently deletes it is data loss rather than housekeeping. The in-memory TTL in
-    _evict_locked() still applies - that is a cache bound, and an evicted session is
-    restored by _rehydrate() on next access.
-
-    Kept as a no-op rather than deleted because the GC daemon in
-    domains/mutual_funds/sessions.py calls it on every sweep; removing the call and
-    the function is a separate tidy-up.
-    """
-    return 0
+# purge_expired_from_disk() was here. It had already been reduced to `return 0`, and
+# its docstring said it survived only because the GC daemon in
+# domains/mutual_funds/sessions.py called it on every sweep. That daemon is gone (see
+# shared/janitor.py), so this is the tidy-up it asked for.
+#
+# Nothing replaces it deliberately: a stored tax session is the user's parsed AIS, and
+# deleting it on a timer is data loss, not housekeeping. The in-memory TTL in
+# _evict_locked() still applies - that is a cache bound, and an evicted session is
+# restored by _rehydrate() on next access. Explicit deletion is
+# DELETE /tax-expert/tax-history/{id} or DELETE /accounts/me.
 
 
 def _summarise(session: dict) -> dict:
@@ -280,9 +272,21 @@ def _delete_many(session_ids: list):
         return
     try:
         with db.connect() as conn:
-            for s in session_ids:
-                conn.execute("DELETE FROM tax_payloads WHERE session_id = %s", (s,))
-                conn.execute("DELETE FROM sessions WHERE session_id = %s", (s,))
+            # One statement, not 2N. The tax_payloads row goes with it: its
+            # session_id is `REFERENCES sessions(session_id) ON DELETE CASCADE`
+            # (migrations/0001_initial.sql:120), so deleting it explicitly was a
+            # redundant round trip per id.
+            #
+            # Note the explicit cursor: in psycopg 3 `executemany` is a *cursor*
+            # method. psycopg.Connection offers the convenience `execute()` used
+            # elsewhere in this module but has no `executemany`, so calling it on the
+            # connection raises AttributeError - and this path is only reachable with
+            # a live database, so the test suite cannot catch that.
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "DELETE FROM sessions WHERE session_id = %s",
+                    [(s,) for s in session_ids],
+                )
     except Exception as e:
         logger.error(f"Failed to delete tax sessions {session_ids}: {e}")
 
@@ -314,7 +318,7 @@ def _evict_locked():
     Deliberately does NOT delete the stored row. It used to, which made eviction
     destructive: the row was the only durable copy, so an LRU-evicted session was
     unrecoverable and the user's uploaded AIS was simply gone. Disk rows are instead
-    bounded by purge_expired_from_disk() on the GC sweep, and an evicted session is
+    not bounded by any timer (a stored AIS is the user's data), and an evicted session is
     restored on demand by _rehydrate().
     """
     now = time.time()
@@ -615,9 +619,20 @@ def list_sessions() -> list:
         return list(_tax_sessions.items())
 
 
-def get_sessions_by_user(user_id: str) -> list:
+#: Default and maximum page size for tax history. The router needs the clamped value
+#: too, to decide `has_more` - expressed once here so the two cannot drift.
+HISTORY_PAGE_SIZE = 50
+HISTORY_MAX_PAGE_SIZE = 200
+
+
+def clamp_history_limit(limit: int) -> int:
+    """The effective page size for a requested limit."""
+    return max(1, min(int(limit), HISTORY_MAX_PAGE_SIZE))
+
+
+def get_sessions_by_user(user_id: str, limit: int = HISTORY_PAGE_SIZE, offset: int = 0) -> list:
     """
-    Every tax session belonging to a user, newest first.
+    A page of the user's tax sessions, newest first.
 
     Queried from the registry, not from memory. The previous version scanned the
     resident dict - capped at 8 entries, and populated at cold start by the newest
@@ -627,9 +642,17 @@ def get_sessions_by_user(user_id: str) -> list:
 
     Reads the denormalised `summary` rather than the payload, so listing does not
     decompress and parse every stored AIS document just to render headings.
+
+    Paged. Each row still costs an AES-GCM decrypt of its metrics blob, so an
+    unbounded query made this endpoint grow linearly slower for the life of the
+    account - which matters more now that expired rows are no longer purged.
+    idx_sessions_owner_type covers the ORDER BY, so the LIMIT is served from the
+    index rather than by sorting the whole history.
     """
     if not user_id:
         return []
+    limit = clamp_history_limit(limit)
+    offset = max(0, int(offset))
     try:
         with db.connect() as conn:
             rows = conn.execute(
@@ -638,8 +661,9 @@ def get_sessions_by_user(user_id: str) -> list:
                 FROM sessions
                 WHERE user_id = %s AND upload_type = 'tax_expert'
                 ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
                 """,
-                (user_id,),
+                (user_id, limit, offset),
             ).fetchall()
     except Exception as e:
         logger.error(f"Failed to list tax sessions: {e}")
@@ -709,3 +733,29 @@ def get_itr_data(session_id: str) -> Optional[dict]:
 # coordinate. The accounts router had to call it separately only because the tax
 # table was invisible to shared storage; evict_for_user() above covers the
 # memory half.
+
+
+def _clear_all_with_computations() -> int:
+    """
+    Empty the session store *and* the memoized computations that reference it.
+
+    Both, together, because a computation outlives the session it was derived from:
+    dropping only the sessions leaves the cached tax results resident until LRU
+    eviction pushes them out. The two shared routers that cleared caches had to know
+    to call both; registering them as one operation means the registry cannot be wired
+    up half-right.
+    """
+    dropped = clear_all()
+    from domains.tax_expert.computation_cache import clear_all as clear_computations
+    clear_computations()
+    return dropped
+
+
+# Logout, account purge and history-delete used to name this module explicitly from
+# three shared routers. They iterate the registry instead; see shared/session_stores.py.
+session_stores.register(session_stores.SessionStore(
+    name="tax_expert",
+    evict_user=evict_for_user,
+    forget_session=delete_tax_session,
+    clear_all=_clear_all_with_computations,
+))

@@ -15,7 +15,7 @@ import pandas as pd
 
 from domains.equity.sector_map import get_sector
 from shared.services.cache import MARKET_CACHE, ttl_for
-from shared.services.equity_quotes import is_valid_symbol, to_yahoo_ticker
+from domains.equity.quotes import is_valid_symbol, to_yahoo_ticker
 
 logger = logging.getLogger(__name__)
 

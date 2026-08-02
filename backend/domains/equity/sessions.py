@@ -26,7 +26,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from domains.equity.models import EquityPortfolio
-from shared import identity, storage
+from shared import identity, janitor, session_stores, storage
 
 logger = logging.getLogger(__name__)
 
@@ -382,13 +382,25 @@ def clear_all() -> int:
 
 
 def purge_expired() -> int:
-    """Drop resident sessions idle beyond the TTL. Called by the GC daemon."""
+    """
+    Drop resident sessions idle beyond the TTL.
+
+    Registered with the shared janitor below. This used to be called by a daemon owned
+    by domains/mutual_funds/sessions.py, which meant equity's memory was only bounded
+    as long as the mutual-funds module happened to be imported.
+
+    The TTL is also enforced lazily on read, so this is about releasing memory from
+    sessions nobody comes back to, not about correctness.
+    """
     now = datetime.now()
     with _SESSIONS_LOCK:
         expired = [sid for sid, entry in _SESSIONS.items() if _expired(entry, now)]
         for sid in expired:
             _SESSIONS.pop(sid, None)
     return len(expired)
+
+
+janitor.register("equity.sessions", purge_expired)
 
 
 def session_stats() -> dict[str, Any]:
@@ -399,3 +411,15 @@ def session_stats() -> dict[str, Any]:
             "resident_cap": MAX_RESIDENT_SESSIONS,
             "ttl_hours": SESSION_TTL_HOURS,
         }
+
+
+# Logout, account purge and history-delete used to name this module explicitly from
+# three shared routers; they iterate the registry instead. Equity was once missing from
+# one of those hardcoded lists, and a purge deleted the rows while leaving the stock
+# portfolios resident and readable. See shared/session_stores.py.
+session_stores.register(session_stores.SessionStore(
+    name="equity",
+    evict_user=evict_for_user,
+    forget_session=forget,
+    clear_all=clear_all,
+))

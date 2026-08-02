@@ -48,7 +48,7 @@ def _require_caller() -> str:
 
 
 @router.post("/upload")
-async def upload_bank_statement(
+def upload_bank_statement(
     file: UploadFile = File(...),
     bank: str = Form("HDFC"),
     account_type: str = Form("Savings Account"),
@@ -95,13 +95,13 @@ async def upload_bank_statement(
 
 
 @router.get("/sessions")
-async def get_budget_history():
+def get_budget_history():
     """List the caller's budget uploads."""
     return {"sessions": list_budget_sessions(_require_caller())}
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+def delete_session(session_id: str):
     """Delete one budget upload. 404s if it is not the caller's."""
     user_id = _require_caller()
     delete_budget_session(user_id, session_id)

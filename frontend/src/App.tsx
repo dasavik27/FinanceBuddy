@@ -51,7 +51,12 @@ export default function App() {
     <Suspense fallback={<TabFallback />}>
       <Routes>
         <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Landing />} />
-        <Route path="/dashboard/*" element={isAuthenticated ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
+        {/* Every authenticated route lives at the top level: /equity, /budget,
+            /tax-expert, /mutual-funds, /accounts, and /dashboard for the hub. This
+            was "/dashboard/*", which made every domain a child of a segment that
+            named none of them. Dashboard keeps the legacy /dashboard/<domain>
+            redirects so existing links and bookmarks still resolve. */}
+        <Route path="/*" element={isAuthenticated ? <Layout><Dashboard /></Layout> : <Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   )

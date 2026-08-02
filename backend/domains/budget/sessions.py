@@ -260,6 +260,28 @@ def _statement_period(df: pd.DataFrame) -> str:
 # Read
 # ---------------------------------------------------------------------------
 
+def decode_budget_payload(
+    encrypted_txns: Optional[bytes], accounts, session_id: str,
+) -> Tuple[pd.DataFrame, dict]:
+    """
+    Turn a raw budget_payloads row into (transactions, accounts).
+
+    Split out of get_budget_session so the account export can decode a budget session
+    without re-implementing the decrypt/decompress/normalise sequence - a second copy
+    would be one schema change away from silently exporting the wrong shape. Takes the
+    already-fetched columns rather than a session id, because the export reads every
+    domain in one join and must not issue a query per row.
+
+    Does NO authorization: callers must have established ownership already. That is
+    why it takes bytes rather than an id.
+    """
+    df = pd.DataFrame()
+    if encrypted_txns:
+        df = _decompress_frame(crypto.decrypt(encrypted_txns, aad=session_id))
+    df = _ensure_columns(df, accounts)
+    return df, (accounts if isinstance(accounts, dict) else json.loads(accounts or "{}"))
+
+
 def get_budget_session(session_id: str) -> Tuple[pd.DataFrame, dict]:
     """
     The caller's transactions for one session.
@@ -280,12 +302,7 @@ def get_budget_session(session_id: str) -> Tuple[pd.DataFrame, dict]:
         return pd.DataFrame(), {}
 
     encrypted_txns, accounts = row
-    df = pd.DataFrame()
-    if encrypted_txns:
-        df = _decompress_frame(crypto.decrypt(encrypted_txns, aad=session_id))
-    df = _ensure_columns(df, accounts)
-
-    return df, (accounts if isinstance(accounts, dict) else json.loads(accounts or "{}"))
+    return decode_budget_payload(encrypted_txns, accounts, session_id)
 
 
 def get_all_budget_sessions(user_id: str) -> Tuple[pd.DataFrame, Dict]:

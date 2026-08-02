@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
 import { ErrorBoundary }    from '../ui'
 
@@ -22,28 +22,52 @@ function RouteFallback() {
   )
 }
 
+/**
+ * Rewrites a legacy /dashboard/<rest> URL to /<rest>.
+ *
+ * Domains used to be mounted under /dashboard (so /dashboard/equity). They are now
+ * top-level, but old bookmarks, browser history and any link shared before the change
+ * still point at the nested form, and a bare 404 there is a worse experience than a
+ * redirect. Preserves the query string and hash so a deep link keeps its state.
+ */
+function LegacyDashboardRedirect() {
+  const location = useLocation()
+  const rest = location.pathname.replace(/^\/dashboard/, '') || '/'
+  return <Navigate to={`${rest}${location.search}${location.hash}`} replace />
+}
+
 export default function Dashboard() {
   return (
     <Box>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route index element={<ErrorBoundary fallbackMessage="Hub encountered an error."><DashboardHub /></ErrorBoundary>} />
-          <Route path="mutual-funds/*" element={<ErrorBoundary fallbackMessage="Mutual Funds section encountered an error."><MutualFundsDashboard /></ErrorBoundary>} />
-          <Route path="equity/*"        element={<ErrorBoundary fallbackMessage="Indian Stocks section encountered an error."><IndianStocksDashboard /></ErrorBoundary>} />
+          {/* The hub. Keeps the /dashboard path because that is what it is - the
+              others are domains and now say so in their own URL. */}
+          <Route path="dashboard"        element={<ErrorBoundary fallbackMessage="Hub encountered an error."><DashboardHub /></ErrorBoundary>} />
+
+          <Route path="mutual-funds/*"   element={<ErrorBoundary fallbackMessage="Mutual Funds section encountered an error."><MutualFundsDashboard /></ErrorBoundary>} />
+          <Route path="equity/*"         element={<ErrorBoundary fallbackMessage="Indian Stocks section encountered an error."><IndianStocksDashboard /></ErrorBoundary>} />
           <Route path="tax-expert/*"     element={<ErrorBoundary fallbackMessage="Tax Expert section encountered an error."><TaxExpertDashboard /></ErrorBoundary>} />
           <Route path="budget/*"         element={<ErrorBoundary fallbackMessage="Budget Analyzer section encountered an error."><BudgetDashboard /></ErrorBoundary>} />
           <Route path="accounts"         element={<ErrorBoundary fallbackMessage="Accounts Vault encountered an error."><AccountsDashboard /></ErrorBoundary>} />
 
-          {/* Legacy redirect catches */}
-          <Route path="holdings"     element={<Navigate to="/dashboard/mutual-funds/holdings" replace />} />
-          <Route path="performance"  element={<Navigate to="/dashboard/mutual-funds/performance" replace />} />
-          <Route path="compare"      element={<Navigate to="/dashboard/mutual-funds/compare" replace />} />
-          <Route path="insights"     element={<Navigate to="/dashboard/mutual-funds/insights" replace />} />
-          <Route path="rebalance"    element={<Navigate to="/dashboard/mutual-funds/insights" replace />} />
-          <Route path="tax"          element={<Navigate to="/dashboard/tax-expert" replace />} />
-          <Route path="journey"      element={<Navigate to="/dashboard/mutual-funds/journey" replace />} />
-          <Route path="account"      element={<Navigate to="/dashboard/mutual-funds/account" replace />} />
-          <Route path="*"            element={<Navigate to="/dashboard/mutual-funds" replace />} />
+          {/* Legacy /dashboard/<domain> URLs. Ranked below the static "dashboard"
+              route above, so the bare hub path is not swallowed by this. */}
+          <Route path="dashboard/*"      element={<LegacyDashboardRedirect />} />
+
+          {/* Legacy flat MF tab URLs, from before the domain split. */}
+          <Route path="holdings"     element={<Navigate to="/mutual-funds/holdings" replace />} />
+          <Route path="performance"  element={<Navigate to="/mutual-funds/performance" replace />} />
+          <Route path="compare"      element={<Navigate to="/mutual-funds/compare" replace />} />
+          <Route path="insights"     element={<Navigate to="/mutual-funds/insights" replace />} />
+          <Route path="rebalance"    element={<Navigate to="/mutual-funds/insights" replace />} />
+          <Route path="tax"          element={<Navigate to="/tax-expert" replace />} />
+          <Route path="journey"      element={<Navigate to="/mutual-funds/journey" replace />} />
+          <Route path="account"      element={<Navigate to="/mutual-funds/account" replace />} />
+
+          {/* Unknown path lands on the hub rather than a domain: with four domains,
+              guessing Mutual Funds is wrong three times out of four. */}
+          <Route path="*"            element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Suspense>
     </Box>

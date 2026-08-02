@@ -1,5 +1,5 @@
 """
-shared/services/equity_quotes.py
+domains/equity/quotes.py
 
 Live quotes for listed Indian equities, cached and batched.
 
@@ -170,11 +170,11 @@ def _fetch_batch(symbols: Sequence[str]) -> dict[str, Quote]:
     try:
         closes = _download_closes(tickers)
     except Exception as e:
-        logger.warning("[equity_quotes] download failed for %d symbol(s): %s", len(symbols), e)
+        logger.warning("[equity.quotes] download failed for %d symbol(s): %s", len(symbols), e)
         return {}
 
     if closes is None or closes.empty:
-        logger.info("[equity_quotes] upstream returned no rows for %d symbol(s)", len(symbols))
+        logger.info("[equity.quotes] upstream returned no rows for %d symbol(s)", len(symbols))
         return {}
 
     out: dict[str, Quote] = {}
@@ -222,11 +222,11 @@ def fetch_quotes(symbols: Iterable[str]) -> dict[str, Quote]:
         clean.append(s)
 
     if rejected:
-        logger.info("[equity_quotes] skipped %d malformed symbol(s)", rejected)
+        logger.info("[equity.quotes] skipped %d malformed symbol(s)", rejected)
 
     if len(clean) > _MAX_SYMBOLS:
         logger.warning(
-            "[equity_quotes] %d symbols requested, resolving the first %d; "
+            "[equity.quotes] %d symbols requested, resolving the first %d; "
             "the rest keep their stored prices",
             len(clean), _MAX_SYMBOLS,
         )
@@ -258,7 +258,7 @@ def fetch_quotes(symbols: Iterable[str]) -> dict[str, Quote]:
                 missing.append(symbol)
 
     if not missing:
-        logger.debug("[equity_quotes] %d symbol(s) served entirely from cache", len(clean))
+        logger.debug("[equity.quotes] %d symbol(s) served entirely from cache", len(clean))
         return resolved
 
     for start in range(0, len(missing), _BATCH_SIZE):
@@ -272,7 +272,7 @@ def fetch_quotes(symbols: Iterable[str]) -> dict[str, Quote]:
             resolved[symbol] = quote
 
     logger.info(
-        "[equity_quotes] resolved %d/%d symbol(s) (%d from cache, %d fetched in %d batch(es))",
+        "[equity.quotes] resolved %d/%d symbol(s) (%d from cache, %d fetched in %d batch(es))",
         len(resolved), len(clean), len(clean) - len(missing), len(missing),
         (len(missing) + _BATCH_SIZE - 1) // _BATCH_SIZE,
     )
@@ -368,7 +368,7 @@ def fetch_close_history(symbols: Iterable[str], days: int):
 
     if len(clean) > _MAX_SYMBOLS:
         logger.warning(
-            "[equity_quotes] history requested for %d symbols; charting the first %d",
+            "[equity.quotes] history requested for %d symbols; charting the first %d",
             len(clean), _MAX_SYMBOLS,
         )
         clean = clean[:_MAX_SYMBOLS]
@@ -408,7 +408,7 @@ def fetch_close_history(symbols: Iterable[str], days: int):
             missing.append(symbol)
 
         if disk_hits:
-            logger.info("[equity_quotes] %d history series restored from disk", disk_hits)
+            logger.info("[equity.quotes] %d history series restored from disk", disk_hits)
 
     for start in range(0, len(missing), _BATCH_SIZE):
         batch = missing[start:start + _BATCH_SIZE]
@@ -417,7 +417,7 @@ def fetch_close_history(symbols: Iterable[str], days: int):
         try:
             closes = _download_history(tickers, days)
         except Exception as e:
-            logger.warning("[equity_quotes] history download failed: %s", e)
+            logger.warning("[equity.quotes] history download failed: %s", e)
             continue
         if closes is None or closes.empty:
             continue
@@ -436,7 +436,7 @@ def fetch_close_history(symbols: Iterable[str], days: int):
                 try:
                     MarketCache.set(key, _series_to_json(series))
                 except Exception as e:
-                    logger.debug("[equity_quotes] disk persist skipped for %s: %s", symbol, e)
+                    logger.debug("[equity.quotes] disk persist skipped for %s: %s", symbol, e)
             series_by_symbol[symbol] = series
 
     if not series_by_symbol:

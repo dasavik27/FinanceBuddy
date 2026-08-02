@@ -46,7 +46,7 @@ class AccountMetaUpdate(BaseModel):
 
 
 @router.get("")
-async def list_accounts(response: Response, session_id: str = "overall"):
+def list_accounts(response: Response, session_id: str = "overall"):
     """
     Every account seen across the user's statements, with balances and card utilisation.
 
@@ -93,7 +93,7 @@ async def list_accounts(response: Response, session_id: str = "overall"):
 
 
 @router.put("/{account_key}")
-async def update_account(account_key: str, payload: AccountMetaUpdate = Body(...)):
+def update_account(account_key: str, payload: AccountMetaUpdate = Body(...)):
     """Write the fields a statement cannot supply."""
     user_id = _require_caller()
 

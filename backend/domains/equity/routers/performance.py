@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from domains.equity import sessions as eq_sessions
 from shared.config import BENCHMARKS
 from shared.services.cache import get_cache_headers
-from shared.services.equity_quotes import fetch_close_history
+from domains.equity.quotes import fetch_close_history
 from shared.services.market_indices import fetch_benchmark_series
 
 logger = logging.getLogger(__name__)

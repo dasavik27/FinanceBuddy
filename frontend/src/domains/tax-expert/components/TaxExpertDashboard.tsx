@@ -154,7 +154,7 @@ export default function TaxExpertDashboard() {
 
       <Routes>
         <Route index element={<ErrorBoundary fallbackMessage="Tax Expert encountered an error."><TaxStrategyTab /></ErrorBoundary>} />
-        <Route path="*" element={<Navigate to="/dashboard/tax-expert" replace />} />
+        <Route path="*" element={<Navigate to="/tax-expert" replace />} />
       </Routes>
     </Box>
   )

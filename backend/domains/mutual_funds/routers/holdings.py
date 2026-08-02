@@ -13,7 +13,7 @@ from shared.config import CATEGORY_COLORS
 from shared.services.market_data import (
     fetch_nav_series_by_isin, fetch_fund_ter, resolve_scheme_code_from_isin, fetch_fund_metadata
 )
-from shared.services.portfolio_discovery import fetch_live_portfolio
+from domains.mutual_funds.portfolio_discovery import fetch_live_portfolio
 from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()

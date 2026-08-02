@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from shared import identity, users
+from shared import identity, session_stores, users
 
 import logging
 logger = logging.getLogger(__name__)
@@ -56,15 +56,9 @@ def logout_user():
     if caller is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    from domains.tax_expert import tax_sessions as tax_store
-    from domains.mutual_funds import sessions as mf_sessions
-    from domains.equity import sessions as eq_sessions
-
-    evicted = (
-        tax_store.evict_for_user(caller.user_id)
-        + mf_sessions.evict_for_user(caller.user_id)
-        + eq_sessions.evict_for_user(caller.user_id)
-    )
+    # Every domain holding resident state, without naming any of them: they register
+    # themselves at import. See shared/session_stores.py.
+    evicted = session_stores.evict_user(caller.user_id)
     logger.info(
         "[AUTH] signed out %s; evicted %d resident session(s)",
         caller.user_id, evicted,

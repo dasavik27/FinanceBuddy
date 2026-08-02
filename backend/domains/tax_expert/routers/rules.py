@@ -13,9 +13,13 @@ places. Roughly 3.4 KB of that 5.5 KB file is server-only computation config
 (slab tables, surcharge bands, cess, 234-interest rules) that the browser never
 reads but downloaded anyway.
 
-tax_rules.json in this package is now the single source of truth: the engine
-imports it directly, shared/config.py reads the same path for the mutual-funds
-domain, and the browser gets the display subset from here.
+There is one source of truth per block. tax_rules.json in this package owns what
+only this domain computes - slabs, deductions, rebates, surcharge, cess - and the
+engine imports it directly. The capital-gains block lives in
+shared/reference/statutory.py, because Mutual Funds needs the same rates and
+neither domain owns Indian tax law; tax_engine.py merges it back in under
+TAX_RULES["capital_gains"], which is what this module projects from. Either way
+the browser gets the display subset from here rather than shipping its own copy.
 """
 
 from fastapi import APIRouter

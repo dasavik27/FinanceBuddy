@@ -456,8 +456,12 @@ def get_benchmark_trailing_returns(ticker: str) -> Dict[str, Optional[float]]:
     Fetch benchmark and compute trailing returns for all standard periods.
     Standardized: Reuses the same compute_trailing_returns logic used for funds.
     """
-    from domains.mutual_funds.finance import compute_trailing_returns
-    
+    # Was `from domains.mutual_funds.finance import compute_trailing_returns` - a
+    # shared -> domain import that made Equity's performance tab run Mutual Funds code.
+    # The function now lives in shared/services/returns.py; MF re-exports it, so funds
+    # and benchmarks are still measured by one implementation.
+    from shared.services.returns import compute_trailing_returns
+
     # Fetch 5Y history (1825 days + buffer)
     series = fetch_benchmark_series(ticker, period_days=1825 + 90)
     if series.empty:

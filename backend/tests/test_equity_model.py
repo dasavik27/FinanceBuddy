@@ -23,7 +23,7 @@ def clear_quote_cache():
 
 def _stub_quotes(monkeypatch, price_by_ticker: dict[str, list[float]]):
     """Point the provider seam at a fixed set of close series."""
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     def fake_download(tickers):
         idx = pd.date_range("2026-07-27", periods=2)
@@ -305,7 +305,7 @@ def test_quotes_honour_the_cache_kill_switch(monkeypatch):
     service initially did not, so "turn caching off and re-check" kept serving stock
     prices from L1.
     """
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
     from shared import config
 
     calls: list[list[str]] = []
@@ -336,7 +336,7 @@ def test_quotes_are_batched_not_one_request_per_symbol(monkeypatch):
     The original code issued one HTTP request per holding via yfinance's internal
     fan-out. A 50-stock portfolio should resolve in a single upstream call.
     """
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
     from shared import config
 
     monkeypatch.setattr(config, "CACHE_TTL_MINUTES", 60)
@@ -360,7 +360,7 @@ def test_quotes_are_batched_not_one_request_per_symbol(monkeypatch):
 def test_malformed_symbols_are_not_sent_upstream(monkeypatch):
     """A symbol is not charset-validated by the broker export, and it ends up in a
     provider request path. Rejected before it leaves the process."""
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
     from shared import config
 
     monkeypatch.setattr(config, "CACHE_TTL_MINUTES", 60)

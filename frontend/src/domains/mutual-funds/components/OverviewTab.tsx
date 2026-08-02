@@ -5,7 +5,7 @@ import {
 
 import { useSummary, useOverview, useBenchmarkOverlay, useHoldings, useAllocation, usePerformance } from '../hooks/useData'
 import { MetricCard, SectionHeader } from '../../../shared/components/ui'
-import PortfolioChart from '../../../shared/components/charts/PortfolioChart'
+import PortfolioChart from './PortfolioChart'
 import { fmtInr, fmtPct } from '../../../shared/utils/fmt'
 
 import ShieldIcon from '@mui/icons-material/Shield'

@@ -17,7 +17,7 @@ const pillars = [
     desc: 'Connect with Zerodha or upload a CSV to track live equity performance, run fundamental analysis, and simulate portfolio impact.',
     color: '#3B82F6',
     glow: 'rgba(59, 130, 246, 0.15)',
-    path: '/dashboard/equity'
+    path: '/equity'
   },
   {
     icon: <AccountBalanceIcon sx={{ fontSize: 32, color: '#10B981' }} />,
@@ -25,7 +25,7 @@ const pillars = [
     desc: 'Upload CAS statements to unlock XIRR metrics, detect portfolio overlap, and run automated drift analysis.',
     color: '#10B981',
     glow: 'rgba(16, 185, 129, 0.15)',
-    path: '/dashboard/mutual-funds'
+    path: '/mutual-funds'
   },
   {
     icon: <ShieldIcon sx={{ fontSize: 32, color: '#8B5CF6' }} />,
@@ -33,7 +33,7 @@ const pillars = [
     desc: 'Execute institutional FIFO audits, discover tax harvesting opportunities, and track your capital gains liability matrix.',
     color: '#8B5CF6',
     glow: 'rgba(139, 92, 246, 0.15)',
-    path: '/dashboard/tax-expert'
+    path: '/tax-expert'
   },
   {
     icon: <LightbulbIcon sx={{ fontSize: 32, color: '#F59E0B' }} />,
@@ -41,7 +41,7 @@ const pillars = [
     desc: 'Parse bank statements, detect cash flows, automate transfers, and monitor your 50/30/20 budget allocations.',
     color: '#F59E0B',
     glow: 'rgba(245, 158, 11, 0.15)',
-    path: '/dashboard/budget'
+    path: '/budget'
   },
 ]
 
@@ -195,7 +195,7 @@ export default function DashboardHub() {
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
             <Button
               variant="outlined"
-              onClick={() => navigate('/dashboard/accounts')}
+              onClick={() => navigate('/accounts')}
               startIcon={<SecurityIcon />}
               sx={{
                 color: '#94A3B8',

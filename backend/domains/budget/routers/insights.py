@@ -1,6 +1,6 @@
 """
 Budget insights: transfers, recurring charges, forecast, anomalies, reconciliation,
-net worth and the Sankey flow.
+coverage, envelopes and the Sankey flow.
 
 Every handler is thin. The work is in the engine modules and the memoization is in
 derived.py, so a route is: authenticate, load the context, call one function, return.
@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import pandas as pd
 from fastapi import APIRouter, Body, HTTPException, Response
 from pydantic import BaseModel
 
@@ -48,7 +49,7 @@ def _private(response: Response) -> None:
 
 
 @router.get("/{session_id}/transfers")
-async def get_transfers(session_id: str, response: Response):
+def get_transfers(session_id: str, response: Response):
     """
     Movements between the user's own accounts, netted out of income and expense.
 
@@ -83,7 +84,7 @@ class TransferFlag(BaseModel):
 
 
 @router.post("/transfers/flag")
-async def flag_transfer(payload: TransferFlag = Body(...)):
+def flag_transfer(payload: TransferFlag = Body(...)):
     """Override the pairing heuristic for one transaction."""
     user_id = _require_caller()
     if payload.flag not in (None, "transfer", "not_transfer"):
@@ -93,7 +94,7 @@ async def flag_transfer(payload: TransferFlag = Body(...)):
 
 
 @router.get("/{session_id}/recurring")
-async def get_recurring(session_id: str, response: Response):
+def get_recurring(session_id: str, response: Response):
     """Subscriptions and standing charges, with price changes and annualised cost."""
     _private(response)
     ctx = load_context(session_id, _require_caller())
@@ -117,7 +118,7 @@ async def get_recurring(session_id: str, response: Response):
 
 
 @router.get("/{session_id}/forecast")
-async def get_forecast(session_id: str, response: Response):
+def get_forecast(session_id: str, response: Response):
     """Month-end projection and a daily safe-to-spend figure."""
     _private(response)
     ctx = load_context(session_id, _require_caller())
@@ -127,7 +128,7 @@ async def get_forecast(session_id: str, response: Response):
 
 
 @router.get("/{session_id}/anomalies")
-async def get_anomalies(session_id: str, response: Response):
+def get_anomalies(session_id: str, response: Response):
     """Duplicate charges, category spikes and unusually large first-time merchants."""
     _private(response)
     ctx = load_context(session_id, _require_caller())
@@ -141,7 +142,7 @@ async def get_anomalies(session_id: str, response: Response):
 
 
 @router.get("/{session_id}/reconciliation")
-async def get_reconciliation(session_id: str, response: Response):
+def get_reconciliation(session_id: str, response: Response):
     """
     Whether each statement's printed balances agree with its own transactions.
 
@@ -170,7 +171,7 @@ async def get_reconciliation(session_id: str, response: Response):
 
 
 @router.get("/{session_id}/coverage")
-async def get_coverage(session_id: str, response: Response):
+def get_coverage(session_id: str, response: Response):
     """
     Which months each account has statements for, and which are missing.
 
@@ -187,7 +188,7 @@ async def get_coverage(session_id: str, response: Response):
         if len(months) >= 2:
             span = [
                 f"{p:%Y-%m}" for p in
-                __import__("pandas").period_range(months[0], months[-1], freq="M").to_timestamp()
+                pd.period_range(months[0], months[-1], freq="M").to_timestamp()
             ]
             gaps = [m for m in span if m not in set(months)]
         out.append({
@@ -208,20 +209,18 @@ async def get_coverage(session_id: str, response: Response):
 
 
 @router.get("/{session_id}/sankey")
-async def get_sankey(session_id: str, response: Response):
+def get_sankey(session_id: str, response: Response):
     """Nodes and links for the income -> nature -> category flow diagram."""
     _private(response)
     ctx = load_context(session_id, _require_caller())
     return derived.sankey(ctx.df, lambda: insights.build_sankey(ctx.df, nature_of))
 
 
-@router.get("/{session_id}/net-worth")
-async def get_net_worth(session_id: str, response: Response):
-    """Bank balances plus investments less card debt, across every domain."""
-    _private(response)
-    user_id = _require_caller()
-    ctx = load_context(session_id, user_id)
-    return planning.net_worth(user_id, ctx.accounts)
+# GET /{session_id}/net-worth was removed along with planning.net_worth(). It summed
+# budget balances with mutual-fund and equity holdings read out of those domains'
+# sessions, which is the one place the budget domain depended on another domain
+# existing. The bank-side half of it - deposit balance and card outstanding - is
+# already served by GET /budget/accounts under `totals`.
 
 
 # ── Envelope budgets ─────────────────────────────────────────────────────────
@@ -232,7 +231,7 @@ class EnvelopeUpdate(BaseModel):
 
 
 @router.get("/{session_id}/envelopes")
-async def get_envelopes(session_id: str, response: Response):
+def get_envelopes(session_id: str, response: Response):
     """Spend against each monthly category cap, with a pace verdict."""
     _private(response)
     user_id = _require_caller()
@@ -242,7 +241,7 @@ async def get_envelopes(session_id: str, response: Response):
 
 
 @router.put("/envelopes")
-async def put_envelope(payload: EnvelopeUpdate = Body(...)):
+def put_envelope(payload: EnvelopeUpdate = Body(...)):
     """Set or clear one category's monthly cap."""
     user_id = _require_caller()
     if payload.monthly_cap is not None and payload.monthly_cap < 0:
@@ -259,7 +258,7 @@ class MerchantRename(BaseModel):
 
 
 @router.put("/merchants/alias")
-async def rename_merchant(payload: MerchantRename = Body(...)):
+def rename_merchant(payload: MerchantRename = Body(...)):
     """Remember a merchant rename, so the user only corrects it once."""
     user_id = _require_caller()
     name = payload.display_name.strip()

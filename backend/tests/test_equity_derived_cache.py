@@ -29,7 +29,7 @@ def caching_on(monkeypatch):
 
 
 def _stub_prices(monkeypatch, prices: dict[str, list[float]]):
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     def fake(tickers):
         idx = pd.date_range("2026-07-27", periods=2)
@@ -214,7 +214,7 @@ def test_close_history_is_restored_from_disk_after_an_l1_wipe(monkeypatch, tmp_p
     re-downloads every symbol's history; MF's NAV bundle already survives this.
     """
     import shared.cache as disk
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     monkeypatch.setattr(disk, "CACHE_DIR", str(tmp_path))
 
@@ -250,7 +250,7 @@ def test_live_quotes_are_deliberately_not_persisted_to_disk(monkeypatch, tmp_pat
     last-traded price. This pins the decision so it is not "fixed" by accident.
     """
     import shared.cache as disk
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     monkeypatch.setattr(disk, "CACHE_DIR", str(tmp_path))
 

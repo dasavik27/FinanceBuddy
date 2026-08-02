@@ -42,7 +42,7 @@ export default function MutualFundsDashboard() {
     : 'overview'
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
-    navigate(`/dashboard/mutual-funds/${newValue}`)
+    navigate(`/mutual-funds/${newValue}`)
   }
 
   return (
@@ -98,7 +98,7 @@ export default function MutualFundsDashboard() {
 
       <Suspense fallback={<TabFallback />}>
         <Routes>
-          <Route index               element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
+          <Route index               element={<Navigate to="/mutual-funds/overview" replace />} />
           <Route path="overview"     element={<ErrorBoundary fallbackMessage="Overview tab encountered a rendering error."><OverviewTab /></ErrorBoundary>} />
           <Route path="holdings"     element={<ErrorBoundary fallbackMessage="Holdings tab encountered a rendering error."><HoldingsTab /></ErrorBoundary>} />
           <Route path="performance"  element={<ErrorBoundary fallbackMessage="Performance tab encountered a rendering error."><PerformanceTab /></ErrorBoundary>} />
@@ -106,7 +106,7 @@ export default function MutualFundsDashboard() {
           <Route path="journey"      element={<ErrorBoundary fallbackMessage="Journey tab encountered a rendering error."><JourneyTab /></ErrorBoundary>} />
           <Route path="insights"     element={<ErrorBoundary fallbackMessage="Insights & Rebalance tab encountered a rendering error."><InsightsTab /></ErrorBoundary>} />
           <Route path="history"      element={<ErrorBoundary fallbackMessage="Statement History encountered a rendering error."><UploadHistory /></ErrorBoundary>} />
-          <Route path="*"            element={<Navigate to="/dashboard/mutual-funds/overview" replace />} />
+          <Route path="*"            element={<Navigate to="/mutual-funds/overview" replace />} />
         </Routes>
       </Suspense>
     </Box>

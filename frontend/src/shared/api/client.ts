@@ -16,7 +16,7 @@ import type {
   BudgetAccountsResponse, BudgetAccountMetaUpdate, BudgetTransfersResponse,
   BudgetRecurringResponse, BudgetForecast, BudgetAnomaliesResponse,
   BudgetReconciliationResponse, BudgetCoverageResponse, BudgetSankey,
-  BudgetNetWorth, BudgetEnvelope,
+  BudgetEnvelope,
 } from '../../domains/budget/types'
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
@@ -242,8 +242,16 @@ export const apiClient = {
     return res.data
   },
 
-  getTaxHistory: async (): Promise<{ sessions: any[] }> => {
-    const { data } = await api.get('/tax-expert/tax-history')
+  // limit is explicit and set to the server's maximum. The endpoint is paginated
+  // (it AES-decrypts one metrics blob per row, so an unbounded read got slower for
+  // the life of the account) and defaults to 50 — but nothing here has paging UI, so
+  // relying on that default would silently hide a user's 51st tax session. Asking for
+  // the cap keeps the previous behaviour for any realistic history while the server
+  // stays bounded. `has_more` is returned; wire it to a "load more" if that ever trips.
+  getTaxHistory: async (
+    limit = 200, offset = 0,
+  ): Promise<{ sessions: any[]; has_more?: boolean; limit?: number; offset?: number }> => {
+    const { data } = await api.get('/tax-expert/tax-history', { params: { limit, offset } })
     return data
   },
 
@@ -570,11 +578,6 @@ export const apiClient = {
   getBudgetSankey: async (sid: string): Promise<BudgetSankey> => {
     const { data } = await api.get<BudgetSankey>(`/budget/insights/${sid}/sankey`)
     return { nodes: data.nodes ?? [], links: data.links ?? [] }
-  },
-
-  getBudgetNetWorth: async (sid: string): Promise<BudgetNetWorth> => {
-    const { data } = await api.get<BudgetNetWorth>(`/budget/insights/${sid}/net-worth`)
-    return data
   },
 
   getBudgetEnvelopes: async (sid: string): Promise<BudgetEnvelope[]> => {

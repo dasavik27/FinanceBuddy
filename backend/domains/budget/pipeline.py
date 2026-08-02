@@ -43,6 +43,13 @@ class BudgetContext:
     transfers: List[TransferPair]
     meta: Dict[str, Any]
 
+    # Digests of the two user-editable inputs that are *not* recoverable from the frame:
+    # transfer overrides and account metadata (labels, credit limits, opening balances).
+    # Any cache keyed on this context has to include them, or an account rename serves
+    # the previous label out of the memo until the transactions themselves change.
+    flag_signature: str = "none"
+    meta_signature: str = "none"
+
     @property
     def real(self) -> pd.DataFrame:
         """Transactions excluding internal movement - the basis for every total."""
@@ -112,7 +119,10 @@ def load_context(session_id: str, user_id: str) -> BudgetContext:
         df, meta_signature, lambda: summarise_accounts(df, account_meta)
     )
 
-    return BudgetContext(df=df, accounts=accounts, transfers=pairs, meta=meta or {})
+    return BudgetContext(
+        df=df, accounts=accounts, transfers=pairs, meta=meta or {},
+        flag_signature=flag_signature, meta_signature=meta_signature,
+    )
 
 
 def filter_signature(**filters: Any) -> str:

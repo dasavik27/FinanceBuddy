@@ -23,7 +23,7 @@ from typing import Any, List, Optional, Tuple
 # module attribute - so the disk tier kept expiring against the boot-time TTL forever
 # while the in-process tier used the new one. Setting the TTL to 0 to disable caching
 # left this tier fully active.
-from shared import config
+from shared import config, janitor
 from shared.config import CACHE_DIR
 
 logger = logging.getLogger(__name__)
@@ -280,3 +280,10 @@ class MarketCache:
             pass
         except Exception:
             pass
+
+
+# The disk cache is bounded by a periodic sweep as well as opportunistically on write.
+# That sweep used to be step 3 of the GC daemon inside domains/mutual_funds/sessions.py,
+# so this shared cache was only trimmed if that domain happened to be loaded. It is
+# shared infrastructure, so it registers itself.
+janitor.register("shared.cache", MarketCache.sweep)

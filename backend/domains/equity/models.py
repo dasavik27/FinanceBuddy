@@ -8,7 +8,7 @@ purpose-built for direct equity:
   - Holdings are individual stocks, not fund units
   - P&L is unrealized (mark-to-market) and realized (tradebook)
   - Sector allocation uses the NSE sector map
-  - Live prices come from shared/services/equity_quotes (cached, batched)
+  - Live prices come from domains/equity/quotes (cached, batched)
 
 Not implemented, despite an earlier version of this docstring claiming it: XIRR. The
 tradebook has the dated cashflows to compute one, and the mutual-fund side already has
@@ -33,7 +33,7 @@ from domains.equity.sector_map import (
     get_all_sectors,
     get_sector,
 )
-from shared.services.equity_quotes import fetch_quotes, to_yahoo_ticker
+from domains.equity.quotes import fetch_quotes, to_yahoo_ticker
 
 logger = logging.getLogger(__name__)
 

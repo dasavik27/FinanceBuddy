@@ -1,7 +1,20 @@
 /**
- * rules/taxRules.ts
- * Centralized Indian Mutual Fund Tax Rulebook (Updated for Budget 2024 & beyond)
- * Single source of truth for tax classification, slabs, and exemptions across Finance Buddy.
+ * rules/fundTaxRules.ts
+ * Indian Mutual Fund tax treatment, for display on the fund detail drawer.
+ *
+ * Was domains/tax-expert/rules/taxRules.ts, imported across the domain boundary by
+ * FundDetailDrawer.tsx - the only domain-to-domain import in the frontend. It was
+ * always mutual-funds code: getTaxProfile() keys on a *fund category* (ELSS, DEBT,
+ * GILT, LIQUID), the Tax Expert domain never imported it, and this drawer was its only
+ * consumer. Moving it here removes the edge rather than redirecting it.
+ *
+ * Renamed from taxRules to fundTaxRules to keep it distinct from the Tax Expert's
+ * useTaxRules() hook, which fetches the ITR rulebook from GET /tax-expert/rules.
+ *
+ * Display-only. These rates are duplicated from the backend's
+ * shared/reference/capital_gains.json; nothing is computed from them here beyond the
+ * labels shown in the drawer, and any figure that affects a tax number comes from the
+ * API. If that ever stops being true, read them from the server instead.
  */
 
 export interface TaxProfile {

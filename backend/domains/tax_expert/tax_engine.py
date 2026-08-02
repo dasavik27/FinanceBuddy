@@ -19,10 +19,22 @@ import re
 from typing import Optional
 from datetime import datetime
 
-# Load Tax Rules Configuration
+from shared.reference.statutory import CAPITAL_GAINS
+
+# Load Tax Rules Configuration.
+#
+# tax_rules.json holds what only this domain computes: slabs, deductions, rebates,
+# surcharge, cess, 234-interest. The capital-gains block was lifted out of it into
+# shared/reference/statutory.py, because Mutual Funds needs the same rates and was
+# previously reading them by pathing into this package from shared/config.py.
+#
+# It is merged back under the original key so every `TAX_RULES["capital_gains"][...]`
+# lookup in this module - and the projection served by routers/rules.py - keeps
+# working against one source of truth.
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "tax_rules.json")
-with open(CONFIG_PATH, "r") as f:
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     TAX_RULES = json.load(f)
+TAX_RULES["capital_gains"] = CAPITAL_GAINS
 
 def _convert_slabs(slabs_list):
     return [(limit if limit is not None else float('inf'), rate) for limit, rate in slabs_list]
