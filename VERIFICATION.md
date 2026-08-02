@@ -194,7 +194,8 @@ cd backend
 export TEST_DATABASE_URL=postgresql://postgres:pwd@localhost:5432/financebuddy_test
 python -m pytest tests/ -q
 
-# Expected: 362 tests pass
+# Expected: 687 tests, all passing.
+# Without TEST_DATABASE_URL, 111 of them skip instead.
 ```
 
 ---

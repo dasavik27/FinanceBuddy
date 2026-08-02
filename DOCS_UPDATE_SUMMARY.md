@@ -89,3 +89,43 @@ TEST_DATABASE_URL=postgresql://... python -m pytest tests/ -q
 ```
 
 **All documentation updated: August 2, 2026**
+
+---
+
+# Update — August 3, 2026
+
+Follows the domain-isolation and Budget refactor. Corrections outnumber additions
+here: several things the previous pass recorded as documented were documented
+*wrongly*, which is worse than a gap because it reads as verified.
+
+## Corrections
+
+| Document | Was | Now |
+|---|---|---|
+| BUDGET_ANALYSIS.md | API Reference documented `/api/budget/upload`, `/overview`, `/category_breakdown`, `/categorize` with invented response bodies | None of those paths ever existed. Replaced with all 26 real `/budget/*` routes, generated from the mounted app |
+| BUDGET_ANALYSIS.md | Component table listed 7 components, called TransactionsTab "virtualized" | All 11 components; TransactionsTab is client-paginated at 50 rows, not virtualized |
+| BUDGET_ANALYSIS.md | Cited `domains/budget/rules.py` | No such file — `categorizer.py` + `rules_safety.py` |
+| ARCHITECTURE.md | Migrations 0002 "tax_payloads, indices", 0003 "equity support" | 0002 is row-level security, 0003 is column encryption. 0006 and 0007 were missing entirely |
+| README.md | "362 tests" | 687 backend, 354 frontend |
+| README.md, ONBOARDING.md | `npm run dev` at the repo root | There is no root package.json. `cd frontend && npm run dev:all` |
+| VERIFICATION.md | "Expected: 362 tests pass" | 687, of which 111 skip without `TEST_DATABASE_URL` |
+| ONBOARDING.md | 6 backend env vars | All 15 the code reads, split required/optional |
+| HOW_TO_VERIFY_DOCUMENTATION.md | "All 5 migrations" | 7 |
+
+## Additions
+
+- **ARCHITECTURE.md — Frontend routes.** Domains moved from `/dashboard/<domain>` to
+  top-level `/<domain>`; `/dashboard` is now the hub. Legacy URLs redirect.
+- **ARCHITECTURE.md — Keeping the domains independent.** The `janitor` and
+  `session_stores` registries, and the three rules that keep cross-domain coupling at
+  zero. This is the part most likely to be undone by accident.
+- **ARCHITECTURE.md — Backend tree** now shows `shared/reference/`,
+  `shared/services/returns.py`, `janitor.py`, `session_stores.py`.
+
+## Known gaps, deliberately left
+
+- `HOW_TO_VERIFY_DOCUMENTATION.md` asserts "ALL DOCUMENTATION COMPLETE ✓" and lists
+  file sizes from August 2. A document that certifies its own completeness will keep
+  going stale; worth deleting rather than maintaining.
+- Response-body examples are not reproduced in BUDGET_ANALYSIS.md. `GET /docs` is the
+  source of truth — hand-copied payloads are what drifted last time.

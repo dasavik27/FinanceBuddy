@@ -27,7 +27,7 @@ grep -c "Budget" README.md ARCHITECTURE.md ONBOARDING.md
 
 # Migrations documented
 echo "Migrations documented:"
-grep -c "0001\|0002\|0003\|0004\|0005" ONBOARDING.md
+grep -c "0001\|0002\|0003\|0004\|0005\|0006\|0007" ARCHITECTURE.md
 
 # Environment variables documented
 echo "Env vars documented:"
@@ -151,7 +151,7 @@ Scripts:
 - backend/scripts/verify_setup.py: 80 lines
 
 All 4 domains: ✓ Documented
-All 5 migrations: ✓ Documented
+All 7 migrations: ✓ Documented (ARCHITECTURE.md)
 All env vars: ✓ Documented
 All setup steps: ✓ Documented
 ```

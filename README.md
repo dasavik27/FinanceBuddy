@@ -47,22 +47,28 @@ python -c "import base64,os;print('k1:'+base64.b64encode(os.urandom(32)).decode(
 # 5. Schema
 cd backend && python -m migrations.migrate && cd ..
 
-# 6. Run
-npm run dev
+# 6. Run — frontend and backend together
+cd frontend && npm run dev:all
 ```
 
 App on http://localhost:5173, API docs on http://localhost:8000/docs.
+`npm run dev` alone starts only the frontend.
 
 ## Tests
 
 ```bash
+# Backend — 687 tests
 cd backend
 TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/financebuddy_test \
   python -m pytest tests/ -q
+
+# Frontend — 354 tests
+cd frontend && npm test
 ```
 
-362 tests. Without `TEST_DATABASE_URL` the database-backed ones skip rather than fail
-— fine for a quick check, not a full pass.
+Without `TEST_DATABASE_URL` the 111 database-backed tests skip rather than fail — fine
+for a quick check, not a full pass. Some paths are only reachable with a live database,
+so a green run without it is weaker than it looks.
 
 ## Verification
 
