@@ -12,6 +12,34 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["budget"])
 
+
+def _require_caller() -> str:
+    """
+    The authenticated user_id, or 401.
+
+    These handlers used to follow the 401 check with `identity.owns_record(user_id)` on
+    a bare line. That call passed the caller's *own* id, so it compared the caller to
+    themselves and was always True, and its return value was discarded - it enforced
+    nothing while looking like it did. Per-session ownership is enforced inside
+    domains/budget/sessions.py, which is the only way to reach a payload.
+    """
+    user_id = identity.current_user_id()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Sign in to use the budget analyzer.")
+    return user_id
+
+
+def _load(session_id: str, user_id: str):
+    """
+    Resolve the "overall" pseudo-session or one real session.
+
+    get_budget_session raises 404 when the id is not the caller's, so nothing here has
+    to compare owners itself.
+    """
+    if session_id == "overall":
+        return get_all_budget_sessions(user_id)
+    return get_budget_session(session_id)
+
 def _clean_merchant_name(desc: str) -> str:
     if not desc or str(desc).strip().lower() in ("nan", "none", "null", ""):
         return "Uncategorized Payee"
@@ -188,16 +216,9 @@ async def get_budget_overview(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, accounts = get_all_budget_sessions(user_id)
-    else:
-        df, accounts = get_budget_session(session_id)
-        
+    user_id = _require_caller()
+    df, accounts = _load(session_id, user_id)
+
     if df.empty:
         raise HTTPException(404, detail="Session not found or empty")
 
@@ -586,16 +607,9 @@ async def get_transactions(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, _ = get_all_budget_sessions(user_id)
-    else:
-        df, _ = get_budget_session(session_id)
-        
+    user_id = _require_caller()
+    df, _ = _load(session_id, user_id)
+
     if df.empty:
         return {"transactions": []}
 
@@ -629,19 +643,27 @@ async def get_category_breakdown(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, _ = get_all_budget_sessions(user_id)
-    else:
-        df, _ = get_budget_session(session_id)
-        
-    # Keep unfiltered copy for total reference and all categories list
-    all_available_categories = sorted(df[df["type"] == (txn_type.lower() if txn_type in ("debit", "credit") else "debit")]["category"].dropna().unique().tolist())
-    overall_total_spend = float(df[df["type"] == (txn_type.lower() if txn_type in ("debit", "credit") else "debit")]["amount"].sum())
+    user_id = _require_caller()
+    df, _ = _load(session_id, user_id)
+
+    # An empty frame has no columns, so the reference figures below would raise KeyError
+    # rather than returning an empty breakdown.
+    if df.empty:
+        return {
+            "is_drilldown": False,
+            "selected_category": None,
+            "all_categories": [],
+            "categories": [],
+            "available_natures": [],
+            "nature_summary": {"needs": 0.0, "wants": 0.0, "investments": 0.0, "transfers": 0.0, "other": 0.0},
+            "total_amount": 0.0,
+        }
+
+    # Keep unfiltered reference figures for the "% of total" denominators.
+    reference_type = txn_type.lower() if txn_type in ("debit", "credit") else "debit"
+    reference_df = df[df["type"] == reference_type]
+    all_available_categories = sorted(reference_df["category"].dropna().unique().tolist())
+    overall_total_spend = float(reference_df["amount"].sum())
 
     df = _apply_budget_filters(
         df,
@@ -804,11 +826,8 @@ class TransactionUpdate(BaseModel):
 async def bulk_update_transactions(
     updates: List[TransactionUpdate] = Body(...)
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
+    user_id = _require_caller()
+
     # Group updates by session_id
     from collections import defaultdict
     session_updates = defaultdict(list)
