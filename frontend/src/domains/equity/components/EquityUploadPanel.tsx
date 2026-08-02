@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { useDropzone } from 'react-dropzone'
+import { useDropzone, type FileRejection } from 'react-dropzone'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Box, Typography, Button, Alert, CircularProgress,
@@ -17,6 +17,15 @@ import CloseIcon           from '@mui/icons-material/Close'
 import DeleteOutlineIcon   from '@mui/icons-material/DeleteOutline'
 import { apiClient }       from '../../../shared/api/client'
 import { useAppStore }     from '../../../shared/store/appStore'
+import { SwitchSessionButton } from '../../../shared/components/dashboard/SwitchSessionButton'
+import { UploadHistoryList } from '../../../shared/components/dashboard/UploadHistoryList'
+
+/** Mirrors MAX_UPLOAD_BYTES in backend/domains/equity/parser.py. */
+const MAX_UPLOAD_MB = 8
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+/** Where the Kite OAuth `state` is parked across the redirect to Zerodha and back. */
+const KITE_STATE_KEY = 'equity.kite.oauth.state'
 
 function SyncOverlay({ state }: { state: 'syncing' | 'success' }) {
   const [msgIndex, setMsgIndex] = useState(0)
@@ -59,211 +68,61 @@ function SyncOverlay({ state }: { state: 'syncing' | 'success' }) {
 }
 
 
-function fmtDate(iso: string) {
-  return new Intl.DateTimeFormat('en-IN', {
-    day: 'numeric', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso))
-}
 
-function fmtINR(v: number) {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
-  }).format(v)
-}
-
-function HistoryList({ history, onSelect, activeSessionId, compact, onDelete }: any) {
-  if (!history || history.length === 0) return (
-    <Box sx={{ textAlign: 'center', py: compact ? 2 : 4 }}>
-      <Typography sx={{ color: '#475569', fontSize: '0.85rem' }}>No previous sessions found</Typography>
-    </Box>
-  )
-
-  return (
-    <Stack spacing={compact ? 1 : 1.5}>
-      {history.slice(0, 5).map((h: any, i: number) => {
-        const isActive = h.session_id === activeSessionId
-        return (
-          <motion.div
-            key={h.session_id}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.06 }}
-          >
-            <Box
-              onClick={() => onSelect(h.session_id)}
-              sx={{
-                display: 'flex', alignItems: 'center',
-                p: compact ? 1.5 : 2,
-                background: isActive
-                  ? 'linear-gradient(135deg, rgba(16,185,129,0.15) 0%, rgba(5,150,105,0.08) 100%)'
-                  : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-                border: `1px solid ${isActive ? 'rgba(16,185,129,0.5)' : 'rgba(255,255,255,0.07)'}`,
-                borderRadius: '16px',
-                cursor: isActive ? 'default' : 'pointer',
-                transition: 'all 0.25s ease',
-                '&:hover': isActive ? {} : {
-                  background: 'linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(5,150,105,0.05) 100%)',
-                  borderColor: 'rgba(16,185,129,0.35)',
-                  transform: 'translateY(-1px)',
-                  '& .chevron': { color: '#10B981', transform: 'translateX(3px)' },
-                  '& .delete-btn': { opacity: 1 },
-                },
-              }}
-            >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <Typography sx={{ color: '#CBD5E1', fontWeight: 700, fontSize: compact ? '0.78rem' : '0.88rem' }}>
-                    {fmtDate(h.created_at)}
-                  </Typography>
-                  {isActive && (
-                    <Chip label="Active" size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(16,185,129,0.25)', color: '#34D399', borderRadius: '6px' }} />
-                  )}
-                  {h.statement_period && h.statement_period.includes('kite') && (
-                    <Chip label="Zerodha Kite" size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(235,91,60,0.2)', color: '#FF5722', borderRadius: '6px' }} />
-                  )}
-                </Box>
-                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1 }}>
-                  <Chip label={`${h.num_funds || 0} Stocks`} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: '#E2E8F0', borderRadius: '6px' }} />
-                  <Chip label={fmtINR(h.total_value || 0)} size="small" sx={{ height: 20, fontSize: '0.7rem', fontWeight: 800, background: 'rgba(78,222,147,0.1)', color: '#4EDE93', borderRadius: '6px' }} />
-                </Box>
-              </Box>
-              
-              {onDelete && (
-                <IconButton 
-                    size="small" 
-                    className="delete-btn"
-                    onClick={(e) => { e.stopPropagation(); onDelete(h.session_id); }}
-                    sx={{ 
-                        opacity: { xs: 1, md: 0 }, 
-                        transition: 'opacity 0.2s', 
-                        color: '#64748B', 
-                        '&:hover': { color: '#EF4444', background: 'rgba(239,68,68,0.1)' },
-                        mr: 1
-                    }}
-                >
-                    <DeleteOutlineIcon fontSize="small" />
-                </IconButton>
-              )}
-
-              {!isActive && (
-                <ChevronRightIcon className="chevron" sx={{ color: '#475569', fontSize: 18, transition: 'all 0.25s ease', flexShrink: 0 }} />
-              )}
-            </Box>
-          </motion.div>
-        )
-      })}
-    </Stack>
-  )
-}
 
 export function SwitchEquityStatementButton({ sessionId }: { sessionId: string | null }) {
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const [history, setHistory]   = useState<any[]>([])
   const setSessionById = useAppStore((s) => s.setSessionById)
-  const open = Boolean(anchorEl)
 
-  const fetchHistory = useCallback(() => {
-    apiClient.getEquityHistory()
-      .then((res) => { if (res?.history) setHistory(res.history) })
-      .catch(console.error)
+  const fetchHistory = useCallback(async () => {
+    const res = await apiClient.getEquityHistory()
+    return res?.history ?? []
   }, [])
 
-  useEffect(() => {
-    if (open) fetchHistory()
-  }, [open, fetchHistory])
-
-  const handleSelect = (sid: string) => {
-    setSessionById(sid, 'equity')
-    setAnchorEl(null)
-  }
+  const handleDelete = useCallback(async (sid: string) => {
+    try {
+      await apiClient.deleteHistorySession(sid)
+      if (sessionId === sid) setSessionById('', 'equity')
+    } catch (e) {
+      console.error(e)
+    }
+  }, [sessionId, setSessionById])
 
   return (
-    <>
-      <Tooltip title="Switch portfolio or connect new account" placement="bottom">
+    <SwitchSessionButton
+      sessionId={sessionId}
+      fetchHistory={fetchHistory}
+      onSelect={(sid) => setSessionById(sid, 'equity')}
+      onDelete={handleDelete}
+      accent="emerald"
+      buttonLabel="Switch Portfolio"
+      tooltip="Switch portfolio or connect new account"
+      popoverTitle="Equity Portfolios"
+      itemLabel="Stocks"
+      emptyText="No previous sessions found"
+      renderBadges={(h) =>
+        h.statement_period?.includes('kite') ? (
+          <Chip
+            label="Zerodha Kite"
+            size="small"
+            sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(235,91,60,0.2)', color: '#FF5722', borderRadius: '6px' }}
+          />
+        ) : null
+      }
+      renderFooter={(close) => (
         <Button
-          variant="outlined"
-          size="small"
-          startIcon={<SwapHorizIcon sx={{ fontSize: 16 }} />}
-          onClick={(e) => setAnchorEl(e.currentTarget)}
+          fullWidth variant="contained"
+          onClick={() => { setSessionById('', 'equity'); close() }}
           sx={{
-            borderColor: 'rgba(16,185,129,0.35)',
-            color: '#94A3B8',
-            textTransform: 'none',
-            fontWeight: 700,
-            fontSize: '0.82rem',
-            borderRadius: '10px',
-            px: 1.5,
-            '&:hover': { borderColor: '#10B981', color: '#34D399', background: 'rgba(16,185,129,0.08)' },
+            py: 1, borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem',
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
+            color: '#fff', textTransform: 'none',
+            '&:hover': { background: 'rgba(255,255,255,0.15)' },
           }}
         >
-          Switch Portfolio
+          Connect New Portfolio
         </Button>
-      </Tooltip>
-
-      <Popover
-        open={open}
-        anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        PaperProps={{
-          sx: {
-            mt: 1, width: 360, borderRadius: '20px',
-            background: 'rgba(15,23,42,0.97)',
-            border: '1px solid rgba(16,185,129,0.2)',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 40px rgba(16,185,129,0.1)',
-            backdropFilter: 'blur(20px)',
-            overflow: 'hidden',
-          }
-        }}
-      >
-        <Box sx={{ px: 2.5, pt: 2.5, pb: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HistoryIcon sx={{ color: '#10B981', fontSize: 18 }} />
-            <Typography sx={{ fontWeight: 800, fontSize: '0.9rem', color: '#F8FAFC' }}>Equity Portfolios</Typography>
-          </Box>
-          <IconButton size="small" onClick={() => setAnchorEl(null)} sx={{ color: '#475569', '&:hover': { color: '#94A3B8' } }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </Box>
-
-        <Box sx={{ px: 2.5, pb: 1.5 }}>
-          <HistoryList 
-            history={history} 
-            onSelect={handleSelect} 
-            activeSessionId={sessionId} 
-            compact 
-            onDelete={async (sid: string) => {
-              try {
-                await apiClient.deleteHistorySession(sid)
-                setHistory(h => h.filter(x => x.session_id !== sid))
-                if (sessionId === sid) setSessionById('', 'equity')
-              } catch (e) {
-                console.error(e)
-              }
-            }}
-          />
-        </Box>
-
-        <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)', mx: 2.5 }} />
-
-        <Box sx={{ px: 2.5, pt: 2, pb: 2.5, textAlign: 'center' }}>
-          <Button
-            fullWidth variant="contained"
-            onClick={() => { setSessionById('', 'equity'); setAnchorEl(null); }}
-            sx={{
-              py: 1, borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem',
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-              color: '#fff', textTransform: 'none',
-              '&:hover': { background: 'rgba(255,255,255,0.15)' }
-            }}
-          >
-            Connect New Portfolio
-          </Button>
-        </Box>
-      </Popover>
-    </>
+      )}
+    />
   )
 }
 
@@ -305,30 +164,69 @@ export default function EquityUploadPanel() {
   }
 
   const kiteAttemptRef = useRef<string | null>(null)
+  // Tracked so pending timers can be cancelled on unmount. Two bare setTimeout calls
+  // used to fire regardless — one of them calling history.replaceState, which rewrote
+  // the URL of whatever page the user had navigated to in the meantime.
+  const timersRef = useRef<number[]>([])
 
-  // Handle Kite OAuth Callback
+  const later = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms)
+    timersRef.current.push(id)
+  }, [])
+
+  useEffect(() => () => {
+    timersRef.current.forEach(window.clearTimeout)
+    timersRef.current = []
+  }, [])
+
+  /** Strip the OAuth parameters from the address bar. */
+  const clearOAuthParams = useCallback(() => {
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }, [])
+
+  // Handle the Kite OAuth callback.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const requestToken = urlParams.get('request_token')
     const action = urlParams.get('action')
-    
+    // Echoed back by Zerodha. The backend issued it and will only accept it from the
+    // user it was issued to, which is what ties this return leg to the login that
+    // started it. Fall back to sessionStorage in case the provider drops the param.
+    const state = urlParams.get('state') || sessionStorage.getItem(KITE_STATE_KEY) || ''
+
     if (requestToken && action === 'login' && kiteAttemptRef.current !== requestToken) {
       kiteAttemptRef.current = requestToken
+
+      if (!state) {
+        setError('This Zerodha login could not be verified. Please start the connection again.')
+        clearOAuthParams()
+        return
+      }
+
       setSyncState('syncing')
-      apiClient.connectKite(requestToken)
+      apiClient.connectKite(requestToken, state)
         .then(data => {
+            sessionStorage.removeItem(KITE_STATE_KEY)
             setSyncState('success')
-            setTimeout(() => {
+            later(() => {
                 setSession(data.session_id, 'equity', data)
-                window.history.replaceState({}, document.title, window.location.pathname)
+                clearOAuthParams()
             }, 1200)
         })
         .catch(err => {
             setError(err?.response?.data?.detail || 'Kite connect failed')
             setSyncState('idle')
         })
+        .finally(() => {
+            // In a finally, not only on success: the request_token is a credential that
+            // arrived in the query string, so it lands in browser history and in the
+            // Referer of any later same-page request. Leaving it there on the error path
+            // (as this did) leaves it readable for as long as the tab is open.
+            sessionStorage.removeItem(KITE_STATE_KEY)
+            clearOAuthParams()
+        })
     }
-  }, [setSession])
+  }, [setSession, clearOAuthParams, later])
 
 
   const onDropHoldings = useCallback((accepted: File[]) => {
@@ -339,8 +237,29 @@ export default function EquityUploadPanel() {
     if (accepted[0]) { setTradebookFile(accepted[0]); setError(null) }
   }, [])
 
-  const holdingsDropzone = useDropzone({ onDrop: onDropHoldings, accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }, maxFiles: 1 })
-  const tradebookDropzone = useDropzone({ onDrop: onDropTradebook, accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] }, maxFiles: 1 })
+  const onRejected = useCallback((rejections: FileRejection[]) => {
+    const reason = rejections[0]?.errors?.[0]?.code
+    setError(
+      reason === 'file-too-large'
+        ? `That file is larger than ${MAX_UPLOAD_MB} MB. Export just your holdings or tradebook.`
+        : 'Unsupported file. Upload a .csv or .xlsx export from your broker.',
+    )
+  }, [])
+
+  const dropzoneOptions = {
+    accept: {
+      'text/csv': ['.csv'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    },
+    maxFiles: 1,
+    // Rejected in the browser instead of uploading and being refused. The backend caps
+    // this too (that is the real guard), but without maxSize the user waited out a
+    // pointless upload of a file that could never be accepted.
+    maxSize: MAX_UPLOAD_BYTES,
+  } as const
+
+  const holdingsDropzone = useDropzone({ ...dropzoneOptions, onDrop: onDropHoldings, onDropRejected: onRejected })
+  const tradebookDropzone = useDropzone({ ...dropzoneOptions, onDrop: onDropTradebook, onDropRejected: onRejected })
 
   const handleAnalyzeCSV = async () => {
     if (!file) return setError('Please select a Holdings CSV.')
@@ -348,9 +267,14 @@ export default function EquityUploadPanel() {
     try {
       const data = await apiClient.parseEquityCsv(file, tradebookFile || undefined)
       setSyncState('success')
-      setTimeout(() => setSession(data.session_id, 'equity', data), 1200)
+      later(() => {
+        setSession(data.session_id, 'equity', data)
+        // Release the File handles; they were held until the panel happened to unmount.
+        setFile(null)
+        setTradebookFile(null)
+      }, 1200)
     } catch (e: any) {
-      setError(e?.response?.data?.detail ?? 'Failed to parse CSV. Please check the file format.')
+      setError(e?.response?.data?.detail ?? 'Failed to parse the file. Please check the format.')
       setSyncState('idle')
     }
   }
@@ -360,6 +284,9 @@ export default function EquityUploadPanel() {
       try {
           const res = await apiClient.getKiteLoginUrl()
           if (res.login_url) {
+              // Stashed so the return leg can still be verified if Zerodha does not echo
+              // the state parameter back.
+              if (res.state) sessionStorage.setItem(KITE_STATE_KEY, res.state)
               window.location.href = res.login_url
           }
       } catch (e: any) {
@@ -582,7 +509,24 @@ export default function EquityUploadPanel() {
                       </Typography>
 
                       <Box sx={{ flex: 1, overflowY: 'auto', pr: 1, mr: -1 }}>
-                        <HistoryList history={history} onSelect={(sid: string) => setSessionById(sid, 'equity')} compact={false} onDelete={handleDeleteSession} />
+                        <UploadHistoryList
+                          history={history}
+                          onSelect={(sid) => setSessionById(sid, 'equity')}
+                          onDelete={handleDeleteSession}
+                          accent="emerald"
+                          itemLabel="Stocks"
+                          emptyText="No previous sessions found"
+                          renderBadges={(h) =>
+                            h.statement_period?.includes('kite') ? (
+                              <Chip
+                                label="Zerodha Kite"
+                                size="small"
+                                sx={{ height: 18, fontSize: '0.65rem', fontWeight: 800, background: 'rgba(235,91,60,0.2)', color: '#FF5722', borderRadius: '6px' }}
+                              />
+                            ) : null
+                          }
+                          compact={false}
+                        />
                       </Box>
                     </Paper>
                   </motion.div>

@@ -115,6 +115,7 @@ def clean_db(db_schema):
     """
     from shared import db, users
     from domains.mutual_funds import sessions as mf_sessions
+    from domains.equity import sessions as eq_sessions
     from domains.tax_expert import tax_sessions
 
     with db.connect() as conn:
@@ -122,6 +123,7 @@ def clean_db(db_schema):
 
     users.invalidate()
     mf_sessions.clear_all()
+    eq_sessions.clear_all()
     tax_sessions.clear_all()
     yield db_schema
 

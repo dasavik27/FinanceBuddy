@@ -10,6 +10,7 @@ and full rolling return series for institutional performance benchmarking.
 
 from fastapi import APIRouter, HTTPException
 import logging
+import re
 logger = logging.getLogger(__name__)
 
 from typing import Optional
@@ -75,7 +76,14 @@ def _apply_filters(
     if amc:
         amcs = [a.strip().upper() for a in amc.split(",") if a.strip()]
         if amcs:
-            pattern = "|".join(amcs)
+            # Each name is escaped before it joins the alternation. The alternation
+            # itself is intentional (this is a multi-select filter), so regex=False is
+            # not the fix here - but without escaping, the *contents* were a
+            # caller-supplied regex, which is the same defect fixed in holdings.py:
+            # "(a+)+$" backtracks exponentially per row and "(" raises re.PatternError
+            # into an uncaught 500. re.escape keeps the OR semantics and makes each
+            # branch a literal.
+            pattern = "|".join(re.escape(a) for a in amcs)
             df = df[df["AMC"].str.upper().str.contains(pattern, na=False)]
     if plan and plan != "All":
         df = df[df["Plan"].str.strip().str.upper() == plan.strip().upper()]

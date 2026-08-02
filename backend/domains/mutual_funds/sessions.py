@@ -238,6 +238,17 @@ def _session_purge_worker():
             except Exception as e:
                 logger.error(f"[GC TAX SWEEP ERROR] {e}")
 
+            # 5. Expire resident equity portfolios. One daemon rather than a second
+            #    thread: the sweep is a few dictionary operations, and equity's store
+            #    has the same TTL semantics as the one above. Equity enforces the TTL
+            #    lazily on read too, so this is about releasing memory from sessions
+            #    nobody comes back to, not about correctness.
+            try:
+                from domains.equity.sessions import purge_expired as purge_equity
+                purge_equity()
+            except Exception as e:
+                logger.error(f"[GC EQUITY SWEEP ERROR] {e}")
+
         except Exception as e:
             logger.error(f"[GC ERROR] {e}")
         time.sleep(600)  # GC sweep execution interval: 10 minutes

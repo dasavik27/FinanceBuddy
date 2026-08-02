@@ -28,6 +28,49 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Largest document we will read. Mirrors domains/equity/parser.py:MAX_UPLOAD_BYTES; an
+# AIS PDF is a few hundred KB and a broker P&L workbook rarely exceeds a couple of MB.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+def _require_caller() -> str:
+    """
+    The signed-in user, or 401.
+
+    Ownership is enforced in the data-access layer, and get_tax_session does that
+    correctly. Creation is the gap: a session saved by an anonymous request lands with
+    `user_id = None`, and identity.owns_record returns True for an unowned record - "the
+    record is unowned. There is nobody to protect it from." So an anonymous AIS upload
+    produces exactly the row the read side cannot protect, readable by anyone holding the
+    id. The equity domain already adopted this guard; the tax domain had not.
+    """
+    caller = identity.current_user_id()
+    if not caller:
+        raise HTTPException(
+            status_code=401, detail="Sign in to upload a tax document."
+        )
+    return caller
+
+
+def _read_upload(file_obj, label: str) -> bytes:
+    """
+    Read an upload with a hard byte ceiling.
+
+    Reads the limit plus one byte and rejects on overflow, so an oversized body is never
+    fully materialised - a bare `.read()` buffers the whole thing before anyone can
+    object to its size, and this domain then hands it to camelot/OpenCV, which
+    rasterises pages. On a ~512 MB instance that is a single-request OOM.
+    """
+    raw = file_obj.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{label} is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+    if not raw:
+        raise HTTPException(status_code=422, detail=f"{label} is empty.")
+    return raw
+
 
 @router.post("/parse-ais")
 def parse_ais(
@@ -43,7 +86,8 @@ def parse_ais(
     could fail Render's health check mid-upload. As a sync def, FastAPI runs it
     in a threadpool and the loop stays responsive.
     """
-    raw = file.file.read()
+    _require_caller()
+    raw = _read_upload(file.file, "The AIS PDF")
 
     try:
         ais_data = parse_ais_pdf(raw)
@@ -61,9 +105,15 @@ def parse_ais(
             pass
         logger.error(f"AIS Structure Changed: {e.diff}")
         raise HTTPException(status_code=422, detail={"type": "AIS_STRUCTURE_CHANGED", "message": str(e), "diff": e.diff})
-    except Exception as e:
-        logger.error(f"Error in parse_ais_pdf: {e}", exc_info=True)
-        raise HTTPException(status_code=422, detail=f"Failed to parse AIS PDF: {str(e)}")
+    except Exception:
+        # Traceback stays server-side. The detail used to interpolate str(e), which for
+        # camelot/pypdf/pdfplumber carries temp file paths and internal offsets.
+        logger.error("Error in parse_ais_pdf", exc_info=True)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read that AIS PDF. Check it is an unmodified download from "
+                   "the income-tax portal and not password-protected.",
+        )
 
     # Validate that we got meaningful data
     salary = ais_data.get("salary", {})
@@ -76,19 +126,29 @@ def parse_ais(
         bool(ais_data.get("capital_gains_mf_other"))
     )
     if not has_income:
-        logger.warning(f"No income extracted from AIS PDF. Personal details: {ais_data.get('personal', {})}")
+        # Log the *shape* of what was extracted, never the values. This used to dump the
+        # whole `personal` dict - PAN, name, date of birth, email and mobile - at WARNING,
+        # on a common failure path. Render retains stdout, so that is durable personal
+        # data, which is exactly what identity.mask_pan exists to prevent.
+        personal = ais_data.get("personal", {}) or {}
+        logger.warning(
+            "No income extracted from AIS PDF. pan=%s fields_found=%s",
+            identity.mask_pan(personal.get("pan")),
+            sorted(k for k, v in personal.items() if v),
+        )
         raise HTTPException(status_code=422, detail="Could not extract financial data from this PDF. Please verify that the PDF is a valid AIS document and not password-protected.")
 
     reconciliation_flags = {}
-    if broker_file:
-        broker_raw = broker_file.file.read()
+    if broker_file and broker_file.filename:
+        broker_raw = _read_upload(broker_file.file, "The broker file")
         try:
             broker_trades = parse_zerodha_tax_pnl(broker_raw)
             reconciliation_flags = reconcile_trades(ais_data, broker_trades)
-        except Exception as e:
-            # We don't fail the whole parsing if broker file fails
-            logger.info(f"Failed to parse broker file: {e}")
-            pass
+        except Exception:
+            # The AIS parse still stands if the optional broker file fails - but at
+            # WARNING with a traceback, not INFO with just the message. A genuine bug in
+            # our own reconciliation code was indistinguishable from a bad upload.
+            logger.warning("Failed to parse broker file; continuing without it", exc_info=True)
 
     session_id = create_tax_session(ais_data, flags=reconciliation_flags)
 
@@ -123,17 +183,23 @@ def reconcile_broker(
     if not session:
         raise HTTPException(status_code=404, detail="Tax session not found")
 
-    broker_raw = broker_file.file.read()
+    broker_raw = _read_upload(broker_file.file, "The broker file")
     try:
         broker_trades = parse_zerodha_tax_pnl(broker_raw)
-        logger.info(f"Parsed {len(broker_trades)} trades from broker file.")
-    except Exception as e:
-        logger.error(f"Failed to parse broker file: {e}")
-        raise HTTPException(status_code=422, detail=f"Failed to parse broker file: {str(e)}")
+        logger.info("Parsed %d trades from broker file.", len(broker_trades))
+    except Exception:
+        logger.error("Failed to parse broker file", exc_info=True)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read that broker file. Export the tax P&L report from your "
+                   "broker without editing it.",
+        )
 
     ais_data = session["ais_data"]
     reconciliation_flags = reconcile_trades(ais_data, broker_trades)
-    logger.debug(f"Reconciliation flags: {reconciliation_flags}")
+    # Count only. The flags carry security names and cost basis, which is financial data
+    # and does not belong in a log line even at debug.
+    logger.debug("Reconciliation produced %d flag group(s)", len(reconciliation_flags))
 
     zero_cost_flags = {f"{f['security']}___{f.get('type', 'UNKNOWN')}": f["broker_cost"] for f in reconciliation_flags.get("zero_cost", [])}
     mismatch_flags = {f"{f['security']}___{f.get('type', 'UNKNOWN')}": f["broker_cost"] for f in reconciliation_flags.get("cost_mismatch", [])}

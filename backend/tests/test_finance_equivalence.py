@@ -54,6 +54,7 @@ from domains.mutual_funds.finance import (
     compute_period_comparison,
     compute_rolling_return_avg,
     compute_rolling_return_series,
+    normalize_txn_type,
 )
 
 # Tolerance: the rewrite is pure reordering of float arithmetic, so anything looser than
@@ -249,8 +250,16 @@ def reference_get_standard_ledger(df_t: pd.DataFrame) -> List[Dict]:
         if any(x in t_type for x in ("REINVEST", "BONUS", "IDCW_REINVEST", "GROWTH_OPTION")):
             continue
 
+        # The type string is normalised before the keyword tests, matching the fix in
+        # finance.py. Previously the raw enum repr was compared against hyphenated names,
+        # so no switch keyword ever matched here either - harmless only because the
+        # `units` sign test below fires first for real CAS rows.
+        t_type = normalize_txn_type(t_type)
+
         # QUIRK: `units > 0` is checked BEFORE the type keywords, so a row typed
-        # REDEMPTION but carrying positive Units is booked as a BUY.
+        # REDEMPTION but carrying positive Units is booked as a BUY. Preserved - it is
+        # what makes the sign the authoritative signal, which is the property the
+        # simulation now also relies on.
         if units > 0 or any(x in t_type for x in ("BUY", "PURCHASE", "SIP", "STP-IN", "SWITCH-IN")):
             ledger.append({"date": d, "amount": -amt, "type": "BUY"})
         elif units < 0 or any(
@@ -665,26 +674,48 @@ def reference_compute_period_comparison(
                 if f not in fund_units:
                     continue
 
-                t_type = str(txn.get("Type", "")).upper()
+                # FORMER QUIRK, FIXED — reference updated knowingly, per the contract in
+                # this file's docstring.
+                #
+                # This used to be plain substring matching on the raw Type string, so
+                # "TransactionType.SWITCH_IN" contained no "SWITCH-IN" (underscore, not
+                # hyphen) and fell through every branch: the units were never applied.
+                # That is not a cosmetic quirk — it silently corrupted the unit balance,
+                # and therefore the whole portfolio curve, for any investor who had done a
+                # Regular-to-Direct switch. The XIRR path was unaffected because
+                # _get_standard_ledger leads with the units sign, which is exactly the
+                # fallback now adopted here.
+                #
+                # Kept as a transcription of the *fixed* implementation, so this file
+                # still detects an unintended change to it.
+                t_type = normalize_txn_type(txn.get("Type", ""))
                 amt = abs(float(txn.get("Amount", 0) or 0))
-                units_t = abs(float(txn.get("Units", 0) or 0))
+                signed = float(txn.get("Units", 0) or 0)
+                units_t = abs(signed)
                 nav_t = float(txn.get("NAV", 0) or 0)
 
                 if amt == 0 and units_t > 0 and nav_t > 0:
                     amt = units_t * nav_t
 
-                # QUIRK: plain substring matching on the raw Type string, buy branch first —
-                # e.g. "TransactionType.SWITCH_OUT_MERGER" has no "SWITCH-OUT" (underscore,
-                # not hyphen) and falls through to the no-op else.
-                if "BUY" in t_type or "PURCHASE" in t_type or "SIP" in t_type or "SWITCH-IN" in t_type:
+                is_in = signed > 0 or (signed == 0 and any(
+                    x in t_type for x in ("BUY", "PURCHASE", "SIP", "STP-IN", "SWITCH-IN")))
+                is_out = signed < 0 or (signed == 0 and any(
+                    x in t_type for x in ("SELL", "REDEMPTION", "SWP", "STP-OUT", "SWITCH-OUT")))
+                units_only = any(x in t_type for x in ("REINVEST", "BONUS", "SEGREGATION"))
+
+                if units_only:
+                    fund_units[f] += units_t
+                elif is_in:
                     fund_units[f] += units_t
                     net_cashflow += amt
-                elif "SELL" in t_type or "REDEMPTION" in t_type or "SWP" in t_type or "SWITCH-OUT" in t_type:
+                elif is_out:
                     fund_units[f] -= units_t
                     fund_units[f] = max(0.0, fund_units[f])
                     net_cashflow -= amt
-                elif "REINVEST" in t_type or "BONUS" in t_type:
-                    fund_units[f] += units_t
+                elif any(x in t_type for x in ("TAX", "DUTY", "FEE", "STT")):
+                    net_cashflow -= amt
+                elif any(x in t_type for x in ("DIVIDEND", "PAYOUT")):
+                    net_cashflow -= amt
 
         # C) Issue/Redeem portfolio units at current Portfolio NAV
         if net_cashflow > 0:

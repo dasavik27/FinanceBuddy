@@ -36,10 +36,24 @@ from domains.tax_expert.tax_sessions import get_session_version
 
 logger = logging.getLogger(__name__)
 
-# Two regimes per session, so this holds ~12 sessions' worth of results. Kept
-# small deliberately: each entry references the session's detail lists (by
-# reference, not copy) plus its own computed scalars.
-MAX_ENTRIES = 24
+# Derived from the session store's own cap rather than picked independently.
+#
+# This used to be a flat 24 while the session store held 8, so the cache could pin three
+# times as many AIS documents as the store was allowed to keep - each entry references
+# the session's detail lists by reference, not by copy. An entry therefore kept an
+# evicted session's ~2 MB payload alive, and the cache quietly defeated the bound the
+# store exists to enforce. Two regimes (old/new) per resident session is the real working
+# set; anything beyond that is holding memory for a session that is no longer resident.
+#
+# Eviction from the store now also invalidates here (see tax_sessions._evict_locked), so
+# this cap is a backstop rather than the primary mechanism.
+try:
+    from domains.tax_expert.tax_sessions import MAX_SESSIONS as _MAX_RESIDENT_SESSIONS
+except Exception:  # pragma: no cover - import-order safety only
+    _MAX_RESIDENT_SESSIONS = 8
+
+_REGIMES = 2
+MAX_ENTRIES = _MAX_RESIDENT_SESSIONS * _REGIMES
 
 _cache: "OrderedDict[tuple, dict]" = OrderedDict()
 _stats = {"hits": 0, "misses": 0}

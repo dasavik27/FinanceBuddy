@@ -20,6 +20,10 @@ file both domains read, so a Budget change only needs editing there.
 """
 
 import pandas as pd
+
+from collections import deque
+
+from domains.mutual_funds.finance import normalize_txn_type
 from datetime import datetime, date
 from typing import Dict, List, Optional
 
@@ -28,6 +32,9 @@ from shared.config import TAX_RATES, get_standard_category
 ELSS_LOCKIN_DAYS = TAX_RATES["ELSS_LOCKIN_DAYS"]
 EQUITY_LTCG_DAYS = TAX_RATES["EQUITY_LTCG_DAYS"]
 DEBT_LTCG_DAYS = TAX_RATES["DEBT_LTCG_DAYS"]          # Pre-Apr-2023 debt units: LTCG applies after this many days
+# Non-equity, non-specified funds (gold/commodity, international). Same 24-month
+# threshold as debt, but they keep an LTCG concept rather than falling under Sec 50AA.
+OTHER_LTCG_DAYS = TAX_RATES.get("OTHER_LTCG_DAYS", DEBT_LTCG_DAYS)
 DEBT_REGIME_CUTOFF = datetime.strptime(TAX_RATES["DEBT_REGIME_CUTOFF"], "%Y-%m-%d").date()  # Finance Act 2023, Section 50AA
 
 # No per-scheme exit-load data is available anywhere in this app (not in the CAS PDF, not from
@@ -64,14 +71,26 @@ def compute_fund_lots(df_t: pd.DataFrame, fund_name: str) -> List[Dict]:
         ft["Date"] = pd.to_datetime(ft["Date"])
     ft = ft.sort_values("Date")
 
-    lots: List[Dict] = []  # {"units": float, "cost_per_unit": float, "date": date}
+    # deque, not list: the FIFO drain below consumes from the head, and list.pop(0)
+    # memmoves the whole remainder on every pop. A fund with 180 monthly SIP lots fully
+    # redeemed is ~16k element shifts, and compute_xirr_by_fy calls this hundreds of
+    # times per request. popleft() is O(1).
+    lots: "deque[Dict]" = deque()  # {"units": float, "cost_per_unit": float, "date": date}
 
-    for _, row in ft.iterrows():
-        t_type = str(row.get("Type", "")).upper()
-        units = float(row.get("Units", 0) or 0)
-        amt = abs(float(row.get("Amount", 0) or 0))
-        nav = float(row.get("NAV", 0) or 0)
-        d = _to_date(row["Date"])
+    # itertuples, not iterrows: iterrows boxes every row into a new Series, and this is
+    # the hottest loop in the tax-lot path.
+    cols = {name: i for i, name in enumerate(ft.columns)}
+
+    def _cell(row_tuple, name, default=0):
+        idx = cols.get(name)
+        return default if idx is None else row_tuple[idx]
+
+    for row in ft.itertuples(index=False, name=None):
+        t_type = normalize_txn_type(_cell(row, "Type", ""))
+        units = float(_cell(row, "Units", 0) or 0)
+        amt = abs(float(_cell(row, "Amount", 0) or 0))
+        nav = float(_cell(row, "NAV", 0) or 0)
+        d = _to_date(_cell(row, "Date", None))
 
         if amt == 0 and units != 0 and nav > 0:
             amt = abs(units * nav)
@@ -95,7 +114,7 @@ def compute_fund_lots(df_t: pd.DataFrame, fund_name: str) -> List[Dict]:
                 oldest = lots[0]
                 if oldest["units"] <= sell_units + 1e-9:
                     sell_units -= oldest["units"]
-                    lots.pop(0)
+                    lots.popleft()
                 else:
                     oldest["units"] -= sell_units
                     sell_units = 0.0
@@ -104,8 +123,42 @@ def compute_fund_lots(df_t: pd.DataFrame, fund_name: str) -> List[Dict]:
 
 
 def tax_treatment(category: str) -> str:
-    """Returns 'debt' or 'equity' — the two broad capital-gains regimes."""
-    return "debt" if get_standard_category(category) == "Debt" else "equity"
+    """
+    Capital-gains regime for a fund: 'debt', 'equity' or 'other'.
+
+    'other' is new and it matters. This used to be a two-way split - anything not Debt
+    was treated as equity - so gold/silver funds and international funds were taxed under
+    Section 112A: long-term after 12 months, and sharing the Rs 1.25 lakh exemption.
+    Neither is equity-oriented (112A requires >=65% in domestic listed equity), so neither
+    qualifies for that exemption, and both become long-term only at 24 months. The effect
+    was to understate tax on exactly the two categories most people hold for
+    diversification.
+
+    Hybrid stays under 'equity', which is right for aggressive hybrids (>=65% equity) and
+    wrong for conservative ones. Distinguishing them needs the fund's actual equity
+    allocation, which the CAS does not carry - flagged rather than guessed.
+    """
+    c = str(category or "").upper()
+
+    # Checked before get_standard_category, deliberately. That helper matches "ETF"
+    # anywhere in the name and returns "Equity", so "Gold ETF" and "Silver ETF" came back
+    # as equity - and it is used for allocation roll-ups where changing it would move the
+    # asset-allocation charts. The tax regime is a separate question from the allocation
+    # bucket, so it is answered separately here.
+    if any(x in c for x in ("GOLD", "SILVER", "COMMODIT", "PRECIOUS METAL")):
+        return "other"
+    if any(x in c for x in (
+        "INTERNATIONAL", "GLOBAL", "WORLD", "OVERSEAS", "NASDAQ", "US ", "OFFSHORE",
+        "FOREIGN", "EMERGING MARKET", "GREATER CHINA", "JAPAN", "EUROPE",
+    )):
+        return "other"
+
+    std = get_standard_category(category)
+    if std == "Debt":
+        return "debt"
+    if std in ("Global", "Other"):
+        return "other"
+    return "equity"
 
 
 def holding_tax_breakdown(lots: List[Dict], current_nav: float, category: str,
@@ -147,6 +200,16 @@ def holding_tax_breakdown(lots: List[Dict], current_nav: float, category: str,
                 stcg_gain += gain
                 stcg_value += value
             elif days_held >= DEBT_LTCG_DAYS:
+                ltcg_gain += gain
+                ltcg_value += value
+            else:
+                stcg_gain += gain
+                stcg_value += value
+        elif treatment == "other":
+            # Gold/commodity and international funds: long-term at 24 months, taxed at
+            # the 12.5% LTCG rate but with no Section 112A exemption - the caller must
+            # not net these against the Rs 1.25 lakh allowance.
+            if days_held >= OTHER_LTCG_DAYS:
                 ltcg_gain += gain
                 ltcg_value += value
             else:

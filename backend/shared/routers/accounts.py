@@ -184,12 +184,17 @@ def purge_account_data():
         raise HTTPException(status_code=401, detail="Sign in to purge your data.")
 
     from domains.mutual_funds import sessions as mf_sessions
+    from domains.equity import sessions as eq_sessions
     from domains.tax_expert import tax_sessions as tax_store
 
     # Memory first: an eviction that happens after the delete leaves a window where
     # the rows are gone but the resident copy is not, and with no row left to name an
     # owner the ownership check has nothing to compare against.
+    #
+    # Every domain holding resident state has to appear here. Equity was missing, so a
+    # purge deleted the rows and left the stock portfolios readable.
     mf_sessions.evict_for_user(caller)
+    eq_sessions.evict_for_user(caller)
     tax_store.evict_for_user(caller)
 
     deleted = storage.delete_all_for_user(caller)
@@ -211,6 +216,7 @@ def clear_all_system_caches():
     try:
         from shared.services.market_data import clear_market_data_cache
         from domains.mutual_funds import sessions
+        from domains.equity import sessions as eq_sessions
         from domains.tax_expert import tax_sessions
         from domains.tax_expert import computation_cache
 
@@ -219,6 +225,7 @@ def clear_all_system_caches():
         # reached into the private dict without _SESSIONS_LOCK, racing the GC daemon
         # and every request thread.
         sessions.clear_all()
+        eq_sessions.clear_all()
         tax_sessions.clear_all()
         # Memoized tax computations reference the sessions just dropped; without
         # this they would sit in memory until LRU eviction pushed them out.

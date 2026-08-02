@@ -1,7 +1,9 @@
 // fmt.ts — number / string formatting helpers
 
 export function fmtInr(n: number | null | undefined, compact = false): string {
-  if (n == null || isNaN(n)) return '₹0'
+  // Number.isFinite, not isNaN: isNaN(Infinity) is false, so a divide-by-zero ratio
+  // used to sail through and render as "Infinity".
+  if (n == null || !Number.isFinite(n)) return '₹0'
   const neg = n < 0
   const absVal = Math.abs(n)
   let result: string
@@ -36,13 +38,13 @@ export function fmtInr(n: number | null | undefined, compact = false): string {
 }
 
 export function fmtPct(n: number | null | undefined, decimals = 2): string {
-  if (n == null || isNaN(n)) return '0.00%'
+  if (n == null || !Number.isFinite(n)) return '0.00%'
   const sign = n > 0 ? '+' : ''
   return `${sign}${n.toFixed(decimals)}%`
 }
 
 export function fmtNum(n: number | null | undefined, decimals = 2): string {
-  if (n == null || isNaN(n)) return '0'
+  if (n == null || !Number.isFinite(n)) return '0'
   return n.toFixed(decimals)
 }
 

@@ -207,8 +207,21 @@ def parse_cas_file(file_bytes: bytes, password: str) -> Tuple[pd.DataFrame, pd.D
             df_h["Market Value"] = df_h["Market Value"].astype(float)
             df_h["Invested"] = df_h["Invested"].astype(float)
             df_h["Gain"] = df_h["Market Value"] - df_h["Invested"]
-            df_h["Gain%"] = (df_h["Gain"] / df_h["Invested"] * 100).fillna(0)
-            df_h["Weight%"] = (df_h["Market Value"] / df_h["Market Value"].sum() * 100)
+            # Non-finite, not just NaN. `Invested == 0` with a positive Market Value -
+            # which happens when the CAS valuation block is missing and the AMFI NAV
+            # backfill did not fire - gives +inf, and `.fillna(0)` does not touch inf.
+            # That inf sorted to the top of "best funds" in /journey and was emitted raw;
+            # FastAPI renders with allow_nan=False, so the whole response became a 500.
+            df_h["Gain%"] = (
+                (df_h["Gain"] / df_h["Invested"].replace(0, float("nan")) * 100)
+                .replace([float("inf"), float("-inf")], float("nan"))
+                .fillna(0)
+            )
+            # Same guard: an all-zero portfolio made this 0/0 -> NaN on every row.
+            total_mv = float(df_h["Market Value"].sum())
+            df_h["Weight%"] = (
+                (df_h["Market Value"] / total_mv * 100) if total_mv > 0 else 0.0
+            )
 
         return df_h, pd.DataFrame(txns), pd.DataFrame(sips), None, is_partial, statement_period
     except Exception as e:

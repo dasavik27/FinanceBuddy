@@ -19,6 +19,9 @@ from shared.services.market_data import (
 
 router = APIRouter()
 
+# Largest CAS we will read. A consolidated statement covering decades is a few MB.
+MAX_CAS_UPLOAD_BYTES = 8 * 1024 * 1024
+
 @router.post("/parse")
 def parse_cas(
     file: UploadFile = File(...),
@@ -38,7 +41,21 @@ def parse_cas(
     The tax-expert equivalent (domains/tax_expert/routers/session.py) was already
     fixed for exactly this reason; this endpoint is the same bug.
     """
-    raw = file.file.read()
+    # Byte-capped. A bare `.read()` buffers an arbitrary body, and parse_cas_file then
+    # writes a second full copy to a temp file before casparser loads it again - three
+    # copies of an unbounded upload on a ~512 MB instance. Same guard as
+    # domains/equity/parser.py:read_upload; reads the limit plus one byte so an oversized
+    # body is rejected rather than materialised.
+    raw = file.file.read(MAX_CAS_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_CAS_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"That file is larger than {MAX_CAS_UPLOAD_BYTES // (1024 * 1024)} MB. "
+                   "Download the consolidated statement again rather than a full archive.",
+        )
+    if not raw:
+        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+
     # CAS statements are conventionally password-protected with the investor's own
     # PAN. If no password is supplied, fall back to the PAN on the signed-in user's
     # profile (set via PUT /auth/profile/pan) rather than a hardcoded credential.
