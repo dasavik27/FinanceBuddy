@@ -1,12 +1,12 @@
 import {
   keepPreviousData, useMutation, useQuery, useQueryClient, type UseQueryResult,
 } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 
 import { apiClient } from '../../../shared/api/client'
 import type {
   BudgetCategoriesResponse, BudgetFilters, BudgetOverview, BudgetSessionMeta,
-  BudgetTransaction, BudgetUploadResult,
+  BudgetTransaction, BudgetTransactionsPage, BudgetUploadResult,
 } from '../types'
 
 /**
@@ -144,11 +144,22 @@ export function useBudgetCategories(
   })
 }
 
+/**
+ * How many transactions to pull in one request.
+ *
+ * The endpoint pages, and the table applies further filters of its own on the client,
+ * so the fetch has to be generous enough that local filtering still has something to
+ * work with. 1,000 covers a year across three accounts; past that the UI tells the
+ * user it is truncated and offers to fetch more, rather than quietly showing a subset.
+ */
+export const TRANSACTIONS_PAGE_SIZE = 1000
+
 export function useBudgetTransactions(
   sessionId: string,
   filters: BudgetFilters,
-): UseQueryResult<BudgetTransaction[]> {
-  const params = toQueryParams(filters)
+  limit: number = TRANSACTIONS_PAGE_SIZE,
+): UseQueryResult<BudgetTransactionsPage> {
+  const params = { ...toQueryParams(filters), limit }
   return useQuery({
     queryKey: ['budget', 'transactions', sessionId, params],
     queryFn: () => apiClient.getBudgetTransactions(sessionId, params),
@@ -170,7 +181,30 @@ export function useBudgetTransactions(
  */
 export function useInvalidateBudget() {
   const qc = useQueryClient()
-  return () => qc.invalidateQueries({ queryKey: ['budget'] })
+  // Stable identity: it is passed to memoised children as a refresh callback.
+  return useCallback(() => { qc.invalidateQueries({ queryKey: ['budget'] }) }, [qc])
+}
+
+/** The three analytics queries only - the session list and the rules are untouched. */
+const ANALYTICS_KEYS = new Set(['overview', 'categories', 'transactions'])
+
+/**
+ * Invalidate just the analytics.
+ *
+ * Re-categorizing one transaction changes the KPIs, the category breakdown and the
+ * row itself, and nothing else. The blanket refresh this replaces also re-listed the
+ * sessions, so an inline edit cost four requests where three are the correct number.
+ */
+export function useInvalidateBudgetAnalytics() {
+  const qc = useQueryClient()
+  return useCallback(() => {
+    qc.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey
+        return Array.isArray(key) && key[0] === 'budget' && ANALYTICS_KEYS.has(key[1] as string)
+      },
+    })
+  }, [qc])
 }
 
 export function useUploadStatement() {

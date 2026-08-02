@@ -50,6 +50,22 @@ export interface BudgetTransaction {
   account_type?: string
 }
 
+/**
+ * One page of transactions.
+ *
+ * `/budget/analytics/{id}/transactions` is paginated - for the consolidated view it
+ * would otherwise serialise every transaction across every uploaded statement into a
+ * single response. `total` is the count *before* paging, so the UI can say how much it
+ * is not showing.
+ */
+export interface BudgetTransactionsPage {
+  transactions: BudgetTransaction[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
 export interface BudgetSessionMeta {
   session_id: string
   filename?: string

@@ -13,7 +13,8 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile'
 interface UploadStatementModalProps {
   open: boolean
   onClose: () => void
-  onUpload: (file: File, bank: string, accountType: string) => Promise<boolean>
+  /** Resolves to null on success, or the server's message when the upload is refused. */
+  onUpload: (file: File, bank: string, accountType: string) => Promise<string | null>
   loading?: boolean
 }
 
@@ -66,12 +67,17 @@ export default function UploadStatementModal({
     }
 
     setErrorMessage(null)
-    const success = await onUpload(selectedFile, bankName, selectedAccountType)
-    if (success) {
-      setSelectedFile(null)
-      setCustomBankName('')
-      onClose()
+    // A refused upload answers 422 (oversized / unsupported) or 400 (with the columns
+    // the parser did find). That message belongs here, in front of the user, rather
+    // than on a card behind the still-open dialog.
+    const failure = await onUpload(selectedFile, bankName, selectedAccountType)
+    if (failure) {
+      setErrorMessage(failure)
+      return
     }
+    setSelectedFile(null)
+    setCustomBankName('')
+    onClose()
   }
 
   const handleModalClose = () => {

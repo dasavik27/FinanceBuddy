@@ -12,7 +12,7 @@ import type {
 import type {
   BudgetCategoriesResponse, BudgetMatchTypes, BudgetOverview, BudgetRule,
   BudgetRuleDraft, BudgetRuleTestResult, BudgetSessionMeta, BudgetTransaction,
-  BudgetTransactionUpdate, BudgetUploadResult,
+  BudgetTransactionsPage, BudgetTransactionUpdate, BudgetUploadResult,
 } from '../../domains/budget/types'
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
@@ -470,15 +470,34 @@ export const apiClient = {
     return data
   },
 
-  getBudgetTransactions: async (sid: string, params: Record<string, any> = {}): Promise<BudgetTransaction[]> => {
-    const { data } = await api.get<{ transactions: BudgetTransaction[] }>(
+  /**
+   * A page of transactions.
+   *
+   * Returns the whole envelope rather than just the rows: the endpoint is paginated,
+   * and a caller that drops `total` cannot tell a complete result from a truncated
+   * one. Discarding it would silently show the first page as if it were everything.
+   */
+  getBudgetTransactions: async (
+    sid: string, params: Record<string, any> = {},
+  ): Promise<BudgetTransactionsPage> => {
+    const { data } = await api.get<BudgetTransactionsPage>(
       `/budget/analytics/${sid}/transactions`, { params },
     )
-    return data.transactions ?? []
+    return {
+      transactions: data.transactions ?? [],
+      total: data.total ?? (data.transactions?.length ?? 0),
+      limit: data.limit ?? 0,
+      offset: data.offset ?? 0,
+      has_more: data.has_more ?? false,
+    }
   },
 
   updateBudgetTransactions: async (updates: BudgetTransactionUpdate[]): Promise<any> => {
-    const { data } = await api.put('/budget/transactions/update', updates)
+    // The router is mounted at /budget/analytics, so the route is
+    // /budget/analytics/transactions/update. This was '/budget/transactions/update'
+    // from the day the domain landed - a 404 on every call, which is why editing a
+    // category or running a bulk re-categorization never actually persisted.
+    const { data } = await api.put('/budget/analytics/transactions/update', updates)
     return data
   },
 

@@ -29,17 +29,19 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt'
 import CloseIcon from '@mui/icons-material/Close'
 import TuneIcon from '@mui/icons-material/Tune'
 import PieChartIcon from '@mui/icons-material/PieChart'
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted'
-import ShieldIcon from '@mui/icons-material/Shield'
-import EmojiEventsIcon from '@mui/icons-material/EmojiEvents'
-import SortIcon from '@mui/icons-material/Sort'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import MonetizationOnIcon from '@mui/icons-material/MonetizationOn'
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
-import { useBudget, BudgetFilters } from '../hooks/useBudget'
-import { 
-  PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, AreaChart, Area 
+import {
+  budgetErrorDetail, budgetErrorStatus, useBudgetCategories, useBudgetOverview,
+  useBudgetSessions, useBudgetTransactions, useDeleteBudgetSession,
+  useInvalidateBudgetAnalytics, useResetSessionOnMissing, useUploadStatement,
+} from '../hooks/useBudget'
+import { useDebounce } from '../../../shared/hooks/useDebounce'
+import type {
+  BudgetCategoriesResponse, BudgetCategorySlice, BudgetFilters, BudgetTransaction,
+} from '../types'
+import {
+  PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, AreaChart, Area
 } from 'recharts'
 import TransactionsTab from './TransactionsTab'
 import RulesTab from './RulesTab'
@@ -83,6 +85,14 @@ const AMOUNT_BRACKET_OPTIONS = [
   { value: 'large', label: 'Large (> ₹10k)' },
 ]
 
+// Stable fallbacks. A fresh `[]` or `{}` per render would give TransactionsTab and the
+// memoised derivations below a new prop identity on every render, which is exactly what
+// React.memo is there to avoid.
+const EMPTY_TRANSACTIONS: BudgetTransaction[] = []
+const EMPTY_STRINGS: string[] = []
+const EMPTY_LIST: any[] = []
+const EMPTY_CATEGORY_DATA: BudgetCategoriesResponse = { categories: [], nature_summary: {} }
+
 const PAYMENT_MODE_OPTIONS = [
   { value: 'all', label: 'All Modes' },
   { value: 'upi', label: 'UPI / QR', icon: <QrCodeIcon style={{ fontSize: 13 }} /> },
@@ -118,18 +128,11 @@ export default function BudgetDashboard() {
   const [categorySortBy, setCategorySortBy] = useState<'amount' | 'count' | 'name'>('amount')
   const [categorySearch, setCategorySearch] = useState<string>('')
   const [dowMetric, setDowMetric] = useState<'spend' | 'count' | 'avg_spend'>('spend')
-  
-  const [overview, setOverview] = useState<any>(null)
-  const [categoryData, setCategoryData] = useState<any>({ categories: [], nature_summary: {} })
-  const [transactions, setTransactions] = useState<any[]>([])
-  const [sessionsList, setSessionsList] = useState<any[]>([])
-  
-  const { uploadStatement, getOverview, getCategories, getTransactions, listSessions, deleteSession, loading, error } = useBudget()
 
-  const fetchSessions = async () => {
-    const list = await listSessions()
-    setSessionsList(list)
-  }
+  // Upload / delete feedback. The parse report and the server's `detail` string both
+  // belong on screen, not in console.error.
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   // Count active non-default filters
   const advancedFiltersCount = [
@@ -151,7 +154,7 @@ export default function BudgetDashboard() {
     searchQuery.trim() !== ''
   ].filter(Boolean).length
 
-  const resetAllFilters = () => {
+  const resetAllFilters = useCallback(() => {
     setBankFilter('all')
     setAccountTypeFilter('all')
     setFlowFilter('all')
@@ -162,9 +165,19 @@ export default function BudgetDashboard() {
     setSearchQuery('')
     setCategoryNatureFilter('all')
     setCategorySearch('')
-  }
+  }, [])
 
-  const currentFilters: BudgetFilters = {
+  /**
+   * One debounce for the filter set, at the shared 300ms every other call site uses.
+   *
+   * This replaces a hand-rolled 200ms `setTimeout` over ten filter states that fired
+   * three GETs per change and four on mount - eight under StrictMode. A react-query
+   * key change is a fetch, so it is the free-text input that has to settle; the
+   * dropdowns and chips change once per click and go straight through.
+   */
+  const debouncedSearch = useDebounce(searchQuery, 300)
+
+  const currentFilters: BudgetFilters = useMemo(() => ({
     bank: bankFilter,
     accountType: accountTypeFilter,
     txnType: flowFilter,
@@ -172,85 +185,136 @@ export default function BudgetDashboard() {
     amountBracket: amountBracketFilter,
     paymentMode: paymentModeFilter,
     category: categoryFilter,
-    search: searchQuery
-  }
-
-  const loadData = async (filters: BudgetFilters = currentFilters, sid: string = sessionId) => {
-    if (sid) {
-      const catFilters = { ...filters, txnType: categoryFlowTab, category: categoryFilter }
-      const [o, cResp, t] = await Promise.all([
-        getOverview(sid, filters),
-        getCategories(sid, catFilters),
-        getTransactions(sid, filters)
-      ])
-      setOverview(o)
-      
-      // Handle response structure
-      if (Array.isArray(cResp)) {
-        setCategoryData({ is_drilldown: false, categories: cResp, nature_summary: {} })
-      } else if (cResp) {
-        setCategoryData(cResp)
-      } else {
-        setCategoryData({ is_drilldown: false, categories: [], nature_summary: {} })
-      }
-      
-      setTransactions(t)
-    }
-  }
-
-  useEffect(() => {
-    fetchSessions()
-  }, [])
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      loadData(currentFilters, sessionId)
-    }, 200)
-    return () => clearTimeout(timer)
-  }, [
-    sessionId, bankFilter, accountTypeFilter, flowFilter, 
-    dateRangeFilter, amountBracketFilter, paymentModeFilter, 
-    categoryFilter, searchQuery, categoryFlowTab
+    search: debouncedSearch,
+  }), [
+    bankFilter, accountTypeFilter, flowFilter, dateRangeFilter,
+    amountBracketFilter, paymentModeFilter, categoryFilter, debouncedSearch,
   ])
 
-  const handleModalUpload = async (file: File, bank: string, accountType: string): Promise<boolean> => {
-    const id = await uploadStatement(file, bank, accountType)
-    if (id) {
+  /**
+   * The category card's own Debits/Credits toggle is a *sub*-filter.
+   *
+   * It used to overwrite `txnType` unconditionally, so with the global flow filter set
+   * to "Credits (In)" the donut quietly showed debits - contradicting the filter chip
+   * displayed directly above it. It now only applies when the global filter is "all".
+   */
+  const categoryFilters: BudgetFilters = useMemo(() => ({
+    ...currentFilters,
+    txnType: flowFilter === 'all' ? categoryFlowTab : flowFilter,
+  }), [currentFilters, flowFilter, categoryFlowTab])
+
+  const sessionsQuery = useBudgetSessions()
+  const overviewQuery = useBudgetOverview(sessionId, currentFilters)
+  const categoriesQuery = useBudgetCategories(sessionId, categoryFilters)
+  const transactionsQuery = useBudgetTransactions(sessionId, currentFilters)
+
+  const uploadMutation = useUploadStatement()
+  const deleteMutation = useDeleteBudgetSession()
+  const invalidateAnalytics = useInvalidateBudgetAnalytics()
+
+  // A session that is not the caller's now answers 404 instead of leaking rows, so a
+  // stale id here is an expected state. Fall back to the consolidated view rather than
+  // parking on an error the user has no control to dismiss.
+  useResetSessionOnMissing(overviewQuery.error, sessionId, setSessionId)
+
+  const sessionsList = sessionsQuery.data ?? EMPTY_LIST
+  const overview = overviewQuery.data ?? null
+  const categoryData = categoriesQuery.data ?? EMPTY_CATEGORY_DATA
+  // The endpoint pages, so `total` is the count before truncation. Keeping both means
+  // the tab label and the table can say "500 of 8,412" rather than presenting the
+  // first page as the whole result.
+  const transactions = transactionsQuery.data?.transactions ?? EMPTY_TRANSACTIONS
+  const transactionsTotal = transactionsQuery.data?.total ?? transactions.length
+  const transactionsTruncated = transactionsQuery.data?.has_more ?? false
+
+  /**
+   * A 404 from /overview means "this session has no rows", which is the empty state -
+   * everything else is a genuine failure and has to say so. The three getters this
+   * replaces returned null/[]/{} on any error, so a 500 rendered "No accounts uploaded
+   * yet" with an Upload CTA over data that was actually there.
+   */
+  const realError = (error: unknown) => (error && budgetErrorStatus(error) !== 404 ? error : null)
+  const analyticsError: unknown =
+    realError(overviewQuery.error) ?? realError(transactionsQuery.error) ?? realError(categoriesQuery.error)
+
+  const loadErrorMessage = analyticsError
+    ? budgetErrorDetail(analyticsError, 'Could not load your budget data. Please try again.')
+    : null
+
+  const handleModalUpload = useCallback(async (file: File, bank: string, accountType: string): Promise<string | null> => {
+    setActionError(null)
+    setUploadNotice(null)
+    try {
+      const result = await uploadMutation.mutateAsync({ file, bank, accountType })
       resetAllFilters()
       setSessionId('overall')
-      await fetchSessions()
-      await loadData({ bank: 'all', accountType: 'all', txnType: 'all', dateRange: 'all' }, 'overall')
-      return true
-    }
-    return false
-  }
 
-  const handleDeleteSession = async (sid: string) => {
-    const ok = await deleteSession(sid)
-    if (ok) {
-      await fetchSessions()
-      const nextSid = sessionId === sid ? 'overall' : sessionId
-      setSessionId(nextSid)
-      await loadData(currentFilters, nextSid)
+      // The parse report is shown, not logged. A statement that only half-parsed has
+      // to say so, otherwise the dashboard describes part of the user's spending as
+      // if it were all of it.
+      const skipped = result.skipped ?? 0
+      if (skipped > 0 || result.truncated) {
+        const reasons = Object.entries(result.reasons || {})
+          .map(([reason, count]) => `${reason}: ${count}`)
+          .join(', ')
+        const parts = [`${result.parsed ?? 0} transactions imported`]
+        if (skipped > 0) {
+          parts.push(`${skipped} row${skipped === 1 ? '' : 's'} skipped${reasons ? ` (${reasons})` : ''}`)
+        }
+        if (result.truncated) {
+          parts.push('the file exceeded the import limit, so only the first rows were read')
+        }
+        setUploadNotice(`${parts.join(', ')}.`)
+      }
+      return null
+    } catch (e) {
+      // 422 carries the reason for an oversized or unsupported file; 400 explains
+      // which columns the parser did find. Both are useful, so both are shown - here
+      // for after the dialog closes, and returned for the dialog itself.
+      const detail = budgetErrorDetail(e, 'Upload failed.')
+      setActionError(detail)
+      return detail
     }
-  }
+  }, [uploadMutation, resetAllFilters])
 
-  const refreshAllData = async () => {
-    await Promise.all([
-      fetchSessions(), 
-      loadData(currentFilters, sessionId)
-    ])
-  }
+  const handleDeleteSession = useCallback(async (sid: string) => {
+    setActionError(null)
+    try {
+      await deleteMutation.mutateAsync(sid)
+      if (sessionId === sid) setSessionId('overall')
+    } catch (e) {
+      setActionError(budgetErrorDetail(e, 'Delete failed.'))
+    }
+  }, [deleteMutation, sessionId])
+
+  /**
+   * Refresh after an edit made inside a tab.
+   *
+   * Was: mutate filter state - which re-triggered the debounced fetch effect - *and*
+   * call the fetcher directly, so every single inline category edit cost a full
+   * four-endpoint reload twice over. Invalidation refetches only the three analytics
+   * queries, once, and this identity is stable so it does not defeat the memoised
+   * children.
+   */
+  const refreshAllData = useCallback(() => { invalidateAnalytics() }, [invalidateAnalytics])
+
+  // Stable identities for the memoised children below - an inline arrow would give
+  // them a new prop every render and make React.memo a no-op.
+  const closeSessionsModal = useCallback(() => setIsSessionsModalOpen(false), [])
+  const selectSession = useCallback((sid: string) => setSessionId(sid), [])
+  const selectCategory = useCallback((catName: string) => setCategoryFilter(catName), [])
 
   const activeSessionMeta = sessionsList.find(s => s.session_id === sessionId)
-  const uniqueBanks = overview?.banks || []
-  const uniqueAccountTypes = overview?.account_types || []
-  const uniqueCategories = categoryData?.all_categories || overview?.categories || []
+  const uniqueBanks: string[] = overview?.banks || EMPTY_STRINGS
+  const uniqueAccountTypes: string[] = overview?.account_types || EMPTY_STRINGS
+  const uniqueCategories: string[] = categoryData?.all_categories || overview?.categories || EMPTY_STRINGS
   const health = overview?.health_metrics || {}
 
-  const activeMerchantsList = merchantFlowTab === 'debit' 
-    ? (overview?.top_merchants || [])
-    : (overview?.top_inflows || [])
+  const activeMerchantsList = merchantFlowTab === 'debit'
+    ? (overview?.top_merchants || EMPTY_LIST)
+    : (overview?.top_inflows || EMPTY_LIST)
+
+  const bankBreakdown = overview?.bank_breakdown || EMPTY_LIST
 
   // Filtered & Sorted Categories for the Category Card (When not in drill-down)
   const processedCategories = useMemo(() => {
@@ -281,19 +345,27 @@ export default function BudgetDashboard() {
 
   const totalFilteredCategoryAmount = processedCategories.reduce((sum, c) => sum + (c.amount || 0), 0)
 
-  // Dynamic 50/30/20 and Nature Ratio Calculation
-  const natureSums = categoryData.nature_summary || {}
-  const totalNatureSpend = (natureSums.needs || 0) + (natureSums.wants || 0) + (natureSums.investments || 0) + (natureSums.transfers || 0) + (natureSums.other || 0)
-  const needsPct = totalNatureSpend > 0 ? ((natureSums.needs || 0) / totalNatureSpend) * 100 : 0
-  const wantsPct = totalNatureSpend > 0 ? ((natureSums.wants || 0) / totalNatureSpend) * 100 : 0
-  const savingsPct = totalNatureSpend > 0 ? ((natureSums.investments || 0) / totalNatureSpend) * 100 : 0
-  const transfersPct = totalNatureSpend > 0 ? ((natureSums.transfers || 0) / totalNatureSpend) * 100 : 0
-  const otherPct = totalNatureSpend > 0 ? ((natureSums.other || 0) / totalNatureSpend) * 100 : 0
+  /**
+   * Category totals keyed by name, for the in-card Select.
+   *
+   * That Select ran a `.find()` over `categoryData.categories` inside its `.map()`
+   * over `uniqueCategories` - O(n x m) rebuilt on every render of the dashboard, over
+   * a dropdown that lists every category the user has.
+   */
+  const categoryByName = useMemo(() => {
+    const map = new Map<string, BudgetCategorySlice>()
+    for (const item of categoryData.categories || []) {
+      map.set((item.category || '').toLowerCase(), item)
+    }
+    return map
+  }, [categoryData.categories])
 
   const isCategoryDrilldown = categoryData?.is_drilldown && categoryFilter !== 'all'
   const drilldownStats = categoryData?.category_stats
 
-  if (!overview && loading) {
+  // Only a first load blanks the screen. A refetch keeps the previous data on screen
+  // via placeholderData, so it must not fall into this branch.
+  if (!overview && overviewQuery.isPending) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
         <CircularProgress size={48} sx={{ color: '#6366f1' }} />
@@ -356,7 +428,7 @@ export default function BudgetDashboard() {
             variant="contained"
             onClick={() => setIsUploadModalOpen(true)}
             startIcon={<CloudUploadIcon />}
-            disabled={loading}
+            disabled={uploadMutation.isPending}
             sx={{
               background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
               px: 2.5, py: 1, borderRadius: 2,
@@ -384,13 +456,24 @@ export default function BudgetDashboard() {
         }}
       >
         <Tab label="Overview & Analytics" />
-        <Tab label={`Transactions (${transactions.length})`} />
+        <Tab label={`Transactions (${transactionsTotal.toLocaleString('en-IN')})`} />
         <Tab label="Rules Engine" />
       </Tabs>
 
-      {error && (
+      {actionError && (
         <Card sx={{ p: 2, mb: 3, backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 2 }}>
-          <Typography color="#fca5a5">{error}</Typography>
+          <Typography color="#fca5a5">{actionError}</Typography>
+        </Card>
+      )}
+
+      {/* Parse report from the last upload: rows the parser could not read, and
+          whether the file was cut short at the import limit. */}
+      {uploadNotice && (
+        <Card sx={{ p: 2, mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: 2 }}>
+          <Typography color="#fcd34d">{uploadNotice}</Typography>
+          <IconButton size="small" onClick={() => setUploadNotice(null)} sx={{ color: '#fcd34d' }}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
         </Card>
       )}
 
@@ -812,7 +895,27 @@ export default function BudgetDashboard() {
         </Stack>
       </Popover>
       
-      {(!overview || (overview.total_income === 0 && overview.total_expense === 0 && transactions.length === 0)) ? (
+      {loadErrorMessage ? (
+        /* A failed load is never the empty state. The three getters this replaces
+           returned null/[]/{} on any error, so a 500 rendered "No accounts uploaded
+           yet" with an Upload CTA - over data the user had already uploaded. */
+        <Card sx={{ textAlign: 'center', p: 8, background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: 4 }}>
+          <Typography variant="h6" sx={{ fontWeight: 600, color: '#fca5a5' }}>
+            Could not load your budget data
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#94a3b8', mt: 1, maxWidth: 560, mx: 'auto', mb: 3 }}>
+            {loadErrorMessage}
+          </Typography>
+          <Button
+            variant="contained"
+            onClick={refreshAllData}
+            startIcon={<RestartAltIcon />}
+            sx={{ background: '#6366f1', px: 3, py: 1.2, borderRadius: 2, fontWeight: 600, textTransform: 'none' }}
+          >
+            Retry
+          </Button>
+        </Card>
+      ) : (!overview || (overview.total_income === 0 && overview.total_expense === 0 && transactions.length === 0)) ? (
         <Card sx={{ textAlign: 'center', p: 8, background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 4 }}>
           <AccountBalanceIcon sx={{ fontSize: 64, color: '#6366f1', mb: 2, opacity: 0.8 }} />
           <Typography variant="h5" sx={{ fontWeight: 600, color: '#f8fafc' }}>
@@ -976,13 +1079,13 @@ export default function BudgetDashboard() {
               {/* Comprehensive 50 / 30 / 20 Budget Health & Rule Evaluation Suite */}
               {overview.budget_50_30_20 && (
                 <BudgetHealth503020Card 
-                  data={overview.budget_50_30_20} 
-                  onCategoryClick={(catName) => setCategoryFilter(catName)} 
+                  data={overview.budget_50_30_20}
+                  onCategoryClick={selectCategory}
                 />
               )}
 
               {/* Bank & Accounts Breakdown Cards with Direct-Click Filter */}
-              {overview.bank_breakdown && overview.bank_breakdown.length > 0 && (
+              {bankBreakdown.length > 0 && (
                 <Box sx={{ mb: 4 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                     <Typography variant="h6" sx={{ fontWeight: 600, color: '#f1f5f9' }}>
@@ -999,13 +1102,13 @@ export default function BudgetDashboard() {
                     )}
                   </Box>
                   <Grid container spacing={2.5}>
-                    {overview.bank_breakdown.map((b: any) => {
+                    {bankBreakdown.map((b: any) => {
                       const bankUpper = b.bank.toUpperCase()
                       const style = BANK_COLOR_MAP[bankUpper] || BANK_COLOR_MAP['GENERIC']
                       const isSelected = bankFilter.toUpperCase() === bankUpper
                       const isCard = (b.account_type || '').toLowerCase().includes('card')
                       return (
-                        <Grid item xs={12} sm={6} md={12 / Math.min(overview.bank_breakdown.length, 3)} key={b.bank}>
+                        <Grid item xs={12} sm={6} md={12 / Math.min(bankBreakdown.length, 3)} key={b.bank}>
                           <Card 
                             onClick={() => setBankFilter(isSelected ? 'all' : b.bank)}
                             sx={{ 
@@ -1188,7 +1291,7 @@ export default function BudgetDashboard() {
                           const pct = (m.amount / maxAmt) * 100
                           const isDebit = merchantFlowTab === 'debit'
                           return (
-                            <Box key={idx} sx={{ p: 1.2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 2 }}>
+                            <Box key={m.merchant} sx={{ p: 1.2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 2 }}>
                               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, overflow: 'hidden' }}>
                                   <Chip label={`#${idx + 1}`} size="small" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 700, backgroundColor: isDebit ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)', color: isDebit ? '#fbbf24' : '#34d399' }} />
@@ -1259,7 +1362,7 @@ export default function BudgetDashboard() {
                           >
                             <MenuItem value="all" sx={{ fontSize: '0.8rem' }}>🏷️ All Categories ({(categoryData.categories || []).length})</MenuItem>
                             {uniqueCategories.map((c: string) => {
-                              const match = (categoryData.categories || []).find((item: any) => item.category.toLowerCase() === c.toLowerCase())
+                              const match = categoryByName.get(c.toLowerCase())
                               return (
                                 <MenuItem key={c} value={c} sx={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
                                   <span>{c}</span>
@@ -1738,8 +1841,10 @@ export default function BudgetDashboard() {
                           🔄 Detected Subscriptions & Recurring Charges
                         </Typography>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                          {overview.recurring_charges.slice(0, 4).map((rc: any, idx: number) => (
-                            <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 2 }}>
+                          {/* Grouped server-side by (description, amount), so that pair
+                              is the stable identity - the index was not. */}
+                          {overview.recurring_charges.slice(0, 4).map((rc: any) => (
+                            <Box key={`${rc.description}-${rc.amount}`} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 2 }}>
                               <Box sx={{ overflow: 'hidden', mr: 2 }}>
                                 <Typography variant="body2" sx={{ fontWeight: 600, color: '#f1f5f9', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 200 }}>
                                   {rc.description}
@@ -1763,10 +1868,12 @@ export default function BudgetDashboard() {
 
           {/* TAB 1: TRANSACTIONS */}
           {activeTab === 1 && (
-            <TransactionsTab 
-              transactions={transactions} 
-              uniqueBanks={uniqueBanks as string[]} 
-              onTransactionsUpdated={refreshAllData} 
+            <TransactionsTab
+              transactions={transactions}
+              uniqueBanks={uniqueBanks}
+              onTransactionsUpdated={refreshAllData}
+              totalAvailable={transactionsTotal}
+              truncated={transactionsTruncated}
             />
           )}
 
@@ -1780,10 +1887,10 @@ export default function BudgetDashboard() {
       {/* Statement Sessions & History Modal */}
       <BudgetSessionsModal
         open={isSessionsModalOpen}
-        onClose={() => setIsSessionsModalOpen(false)}
+        onClose={closeSessionsModal}
         sessions={sessionsList}
         activeSessionId={sessionId}
-        onSelectSession={(sid) => setSessionId(sid)}
+        onSelectSession={selectSession}
         onDeleteSession={handleDeleteSession}
       />
 
@@ -1792,7 +1899,7 @@ export default function BudgetDashboard() {
         open={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
         onUpload={handleModalUpload}
-        loading={loading}
+        loading={uploadMutation.isPending}
       />
     </Box>
   )

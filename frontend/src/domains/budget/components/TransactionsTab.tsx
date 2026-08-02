@@ -18,6 +18,10 @@ interface TransactionsTabProps {
   transactions: BudgetTransaction[]
   uniqueBanks: string[]
   onTransactionsUpdated: () => void
+  /** Matching transactions on the server, before the fetch was truncated to a page. */
+  totalAvailable?: number
+  /** True when the server had more rows than this page carries. */
+  truncated?: boolean
 }
 
 const BANK_COLOR_MAP: Record<string, { bg: string, border: string, text: string }> = {
@@ -151,6 +155,12 @@ const PAGINATION_SX: SxProps = {
   color: '#94a3b8',
   borderTop: '1px solid rgba(255,255,255,0.07)',
   '.MuiTablePagination-selectIcon': { color: '#94a3b8' },
+} as const
+
+const TRUNCATION_NOTICE_SX = {
+  mb: 2, p: 1.5, borderRadius: 2, fontSize: '0.85rem', color: '#fcd34d',
+  backgroundColor: 'rgba(245, 158, 11, 0.10)',
+  border: '1px solid rgba(245, 158, 11, 0.30)',
 }
 
 const CREDIT_CARD_ICON = <CreditCardIcon style={{ fontSize: 12, color: '#f472b6' }} />
@@ -281,7 +291,10 @@ const TransactionRow = React.memo(function TransactionRow({
   )
 })
 
-function TransactionsTab({ transactions, uniqueBanks, onTransactionsUpdated }: TransactionsTabProps) {
+function TransactionsTab({
+  transactions, uniqueBanks, onTransactionsUpdated,
+  totalAvailable, truncated = false,
+}: TransactionsTabProps) {
   const [selectedTxns, setSelectedTxns] = useState<Set<string>>(new Set())
   const [bulkCategory, setBulkCategory] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -541,6 +554,19 @@ function TransactionsTab({ transactions, uniqueBanks, onTransactionsUpdated }: T
         <span>•</span>
         <span style={{ color: '#f87171' }}>Total Outflow (Debits): <strong>-₹{totalDebits.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</strong></span>
       </Box>
+
+      {/*
+        The endpoint is paged. Without this the first page would look like the whole
+        result set: the user would filter, see nothing, and conclude the transaction is
+        missing rather than off the end of the page.
+      */}
+      {truncated && (
+        <Box sx={TRUNCATION_NOTICE_SX}>
+          Showing the {transactions.length.toLocaleString('en-IN')} most recent of{' '}
+          <strong>{(totalAvailable ?? transactions.length).toLocaleString('en-IN')}</strong>{' '}
+          matching transactions. Narrow the date range or filters above to see the rest.
+        </Box>
+      )}
 
       {/* Transactions Table */}
       <TableContainer component={Paper} sx={TABLE_PAPER_SX}>
