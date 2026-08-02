@@ -1,18 +1,15 @@
 # Finance Buddy
 
-Mutual-fund portfolio analytics and Indian income-tax computation, built from the
-documents you already have — a CAS statement from CAMS/Karvy and an AIS from the
-income-tax portal.
+**Complete Personal Finance Analytics Platform** — mutual-fund portfolio analytics, Indian income-tax computation, cash-flow budgeting, and equity portfolio management, all from the documents you already have.
 
-- **Budget Analyzer** — Multi-bank statement ingestion (HDFC, ICICI, SBI, Axis, Kotak, IndusInd, PNB, CSV), 50/30/20 financial health evaluation, multi-account aggregation, burn rate, and deep category/payee drilldowns
-- **Mutual funds** — XIRR, FIFO cost basis, allocation drift, peer comparison,
-  rebalancing plans, rolling returns, tax-harvest opportunities
-- **Tax expert** — AIS parsing, capital-gains computation with grandfathering and
-  Section 50AA, old-vs-new regime comparison, broker reconciliation, filed-ITR
-- **Equity** — CSV/XLSX uploads (Zerodha/Groww formats natively detected), direct live sync via Zerodha Kite API, portfolio allocation, sector analysis, historical performance tracking
+## Four Integrated Domains
 
-Upload a statement, get analytics. Sign-in is Google; your data persists to your own
-Postgres and is encrypted before it gets there.
+- **Budget Analyzer** — Multi-bank statement ingestion (HDFC, ICICI, SBI, Axis, Kotak, IndusInd, PNB, CSV), 50/30/20 financial health evaluation, multi-account aggregation, burn rate analysis, rule-based categorization, and deep category/payee drilldowns
+- **Mutual Funds** — XIRR returns, FIFO cost basis, allocation drift detection, peer comparison, rebalancing plans, rolling returns, tax-harvest opportunities, and SIP journey tracking
+- **Tax Expert** — AIS parsing, capital-gains computation with grandfathering and Section 50AA relief, old-vs-new regime comparison, broker reconciliation, filed-ITR matching, and detailed income breakdown
+- **Equity** — CSV/XLSX uploads (Zerodha/Groww formats natively detected), direct live sync via Zerodha Kite API, portfolio allocation, sector analysis, P&L tracking with STCG/LTCG, and individual stock analysis
+
+Upload a statement, get analytics. Sign-in is Google; your data persists to your own Postgres and is encrypted before it gets there.
 
 ---
 
@@ -21,9 +18,10 @@ Postgres and is encrypted before it gets there.
 | Document | What it covers |
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | How it works and why. Diagrams, storage model, caching, the constraints the design follows from. |
-| **[BUDGET_ANALYSIS.md](BUDGET_ANALYSIS.md)** | Comprehensive technical architecture, computational engines, and user guide for the Budget Analyzer. |
-| **[SECURITY.md](SECURITY.md)** | Threat model, what is handled, and what is still open. |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, storage model, caching strategy, four independent domains, and design constraints. |
+| **[BUDGET_ANALYSIS.md](BUDGET_ANALYSIS.md)** | Comprehensive Budget Analyzer architecture, computational engines, bank format support, and user guide. |
+| **[SECURITY.md](SECURITY.md)** | Threat model, encryption, data handling, and what is still open. |
+| **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, and deployment verification scripts. |
 
 ---
 
@@ -65,6 +63,18 @@ TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/financebuddy_test \
 
 362 tests. Without `TEST_DATABASE_URL` the database-backed ones skip rather than fail
 — fine for a quick check, not a full pass.
+
+## Verification
+
+After setup, run the verification checklist:
+
+```bash
+python -m pytest backend/tests/test_sql_is_valid_postgres.py -v
+python -m pytest backend/tests/test_only_shared_db_opens_connections.py -v
+python backend/scripts/verify_setup.py
+```
+
+See [VERIFICATION.md](VERIFICATION.md) for complete verification procedures.
 
 ## Stack
 
