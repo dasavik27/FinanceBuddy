@@ -9,8 +9,13 @@ import type {
   EquityAllocation, EquityHoldingsResponse, EquityInsights, EquityPerformance,
   EquityPnl, EquitySummary, EquityUploadResult, StockAnalysis, StockSearchResult,
 } from '../../domains/equity/types'
+import type {
+  BudgetCategoriesResponse, BudgetMatchTypes, BudgetOverview, BudgetRule,
+  BudgetRuleDraft, BudgetRuleTestResult, BudgetSessionMeta, BudgetTransaction,
+  BudgetTransactionUpdate, BudgetUploadResult,
+} from '../../domains/budget/types'
 
-export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
  * Attach the signed-in user's bearer token.
@@ -429,6 +434,100 @@ export const apiClient = {
 
   deleteHistorySession: async (sid: string): Promise<any> => {
     const { data } = await api.delete(`/history/${sid}`)
+    return data
+  },
+
+  // ── Budget API ──────────────────────────────────────────────────────────────
+
+  /**
+   * Upload a bank / credit-card statement (CSV, XLS, XLSX).
+   *
+   * Returns the parse report alongside the session id: `skipped` and `truncated` are
+   * how the caller learns that only part of the file made it in.
+   */
+  uploadBudgetStatement: async (
+    file: File,
+    bank: string = 'auto',
+    accountType: string = 'auto',
+  ): Promise<BudgetUploadResult> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('bank', bank)
+    fd.append('account_type', accountType)
+    const { data } = await api.post<BudgetUploadResult>('/budget/portfolio/upload', fd)
+    return data
+  },
+
+  /** Headline cash-flow KPIs, trends and the 50/30/20 evaluation. */
+  getBudgetOverview: async (sid: string, params: Record<string, any> = {}): Promise<BudgetOverview> => {
+    const { data } = await api.get<BudgetOverview>(`/budget/analytics/${sid}/overview`, { params })
+    return data
+  },
+
+  /** Category breakdown, or a single-category drilldown when `category` is set. */
+  getBudgetCategories: async (sid: string, params: Record<string, any> = {}): Promise<BudgetCategoriesResponse> => {
+    const { data } = await api.get<BudgetCategoriesResponse>(`/budget/analytics/${sid}/categories`, { params })
+    return data
+  },
+
+  getBudgetTransactions: async (sid: string, params: Record<string, any> = {}): Promise<BudgetTransaction[]> => {
+    const { data } = await api.get<{ transactions: BudgetTransaction[] }>(
+      `/budget/analytics/${sid}/transactions`, { params },
+    )
+    return data.transactions ?? []
+  },
+
+  updateBudgetTransactions: async (updates: BudgetTransactionUpdate[]): Promise<any> => {
+    const { data } = await api.put('/budget/transactions/update', updates)
+    return data
+  },
+
+  getBudgetSessions: async (): Promise<BudgetSessionMeta[]> => {
+    const { data } = await api.get<{ sessions: BudgetSessionMeta[] }>('/budget/portfolio/sessions')
+    return data.sessions ?? []
+  },
+
+  deleteBudgetSession: async (sid: string): Promise<any> => {
+    const { data } = await api.delete(`/budget/portfolio/sessions/${sid}`)
+    return data
+  },
+
+  getBudgetRules: async (): Promise<BudgetRule[]> => {
+    const { data } = await api.get<BudgetRule[]>('/budget/rules')
+    return data
+  },
+
+  createBudgetRule: async (rule: BudgetRuleDraft): Promise<BudgetRule> => {
+    const { data } = await api.post<BudgetRule>('/budget/rules', rule)
+    return data
+  },
+
+  deleteBudgetRule: async (ruleId: string): Promise<any> => {
+    const { data } = await api.delete(`/budget/rules/${ruleId}`)
+    return data
+  },
+
+  applyBudgetRules: async (): Promise<{ transactions_recalculated: number }> => {
+    const { data } = await api.post('/budget/rules/apply-all')
+    return data
+  },
+
+  /**
+   * Check one pattern against one description without storing it.
+   *
+   * Server-side on purpose: compiling user regexes in the browser is where a saved
+   * `(a+)+$` froze the rules tab on every keystroke.
+   */
+  testBudgetRule: async (rule: BudgetRuleDraft, description: string): Promise<BudgetRuleTestResult> => {
+    const { data } = await api.post<BudgetRuleTestResult>('/budget/rules/test', rule, {
+      params: { description },
+    })
+    return data
+  },
+
+  /** The match types the server accepts, so the dropdown cannot drift from them. */
+  getBudgetMatchTypes: async (): Promise<BudgetMatchTypes> => {
+    const { data } = await api.get<BudgetMatchTypes>('/budget/rules/match-types')
     return data
   },
 }
