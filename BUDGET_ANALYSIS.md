@@ -131,7 +131,7 @@ $$\text{Health Score} = \max\left(0, \min\left(100, 100 - (\text{Needs Penalty} 
 
 ---
 
-### 4. Rule-Based Categorization Engine (`backend/domains/budget/rules.py`)
+### 4. Rule-Based Categorization Engine (`backend/domains/budget/categorizer.py`, `rules_safety.py`)
 - **Pattern Matching**: Evaluates user-defined rules in priority order.
 - **Regex & Keyword Support**: Matches merchant names and raw narration text.
 - **Batch Re-Categorization**: Updates category tags across past and future transactions.
@@ -164,78 +164,73 @@ The Budget Analyzer uses **Contextual In-Card Filters** to eliminate global clut
 
 ## API Reference
 
-### 1. Upload Statement
-`POST /api/budget/upload`
-- **Request**: `multipart/form-data` containing `file`, optional `bank`, and `password`.
-- **Response**:
-```json
-{
-  "session_id": "sess_91283a0f",
-  "bank": "HDFC",
-  "account_type": "Savings",
-  "transaction_count": 284,
-  "date_range": { "start": "2025-01-01", "end": "2025-12-31" },
-  "total_debits": 482910.50,
-  "total_credits": 620000.00
-}
-```
+Generated from the mounted routes. The live OpenAPI schema at `GET /docs` is the
+source of truth — this table exists so the shape is visible without booting the app.
 
-### 2. Get Budget Overview
-`GET /api/budget/overview?session_id=overall&bank=all&account_type=all&date_range=all`
-- **Response**:
-```json
-{
-  "total_inflow": 620000.00,
-  "total_outflow": 482910.50,
-  "net_savings": 137089.50,
-  "savings_rate": 22.11,
-  "burn_rate": { "daily_average": 1323.04, "monthly_average": 40242.54 },
-  "health_metrics": {
-    "score": 78,
-    "grade": "Good",
-    "needs_pct": 48.2,
-    "wants_pct": 29.7,
-    "invest_pct": 22.1
-  },
-  "monthly_trends": [
-    { "month": "2025-01", "inflow": 50000, "outflow": 42000, "net": 8000 }
-  ],
-  "top_merchants": [
-    { "merchant": "Swiggy", "amount": 14200, "count": 18, "category": "Food & Dining" }
-  ]
-}
-```
+An earlier version of this section documented `/api/budget/upload`,
+`/api/budget/overview`, `/api/budget/category_breakdown` and `/api/budget/categorize`
+with invented response bodies. None of those paths have ever existed; the prefix is
+`/budget`, and the analytics endpoints are session-scoped. Response shapes are
+deliberately not reproduced here — they drifted precisely because they were copied
+by hand.
 
-### 3. Get Category Breakdown & Drilldown
-`GET /api/budget/category_breakdown?session_id=overall&flow=debit&category=Food%20%26%20Dining`
-- **Response**:
-```json
-{
-  "is_drilldown": true,
-  "category": "Food & Dining",
-  "category_stats": {
-    "total_amount": 34820.00,
-    "count": 42,
-    "avg_ticket": 829.05,
-    "merchants": [
-      { "merchant": "Zomato", "amount": 18200.00, "count": 22, "percentage": 52.3 },
-      { "merchant": "Swiggy", "amount": 16620.00, "count": 20, "percentage": 47.7 }
-    ]
-  }
-}
-```
+Every endpoint requires an authenticated caller. Ownership is enforced inside
+`domains/budget/sessions.py`, so a session id belonging to someone else answers 404,
+never a row.
 
-### 4. Categorize Transaction & Create Rule
-`POST /api/budget/categorize`
-- **Request**:
-```json
-{
-  "txn_id": "txn_81920",
-  "category": "Investments",
-  "apply_rule": true,
-  "rule_keyword": "ZERODHA"
-}
-```
+### `/budget/accounts` — Bank & card accounts
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/accounts` | Every account seen across the user's statements, with balances and card utilisation. |
+| `PUT` | `/budget/accounts/{account_key}` | Write the fields a statement cannot supply. |
+
+### `/budget/analytics` — Overview, categories, transactions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/budget/analytics/transactions/update` |  |
+| `GET` | `/budget/analytics/{session_id}/categories` |  |
+| `GET` | `/budget/analytics/{session_id}/overview` | The dashboard's headline aggregation, memoized on the frame and the filter set. |
+| `GET` | `/budget/analytics/{session_id}/transactions` | Filtered transactions, paginated. |
+
+### `/budget/insights` — Transfers, recurring, forecast, anomalies, envelopes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/budget/insights/envelopes` | Set or clear one category's monthly cap. |
+| `PUT` | `/budget/insights/merchants/alias` | Remember a merchant rename, so the user only corrects it once. |
+| `POST` | `/budget/insights/transfers/flag` | Override the pairing heuristic for one transaction. |
+| `GET` | `/budget/insights/{session_id}/anomalies` | Duplicate charges, category spikes and unusually large first-time merchants. |
+| `GET` | `/budget/insights/{session_id}/coverage` | Which months each account has statements for, and which are missing. |
+| `GET` | `/budget/insights/{session_id}/envelopes` | Spend against each monthly category cap, with a pace verdict. |
+| `GET` | `/budget/insights/{session_id}/forecast` | Month-end projection and a daily safe-to-spend figure. |
+| `GET` | `/budget/insights/{session_id}/reconciliation` | Whether each statement's printed balances agree with its own transactions. |
+| `GET` | `/budget/insights/{session_id}/recurring` | Subscriptions and standing charges, with price changes and annualised cost. |
+| `GET` | `/budget/insights/{session_id}/sankey` | Nodes and links for the income -> nature -> category flow diagram. |
+| `GET` | `/budget/insights/{session_id}/transfers` | Movements between the user's own accounts, netted out of income and expense. |
+
+### `/budget/portfolio` — Upload & sessions
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/portfolio/sessions` | List the caller's budget uploads. |
+| `DELETE` | `/budget/portfolio/sessions/{session_id}` | Delete one budget upload. 404s if it is not the caller's. |
+| `POST` | `/budget/portfolio/upload` | Parse a bank or credit-card statement (CSV / XLS / XLSX) into a budget session. |
+
+### `/budget/rules` — Categorisation rules
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/rules` |  |
+| `POST` | `/budget/rules` |  |
+| `POST` | `/budget/rules/apply-all` |  |
+| `GET` | `/budget/rules/match-types` | The match types the UI may offer, so it cannot drift from what the server accepts. |
+| `POST` | `/budget/rules/test` | Check a pattern against one description without storing it. |
+| `DELETE` | `/budget/rules/{rule_id}` |  |
+
+`session_id` accepts a specific upload or the literal `overall`, which aggregates
+every statement the user owns with overlapping periods merged.
 
 ---
 
@@ -245,13 +240,21 @@ All Budget components reside in `frontend/src/domains/budget/`:
 
 | Component | Path | Responsibility |
 |---|---|---|
-| **BudgetDashboard** | `components/BudgetDashboard.tsx` | Master view orchestrating KPIs, charts, and in-card contextual filter states. |
-| **BudgetHealth503020Card** | `components/BudgetHealth503020Card.tsx` | Health Score gauge, 3 bucket cards, macro allocation strip, and AI tips. |
-| **TransactionsTab** | `components/TransactionsTab.tsx` | Filterable virtualized transaction grid with inline category tagger and CSV export. |
+| **BudgetDashboard** | `components/BudgetDashboard.tsx` | Master view: KPIs, charts, tab routing, and the shared filter state. |
+| **BudgetHealth503020Card** | `components/BudgetHealth503020Card.tsx` | Health score, three bucket cards, macro allocation strip, recommendations. |
+| **TransactionsTab** | `components/TransactionsTab.tsx` | Transaction grid, client-paginated at 50 rows, with inline category tagger and CSV export. |
+| **AccountsTab** | `components/AccountsTab.tsx` | Per-account balances, card utilisation, editable account metadata. |
+| **InsightsTab** | `components/InsightsTab.tsx` | Recurring charges, anomalies, envelope budgets, coverage gaps. |
+| **MoneyFlowCard** | `components/MoneyFlowCard.tsx` | Income → nature → category Sankey. |
+| **TransfersExcludedCard** | `components/TransfersExcludedCard.tsx` | Why the totals are lower than the raw statement sum; lists the matched pairs. |
 | **RulesTab** | `components/RulesTab.tsx` | Auto-categorization rule editor (create, edit, delete, priority reorder). |
 | **UploadStatementModal** | `components/UploadStatementModal.tsx` | Multi-bank file uploader with password unlock support. |
-| **BudgetSessionsModal** | `components/BudgetSessionsModal.tsx` | Account management modal for toggling and deleting uploaded statements. |
-| **useBudget** | `hooks/useBudget.ts` | React Hook managing data fetching, caching, and state synchronization. |
+| **BudgetSessionsModal** | `components/BudgetSessionsModal.tsx` | Account management modal for switching and deleting uploaded statements. |
+| **useBudget** | `hooks/useBudget.ts` | Query hooks, cache keys, and invalidation for every budget endpoint. |
+| **types** | `types.ts` | Response contracts for the budget API surface. |
+
+Tabs 2–4 mount only when selected, and each domain resolves to its own lazily
+fetched chunk (`Dashboard.tsx`).
 
 ---
 

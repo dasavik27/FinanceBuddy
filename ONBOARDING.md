@@ -85,8 +85,10 @@ cd backend && python -m migrations.migrate
 
 ### 2.7 Run
 ```
-npm run dev
+cd frontend && npm run dev:all
 ```
+Starts Vite on 5173 and uvicorn on 8000 together. `npm run dev` alone is
+frontend-only, and there is no package.json at the repo root.
 
 ---
 
@@ -120,13 +122,29 @@ npm run dev
 
 ## Environment Variables
 
-Backend:
+Backend — required:
 - DATABASE_URL: PostgreSQL connection string
-- FINANCEBUDDY_ENCRYPTION_KEYS: k1:base64key (required)
+- FINANCEBUDDY_ENCRYPTION_KEYS: `k1:base64key`. No plaintext fallback — the app raises
+  rather than writing sensitive columns unencrypted
 - SUPABASE_URL: Supabase project URL
 - FINANCEBUDDY_ALLOWED_ORIGINS: CORS whitelist
-- FINANCEBUDDY_SLOW_REQUEST_MS: Log threshold (1500 default)
-- FINANCEBUDDY_SYNC_CONCURRENCY: Thread cap (8 default)
+
+Backend — optional, defaults tuned for a single worker on ~512 MB:
+- FINANCEBUDDY_ENCRYPTION_ACTIVE_KEY: which key id to encrypt *new* data with, when
+  rotating. Decryption always tries every key in FINANCEBUDDY_ENCRYPTION_KEYS
+- FINANCEBUDDY_SLOW_REQUEST_MS: slow-request log threshold (1500)
+- FINANCEBUDDY_SYNC_CONCURRENCY: anyio threadpool cap for sync handlers (8)
+- FINANCEBUDDY_DB_POOL_MIN / FINANCEBUDDY_DB_POOL_MAX: connection pool bounds
+- FINANCEBUDDY_DB_STATEMENT_TIMEOUT_MS: per-statement timeout
+- FINANCEBUDDY_MAX_RESIDENT_SESSIONS: resident mutual-fund portfolios (3)
+- FINANCEBUDDY_MAX_RESIDENT_EQUITY_SESSIONS: resident equity portfolios (3)
+- FINANCEBUDDY_MAX_TAX_SESSIONS: resident tax sessions (8)
+- FINANCEBUDDY_TAX_SESSION_TTL: tax session idle timeout, seconds (86400)
+- FINANCEBUDDY_CACHE_DIR / FINANCEBUDDY_CACHE_TTL / FINANCEBUDDY_DISK_CACHE_MB:
+  market-data disk cache location, freshness and size budget
+
+The resident-session caps bound memory, not retention: an evicted session is rehydrated
+from Postgres on next access, so lowering them costs a read, never data.
 
 Frontend:
 - VITE_API_URL: Backend API URL
