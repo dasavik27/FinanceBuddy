@@ -97,10 +97,22 @@ def test_search_length_is_bounded_at_the_route():
     from fastapi.routing import APIRoute
     from main import app
 
-    route = next(
-        r for r in app.routes
-        if isinstance(r, APIRoute) and r.path == "/mutual-funds/holdings/{session_id}/holdings"
-    )
+    target = "/mutual-funds/holdings/{session_id}/holdings"
+    route = None
+    for r in app.routes:
+        if isinstance(r, APIRoute) and r.path == target:
+            route = r
+            break
+        if hasattr(r, "original_router"):
+            prefix = getattr(getattr(r, "include_context", None), "prefix", "")
+            for sub_r in r.original_router.routes:
+                if isinstance(sub_r, APIRoute) and (prefix + sub_r.path) == target:
+                    route = sub_r
+                    break
+            if route:
+                break
+
+    assert route is not None, f"Route {target} not found"
     search_param = next(p for p in route.dependant.query_params if p.name == "search")
     # Constraints live in field_info.metadata as annotated_types markers under
     # pydantic v2, not as attributes on the field itself.

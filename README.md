@@ -4,6 +4,7 @@ Mutual-fund portfolio analytics and Indian income-tax computation, built from th
 documents you already have — a CAS statement from CAMS/Karvy and an AIS from the
 income-tax portal.
 
+- **Budget Analyzer** — Multi-bank statement ingestion (HDFC, ICICI, SBI, Axis, Kotak, IndusInd, PNB, CSV), 50/30/20 financial health evaluation, multi-account aggregation, burn rate, and deep category/payee drilldowns
 - **Mutual funds** — XIRR, FIFO cost basis, allocation drift, peer comparison,
   rebalancing plans, rolling returns, tax-harvest opportunities
 - **Tax expert** — AIS parsing, capital-gains computation with grandfathering and
@@ -21,6 +22,7 @@ Postgres and is encrypted before it gets there.
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | How it works and why. Diagrams, storage model, caching, the constraints the design follows from. |
+| **[BUDGET_ANALYSIS.md](BUDGET_ANALYSIS.md)** | Comprehensive technical architecture, computational engines, and user guide for the Budget Analyzer. |
 | **[SECURITY.md](SECURITY.md)** | Threat model, what is handled, and what is still open. |
 
 ---

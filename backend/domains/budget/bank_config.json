@@ -1,0 +1,54 @@
+{
+  "banks": {
+    "hdfc": {
+      "columns": {
+        "date": ["date", "txn date", "transaction date"],
+        "description": ["narration", "description", "transaction remarks", "particulars"],
+        "debit": ["withdrawal amt.", "withdrawal amt", "withdrawal amount", "debit amount", "debit", "dr"],
+        "credit": ["deposit amt.", "deposit amt", "deposit amount", "credit amount", "credit", "cr"]
+      }
+    },
+    "icici": {
+      "columns": {
+        "date": ["transaction date", "date", "value date", "txn date"],
+        "description": ["transaction remarks", "remarks", "narration", "description", "particulars"],
+        "debit": ["withdrawal amount(inr)", "withdrawal amount (inr )", "withdrawal amount (inr)", "withdrawal amount", "withdrawal amt.", "withdrawal amt", "debit amount", "debit", "dr amount", "dr"],
+        "credit": ["deposit amount(inr)", "deposit amount (inr )", "deposit amount (inr)", "deposit amount", "deposit amt.", "deposit amt", "credit amount", "credit", "cr amount", "cr"]
+      }
+    },
+    "sbi": {
+      "columns": {
+        "date": ["txn date", "date", "transaction date", "value date"],
+        "description": ["description", "narration", "transaction remarks", "particulars", "remarks"],
+        "debit": ["debit", "withdrawal amount", "debit amount", "dr"],
+        "credit": ["credit", "deposit amount", "credit amount", "cr"]
+      }
+    },
+    "axis": {
+      "columns": {
+        "date": ["tran date", "transaction date", "date", "value date"],
+        "description": ["particulars", "description", "narration", "transaction remarks"],
+        "debit": ["debit", "withdrawal amount", "dr amount", "dr"],
+        "credit": ["credit", "deposit amount", "cr amount", "cr"]
+      }
+    },
+    "kotak": {
+      "columns": {
+        "date": ["transaction date", "date", "value date", "txn date"],
+        "description": ["narration", "description", "transaction details", "particulars"],
+        "debit": ["debit", "withdrawal amount", "dr amount", "dr"],
+        "credit": ["credit", "deposit amount", "cr amount", "cr"]
+      }
+    },
+    "generic": {
+      "columns": {
+        "date": ["date", "txn date", "transaction date", "txn_date", "transaction_date"],
+        "description": ["description", "narration", "remarks", "particulars", "memo", "details", "transaction description"],
+        "amount": ["amount", "txn_amount", "transaction_amount", "net amount", "amt"],
+        "type": ["type", "txn_type", "transaction_type", "dr_cr", "cr_dr"],
+        "debit": ["debit", "withdrawal", "spent", "expense", "dr", "debit amount"],
+        "credit": ["credit", "deposit", "received", "income", "cr", "credit amount"]
+      }
+    }
+  }
+}

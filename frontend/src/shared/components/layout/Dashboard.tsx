@@ -12,6 +12,7 @@ const IndianStocksDashboard = lazy(() => import('../../../domains/equity/compone
 const TaxExpertDashboard = lazy(() => import('../../../domains/tax-expert/components/TaxExpertDashboard'))
 const AccountsDashboard = lazy(() => import('../dashboard/AccountsDashboard'))
 const DashboardHub = lazy(() => import('../dashboard/DashboardHub'))
+const BudgetDashboard = lazy(() => import('../../../domains/budget/components/BudgetDashboard'))
 
 function RouteFallback() {
   return (
@@ -30,6 +31,7 @@ export default function Dashboard() {
           <Route path="mutual-funds/*" element={<ErrorBoundary fallbackMessage="Mutual Funds section encountered an error."><MutualFundsDashboard /></ErrorBoundary>} />
           <Route path="equity/*"        element={<ErrorBoundary fallbackMessage="Indian Stocks section encountered an error."><IndianStocksDashboard /></ErrorBoundary>} />
           <Route path="tax-expert/*"     element={<ErrorBoundary fallbackMessage="Tax Expert section encountered an error."><TaxExpertDashboard /></ErrorBoundary>} />
+          <Route path="budget/*"         element={<ErrorBoundary fallbackMessage="Budget Analyzer section encountered an error."><BudgetDashboard /></ErrorBoundary>} />
           <Route path="accounts"         element={<ErrorBoundary fallbackMessage="Accounts Vault encountered an error."><AccountsDashboard /></ErrorBoundary>} />
 
           {/* Legacy redirect catches */}

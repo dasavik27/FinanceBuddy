@@ -26,3 +26,10 @@ venv/
 env/
 venv_finance/
 .env
+
+# Local Databases & Scratch
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+backend/check_db.py

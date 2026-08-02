@@ -10,7 +10,7 @@ import type {
   EquityPnl, EquitySummary, EquityUploadResult, StockAnalysis, StockSearchResult,
 } from '../../domains/equity/types'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
+export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
  * Attach the signed-in user's bearer token.

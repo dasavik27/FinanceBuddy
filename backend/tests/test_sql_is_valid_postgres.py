@@ -60,7 +60,7 @@ def _sql_literals(path: pathlib.Path):
 
 def _python_sources():
     for path in BACKEND.rglob("*.py"):
-        if any(part in path.parts for part in (".venv", "__pycache__", "tests")):
+        if any(part in path.parts for part in ("venv", ".venv", "venv_finance", "__pycache__", "tests", "node_modules", ".git")):
             continue
         yield path
 

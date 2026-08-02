@@ -51,6 +51,13 @@ from domains.tax_expert.routers import (
     summary as tax_summary, itr as tax_itr, rules as tax_rules,
 )
 
+# Domain: Budget
+from domains.budget.routers import (
+    portfolio as budget_portfolio,
+    analytics as budget_analytics,
+    rules as budget_rules,
+)
+
 logger = logging.getLogger(__name__)
 
 # Requests slower than this get logged with their path so regressions surface in
@@ -304,6 +311,11 @@ app.add_middleware(RequestCacheMiddleware)
 # ────────────────────────────────────────────────────────────────────────────
 # ROUTERS
 # ────────────────────────────────────────────────────────────────────────────
+
+# ── Budget Analyzer ───────────────────────────────────────────────────────────
+app.include_router(budget_portfolio.router, prefix="/budget/portfolio", tags=["Budget - Session Management"])
+app.include_router(budget_analytics.router, prefix="/budget/analytics", tags=["Budget - Analytics & Deep Dives"])
+app.include_router(budget_rules.router, prefix="/budget", tags=["Budget - Rules & Categorization"])
 
 # Shared Infrastructure
 app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])
