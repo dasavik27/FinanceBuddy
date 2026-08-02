@@ -56,6 +56,8 @@ from domains.budget.routers import (
     portfolio as budget_portfolio,
     analytics as budget_analytics,
     rules as budget_rules,
+    accounts as budget_accounts,
+    insights as budget_insights,
 )
 
 logger = logging.getLogger(__name__)
@@ -316,6 +318,8 @@ app.add_middleware(RequestCacheMiddleware)
 app.include_router(budget_portfolio.router, prefix="/budget/portfolio", tags=["Budget - Session Management"])
 app.include_router(budget_analytics.router, prefix="/budget/analytics", tags=["Budget - Analytics & Deep Dives"])
 app.include_router(budget_rules.router, prefix="/budget", tags=["Budget - Rules & Categorization"])
+app.include_router(budget_accounts.router, prefix="/budget/accounts", tags=["Budget - Accounts & Cards"])
+app.include_router(budget_insights.router, prefix="/budget/insights", tags=["Budget - Insights & Forecast"])
 
 # Shared Infrastructure
 app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure - Authentication"])

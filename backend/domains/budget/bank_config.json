@@ -1,11 +1,27 @@
 {
+  "_comment": [
+    "Column aliases per statement format. Matching is on the normalised name",
+    "(lowercased, non-alphanumerics stripped), so 'Withdrawal Amt.' and",
+    "'withdrawal amt' are the same alias and only one needs listing.",
+    "",
+    "'balance' is optional but worth providing: it is what lets reconcile.py verify",
+    "that opening + sum(transactions) == closing, which catches a mis-parsed column",
+    "before it reaches the dashboard.",
+    "",
+    "Credit-card exports are separate formats, not savings formats with a different",
+    "label. They rarely carry a running balance, they often use a single Amount",
+    "column with a Cr/Dr marker, and on most issuers a 'debit' is a purchase (money",
+    "owed) rather than money leaving an account - see accounts.py for how that",
+    "difference is applied downstream."
+  ],
   "banks": {
     "hdfc": {
       "columns": {
-        "date": ["date", "txn date", "transaction date"],
+        "date": ["date", "txn date", "transaction date", "value date"],
         "description": ["narration", "description", "transaction remarks", "particulars"],
         "debit": ["withdrawal amt.", "withdrawal amt", "withdrawal amount", "debit amount", "debit", "dr"],
-        "credit": ["deposit amt.", "deposit amt", "deposit amount", "credit amount", "credit", "cr"]
+        "credit": ["deposit amt.", "deposit amt", "deposit amount", "credit amount", "credit", "cr"],
+        "balance": ["closing balance", "balance", "running balance", "balance (inr)"]
       }
     },
     "icici": {
@@ -13,7 +29,8 @@
         "date": ["transaction date", "date", "value date", "txn date"],
         "description": ["transaction remarks", "remarks", "narration", "description", "particulars"],
         "debit": ["withdrawal amount(inr)", "withdrawal amount (inr )", "withdrawal amount (inr)", "withdrawal amount", "withdrawal amt.", "withdrawal amt", "debit amount", "debit", "dr amount", "dr"],
-        "credit": ["deposit amount(inr)", "deposit amount (inr )", "deposit amount (inr)", "deposit amount", "deposit amt.", "deposit amt", "credit amount", "credit", "cr amount", "cr"]
+        "credit": ["deposit amount(inr)", "deposit amount (inr )", "deposit amount (inr)", "deposit amount", "deposit amt.", "deposit amt", "credit amount", "credit", "cr amount", "cr"],
+        "balance": ["balance(inr)", "balance (inr)", "balance", "closing balance", "available balance"]
       }
     },
     "sbi": {
@@ -21,7 +38,8 @@
         "date": ["txn date", "date", "transaction date", "value date"],
         "description": ["description", "narration", "transaction remarks", "particulars", "remarks"],
         "debit": ["debit", "withdrawal amount", "debit amount", "dr"],
-        "credit": ["credit", "deposit amount", "credit amount", "cr"]
+        "credit": ["credit", "deposit amount", "credit amount", "cr"],
+        "balance": ["balance", "closing balance", "running balance"]
       }
     },
     "axis": {
@@ -29,7 +47,8 @@
         "date": ["tran date", "transaction date", "date", "value date"],
         "description": ["particulars", "description", "narration", "transaction remarks"],
         "debit": ["debit", "withdrawal amount", "dr amount", "dr"],
-        "credit": ["credit", "deposit amount", "cr amount", "cr"]
+        "credit": ["credit", "deposit amount", "cr amount", "cr"],
+        "balance": ["balance", "closing balance", "running balance"]
       }
     },
     "kotak": {
@@ -37,17 +56,87 @@
         "date": ["transaction date", "date", "value date", "txn date"],
         "description": ["narration", "description", "transaction details", "particulars"],
         "debit": ["debit", "withdrawal amount", "dr amount", "dr"],
-        "credit": ["credit", "deposit amount", "cr amount", "cr"]
+        "credit": ["credit", "deposit amount", "cr amount", "cr"],
+        "balance": ["balance", "closing balance", "running balance"]
+      }
+    },
+    "yesbank": {
+      "columns": {
+        "date": ["transaction date", "date", "value date", "txn date"],
+        "description": ["description", "narration", "particulars", "remarks"],
+        "debit": ["debit", "withdrawals", "withdrawal amount", "dr"],
+        "credit": ["credit", "deposits", "deposit amount", "cr"],
+        "balance": ["balance", "closing balance", "running balance"]
+      }
+    },
+    "idfc": {
+      "columns": {
+        "date": ["transaction date", "date", "value date"],
+        "description": ["particulars", "description", "narration", "transaction details"],
+        "debit": ["debit", "withdrawal", "withdrawal amount", "dr"],
+        "credit": ["credit", "deposit", "deposit amount", "cr"],
+        "balance": ["balance", "closing balance", "running balance"]
+      }
+    },
+    "hdfc_card": {
+      "columns": {
+        "date": ["transaction date", "date", "txn date"],
+        "description": ["transaction description", "description", "narration", "merchant", "particulars"],
+        "amount": ["amount", "amount (in rs.)", "amount in rs", "transaction amount", "amt"],
+        "type": ["type", "debit / credit", "debit/credit", "dr/cr", "cr/dr"],
+        "debit": ["debit", "purchases", "spends"],
+        "credit": ["credit", "payments", "refunds"]
+      }
+    },
+    "icici_card": {
+      "columns": {
+        "date": ["transaction date", "date", "txn date"],
+        "description": ["transaction details", "description", "merchant", "particulars", "narration"],
+        "amount": ["amount (inr)", "amount(inr)", "amount", "transaction amount", "amt"],
+        "type": ["type", "dr/cr", "cr/dr", "debit/credit"],
+        "debit": ["debit", "purchases"],
+        "credit": ["credit", "payments"]
+      }
+    },
+    "axis_card": {
+      "columns": {
+        "date": ["transaction date", "date", "txn date"],
+        "description": ["transaction details", "merchant name", "description", "particulars"],
+        "amount": ["amount in inr", "amount (inr)", "amount", "transaction amount"],
+        "type": ["debit/credit", "dr/cr", "type"],
+        "debit": ["debit", "purchases"],
+        "credit": ["credit", "payments"]
+      }
+    },
+    "sbi_card": {
+      "columns": {
+        "date": ["date", "transaction date", "txn date"],
+        "description": ["transaction details", "description", "merchant", "particulars"],
+        "amount": ["amount (rs.)", "amount", "transaction amount", "amt"],
+        "type": ["type", "debit/credit", "dr/cr"],
+        "debit": ["debit", "purchases"],
+        "credit": ["credit", "payments"]
+      }
+    },
+    "generic_card": {
+      "columns": {
+        "date": ["transaction date", "date", "txn date", "posting date", "posted date"],
+        "description": ["transaction description", "transaction details", "merchant", "merchant name", "description", "narration", "particulars", "details"],
+        "amount": ["amount", "transaction amount", "amt", "amount (inr)", "amount in inr", "amount (rs.)"],
+        "type": ["type", "txn_type", "transaction_type", "dr_cr", "cr_dr", "debit/credit", "debit / credit"],
+        "debit": ["debit", "purchases", "spends", "dr"],
+        "credit": ["credit", "payments", "refunds", "cr"]
       }
     },
     "generic": {
       "columns": {
-        "date": ["date", "txn date", "transaction date", "txn_date", "transaction_date"],
-        "description": ["description", "narration", "remarks", "particulars", "memo", "details", "transaction description"],
-        "amount": ["amount", "txn_amount", "transaction_amount", "net amount", "amt"],
-        "type": ["type", "txn_type", "transaction_type", "dr_cr", "cr_dr"],
-        "debit": ["debit", "withdrawal", "spent", "expense", "dr", "debit amount"],
-        "credit": ["credit", "deposit", "received", "income", "cr", "credit amount"]
+        "date": ["date", "txn date", "transaction date", "txn_date", "transaction_date", "value date", "posting date"],
+        "description": ["description", "narration", "remarks", "particulars", "memo", "details", "transaction description", "transaction details", "merchant"],
+        "amount": ["amount", "txn_amount", "transaction_amount", "net amount", "amt", "value"],
+        "type": ["type", "txn_type", "transaction_type", "dr_cr", "cr_dr", "debit/credit"],
+        "debit": ["debit", "withdrawal", "withdrawals", "spent", "expense", "dr", "debit amount", "withdrawal amount"],
+        "credit": ["credit", "deposit", "deposits", "received", "income", "cr", "credit amount", "deposit amount"],
+        "balance": ["balance", "closing balance", "running balance", "available balance"]
       }
     }
   }

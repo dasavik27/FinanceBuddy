@@ -119,7 +119,11 @@ def clean_db(db_schema):
     from domains.tax_expert import tax_sessions
 
     with db.connect() as conn:
-        conn.execute("TRUNCATE users, sessions RESTART IDENTITY CASCADE")
+        # budget_rules is named explicitly rather than left to CASCADE. It only cascades
+        # from users once 0006 adds the foreign key that 0005 omitted, and a fixture
+        # that silently leaks a table's rows between tests depending on which migration
+        # has run is worse than one extra identifier here.
+        conn.execute("TRUNCATE users, sessions, budget_rules RESTART IDENTITY CASCADE")
 
     users.invalidate()
     mf_sessions.clear_all()

@@ -47,7 +47,7 @@ interface BudgetHealth503020CardProps {
   onCategoryClick?: (categoryName: string) => void
 }
 
-export default function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020CardProps) {
+function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020CardProps) {
   const [showDetails, setShowDetails] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
 
@@ -490,8 +490,8 @@ export default function BudgetHealth503020Card({ data, onCategoryClick }: Budget
             </Typography>
           </Box>
           <Stack spacing={0.8}>
-            {recommendations.map((rec, idx) => (
-              <Box key={idx} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+            {recommendations.map((rec) => (
+              <Box key={rec} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                 <Typography variant="caption" sx={{ color: '#818cf8', fontWeight: 800, mt: '2px' }}>•</Typography>
                 <Typography variant="body2" sx={{ color: '#cbd5e1', fontSize: '0.8rem', lineHeight: 1.4 }}>
                   {rec}
@@ -504,3 +504,7 @@ export default function BudgetHealth503020Card({ data, onCategoryClick }: Budget
     </Card>
   )
 }
+
+// `data` is a slice of the overview query's result and `onCategoryClick` is stable at
+// the call site, so this only re-renders when the 50/30/20 figures actually change.
+export default React.memo(BudgetHealth503020Card)

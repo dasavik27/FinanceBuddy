@@ -9,8 +9,17 @@ import type {
   EquityAllocation, EquityHoldingsResponse, EquityInsights, EquityPerformance,
   EquityPnl, EquitySummary, EquityUploadResult, StockAnalysis, StockSearchResult,
 } from '../../domains/equity/types'
+import type {
+  BudgetCategoriesResponse, BudgetMatchTypes, BudgetOverview, BudgetRule,
+  BudgetRuleDraft, BudgetRuleTestResult, BudgetSessionMeta, BudgetTransaction,
+  BudgetTransactionsPage, BudgetTransactionUpdate, BudgetUploadResult,
+  BudgetAccountsResponse, BudgetAccountMetaUpdate, BudgetTransfersResponse,
+  BudgetRecurringResponse, BudgetForecast, BudgetAnomaliesResponse,
+  BudgetReconciliationResponse, BudgetCoverageResponse, BudgetSankey,
+  BudgetNetWorth, BudgetEnvelope,
+} from '../../domains/budget/types'
 
-export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 
 /**
  * Attach the signed-in user's bearer token.
@@ -429,6 +438,208 @@ export const apiClient = {
 
   deleteHistorySession: async (sid: string): Promise<any> => {
     const { data } = await api.delete(`/history/${sid}`)
+    return data
+  },
+
+  // ── Budget API ──────────────────────────────────────────────────────────────
+
+  /**
+   * Upload a bank / credit-card statement (CSV, XLS, XLSX).
+   *
+   * Returns the parse report alongside the session id: `skipped` and `truncated` are
+   * how the caller learns that only part of the file made it in.
+   */
+  uploadBudgetStatement: async (
+    file: File,
+    bank: string = 'auto',
+    accountType: string = 'auto',
+  ): Promise<BudgetUploadResult> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('bank', bank)
+    fd.append('account_type', accountType)
+    const { data } = await api.post<BudgetUploadResult>('/budget/portfolio/upload', fd)
+    return data
+  },
+
+  /** Headline cash-flow KPIs, trends and the 50/30/20 evaluation. */
+  getBudgetOverview: async (sid: string, params: Record<string, any> = {}): Promise<BudgetOverview> => {
+    const { data } = await api.get<BudgetOverview>(`/budget/analytics/${sid}/overview`, { params })
+    return data
+  },
+
+  /** Category breakdown, or a single-category drilldown when `category` is set. */
+  getBudgetCategories: async (sid: string, params: Record<string, any> = {}): Promise<BudgetCategoriesResponse> => {
+    const { data } = await api.get<BudgetCategoriesResponse>(`/budget/analytics/${sid}/categories`, { params })
+    return data
+  },
+
+  /**
+   * A page of transactions.
+   *
+   * Returns the whole envelope rather than just the rows: the endpoint is paginated,
+   * and a caller that drops `total` cannot tell a complete result from a truncated
+   * one. Discarding it would silently show the first page as if it were everything.
+   */
+  getBudgetTransactions: async (
+    sid: string, params: Record<string, any> = {},
+  ): Promise<BudgetTransactionsPage> => {
+    const { data } = await api.get<BudgetTransactionsPage>(
+      `/budget/analytics/${sid}/transactions`, { params },
+    )
+    return {
+      transactions: data.transactions ?? [],
+      total: data.total ?? (data.transactions?.length ?? 0),
+      limit: data.limit ?? 0,
+      offset: data.offset ?? 0,
+      has_more: data.has_more ?? false,
+    }
+  },
+
+  updateBudgetTransactions: async (updates: BudgetTransactionUpdate[]): Promise<any> => {
+    // The router is mounted at /budget/analytics, so the route is
+    // /budget/analytics/transactions/update. This was '/budget/transactions/update'
+    // from the day the domain landed - a 404 on every call, which is why editing a
+    // category or running a bulk re-categorization never actually persisted.
+    const { data } = await api.put('/budget/analytics/transactions/update', updates)
+    return data
+  },
+
+  getBudgetSessions: async (): Promise<BudgetSessionMeta[]> => {
+    const { data } = await api.get<{ sessions: BudgetSessionMeta[] }>('/budget/portfolio/sessions')
+    return data.sessions ?? []
+  },
+
+  // ── Accounts and cards ─────────────────────────────────────────────────────
+
+  getBudgetAccounts: async (sid = 'overall'): Promise<BudgetAccountsResponse> => {
+    const { data } = await api.get<BudgetAccountsResponse>('/budget/accounts', {
+      params: { session_id: sid },
+    })
+    return data
+  },
+
+  /** Writes only what a statement cannot say: limit, statement/due day, label. */
+  updateBudgetAccount: async (
+    accountKey: string, patch: BudgetAccountMetaUpdate,
+  ): Promise<{ status: string; account_key: string }> => {
+    // encodeURIComponent because account_key contains colons ("HDFC:savings:1234").
+    const { data } = await api.put(`/budget/accounts/${encodeURIComponent(accountKey)}`, patch)
+    return data
+  },
+
+  // ── Insights ───────────────────────────────────────────────────────────────
+
+  getBudgetTransfers: async (sid: string): Promise<BudgetTransfersResponse> => {
+    const { data } = await api.get<BudgetTransfersResponse>(`/budget/insights/${sid}/transfers`)
+    return data
+  },
+
+  flagBudgetTransfer: async (txnId: string, flag: string | null): Promise<any> => {
+    const { data } = await api.post('/budget/insights/transfers/flag', { txn_id: txnId, flag })
+    return data
+  },
+
+  getBudgetRecurring: async (sid: string): Promise<BudgetRecurringResponse> => {
+    const { data } = await api.get<BudgetRecurringResponse>(`/budget/insights/${sid}/recurring`)
+    return data
+  },
+
+  getBudgetForecast: async (sid: string): Promise<BudgetForecast> => {
+    const { data } = await api.get<BudgetForecast>(`/budget/insights/${sid}/forecast`)
+    return data
+  },
+
+  getBudgetAnomalies: async (sid: string): Promise<BudgetAnomaliesResponse> => {
+    const { data } = await api.get<BudgetAnomaliesResponse>(`/budget/insights/${sid}/anomalies`)
+    return data
+  },
+
+  getBudgetReconciliation: async (sid: string): Promise<BudgetReconciliationResponse> => {
+    const { data } = await api.get<BudgetReconciliationResponse>(
+      `/budget/insights/${sid}/reconciliation`,
+    )
+    return data
+  },
+
+  getBudgetCoverage: async (sid: string): Promise<BudgetCoverageResponse> => {
+    const { data } = await api.get<BudgetCoverageResponse>(`/budget/insights/${sid}/coverage`)
+    return data
+  },
+
+  getBudgetSankey: async (sid: string): Promise<BudgetSankey> => {
+    const { data } = await api.get<BudgetSankey>(`/budget/insights/${sid}/sankey`)
+    return { nodes: data.nodes ?? [], links: data.links ?? [] }
+  },
+
+  getBudgetNetWorth: async (sid: string): Promise<BudgetNetWorth> => {
+    const { data } = await api.get<BudgetNetWorth>(`/budget/insights/${sid}/net-worth`)
+    return data
+  },
+
+  getBudgetEnvelopes: async (sid: string): Promise<BudgetEnvelope[]> => {
+    const { data } = await api.get<{ envelopes: BudgetEnvelope[] }>(
+      `/budget/insights/${sid}/envelopes`,
+    )
+    return data.envelopes ?? []
+  },
+
+  /** A null cap clears the envelope rather than setting it to zero. */
+  setBudgetEnvelope: async (category: string, monthlyCap: number | null): Promise<any> => {
+    const { data } = await api.put('/budget/insights/envelopes', {
+      category, monthly_cap: monthlyCap,
+    })
+    return data
+  },
+
+  renameBudgetMerchant: async (description: string, displayName: string): Promise<any> => {
+    const { data } = await api.put('/budget/insights/merchants/alias', {
+      description, display_name: displayName,
+    })
+    return data
+  },
+
+  deleteBudgetSession: async (sid: string): Promise<any> => {
+    const { data } = await api.delete(`/budget/portfolio/sessions/${sid}`)
+    return data
+  },
+
+  getBudgetRules: async (): Promise<BudgetRule[]> => {
+    const { data } = await api.get<BudgetRule[]>('/budget/rules')
+    return data
+  },
+
+  createBudgetRule: async (rule: BudgetRuleDraft): Promise<BudgetRule> => {
+    const { data } = await api.post<BudgetRule>('/budget/rules', rule)
+    return data
+  },
+
+  deleteBudgetRule: async (ruleId: string): Promise<any> => {
+    const { data } = await api.delete(`/budget/rules/${ruleId}`)
+    return data
+  },
+
+  applyBudgetRules: async (): Promise<{ transactions_recalculated: number }> => {
+    const { data } = await api.post('/budget/rules/apply-all')
+    return data
+  },
+
+  /**
+   * Check one pattern against one description without storing it.
+   *
+   * Server-side on purpose: compiling user regexes in the browser is where a saved
+   * `(a+)+$` froze the rules tab on every keystroke.
+   */
+  testBudgetRule: async (rule: BudgetRuleDraft, description: string): Promise<BudgetRuleTestResult> => {
+    const { data } = await api.post<BudgetRuleTestResult>('/budget/rules/test', rule, {
+      params: { description },
+    })
+    return data
+  },
+
+  /** The match types the server accepts, so the dropdown cannot drift from them. */
+  getBudgetMatchTypes: async (): Promise<BudgetMatchTypes> => {
+    const { data } = await api.get<BudgetMatchTypes>('/budget/rules/match-types')
     return data
   },
 }
