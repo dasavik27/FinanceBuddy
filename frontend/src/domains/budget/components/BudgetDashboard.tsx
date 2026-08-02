@@ -34,6 +34,7 @@ import {
   budgetErrorDetail, budgetErrorStatus, useBudgetCategories, useBudgetOverview,
   useBudgetSessions, useBudgetTransactions, useDeleteBudgetSession,
   useInvalidateBudgetAnalytics, useResetSessionOnMissing, useUploadStatement,
+  TRANSACTIONS_PAGE_SIZE,
 } from '../hooks/useBudget'
 import { useDebounce } from '../../../shared/hooks/useDebounce'
 import type {
@@ -54,9 +55,16 @@ import UploadStatementModal from './UploadStatementModal'
 import BudgetHealth503020Card from './BudgetHealth503020Card'
 
 const CATEGORY_COLORS = [
-  '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
+  '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
   '#ec4899', '#06b6d4', '#84cc16', '#3b82f6', '#f97316'
 ]
+
+/** Donut slices before the tail is merged into "Other". One per CATEGORY_COLORS entry,
+ *  so no two slices ever share a colour. */
+const DONUT_SLICES = CATEGORY_COLORS.length
+
+/** The merged tail. Deliberately neutral so it does not read as a category. */
+const OTHER_COLOR = '#64748b'
 
 const MERCHANT_COLORS = [
   '#38bdf8', '#fbbf24', '#f472b6', '#a78bfa', '#34d399', 
@@ -210,7 +218,22 @@ export default function BudgetDashboard() {
   const sessionsQuery = useBudgetSessions()
   const overviewQuery = useBudgetOverview(sessionId, currentFilters)
   const categoriesQuery = useBudgetCategories(sessionId, categoryFilters)
-  const transactionsQuery = useBudgetTransactions(sessionId, currentFilters)
+  /*
+   * The full page is fetched only while the Transactions tab is mounted.
+   *
+   * This was unconditional at TRANSACTIONS_PAGE_SIZE (1000). On Overview - the tab
+   * you land on - the entire payload was downloaded, JSON-parsed and held in memory
+   * to produce two numbers: the count in the tab label and `transactions.length === 0`
+   * in the empty check. Both come from `total`, which the endpoint returns whatever
+   * the limit is, so a 1-row page answers them just as well. Re-fetched on every
+   * filter and search keystroke, so the waste repeated.
+   *
+   * The two query keys differ by `limit`, so switching to the tab issues one real
+   * fetch rather than reusing the 1-row page.
+   */
+  const transactionsQuery = useBudgetTransactions(
+    sessionId, currentFilters, activeTab === 1 ? TRANSACTIONS_PAGE_SIZE : 1,
+  )
 
   const uploadMutation = useUploadStatement()
   const deleteMutation = useDeleteBudgetSession()
@@ -222,6 +245,13 @@ export default function BudgetDashboard() {
   useResetSessionOnMissing(overviewQuery.error, sessionId, setSessionId)
 
   const sessionsList = sessionsQuery.data ?? EMPTY_LIST
+
+  // "This account holds no statements at all" - distinct from "the current filters
+  // match nothing" and from "the request failed". Gated on isSuccess so the first
+  // paint, before the list has arrived, is not mistaken for an empty account and does
+  // not flash the upload prompt at someone who has data.
+  const hasNoStatements = sessionsQuery.isSuccess && sessionsList.length === 0
+
   const overview = overviewQuery.data ?? null
   const categoryData = categoriesQuery.data ?? EMPTY_CATEGORY_DATA
   // The endpoint pages, so `total` is the count before truncation. Keeping both means
@@ -348,6 +378,40 @@ export default function BudgetDashboard() {
   }, [categoryData.categories, categoryNatureFilter, categorySearch, categorySortBy])
 
   const totalFilteredCategoryAmount = processedCategories.reduce((sum, c) => sum + (c.amount || 0), 0)
+
+  /**
+   * Donut slices: the biggest DONUT_SLICES categories, with the tail merged into one
+   * "Other" slice.
+   *
+   * The chart was fed `processedCategories` whole, which broke in three ways once a
+   * user had more than a handful of categories - and rules-based categorisation means
+   * 20-40 is normal:
+   *
+   *   - `paddingAngle={3}` is 3 degrees *per slice*. At 30 categories that is 90 of
+   *     the available 360 spent on gaps; past ~40 the padding exceeds the full circle
+   *     and Recharts draws overlapping, wrong-sized arcs.
+   *   - CATEGORY_COLORS has 10 entries and the index wraps, so the 11th category is
+   *     the same colour as the 1st and adjacent slices could be identical.
+   *   - Sub-1% slices are thinner than their own stroke, so the donut degrades into a
+   *     ring of hairlines that cannot be hovered.
+   *
+   * The full list is untouched - it is a scrollable ranked list below, which is the
+   * right control for the long tail. The donut answers "where does the money go",
+   * which a top-N plus remainder answers better than 40 slivers.
+   */
+  const donutData = useMemo(() => {
+    if (processedCategories.length <= DONUT_SLICES) return processedCategories
+    const head = processedCategories.slice(0, DONUT_SLICES - 1)
+    const tail = processedCategories.slice(DONUT_SLICES - 1)
+    return [
+      ...head,
+      {
+        category: `Other (${tail.length})`,
+        amount: tail.reduce((sum, c) => sum + (c.amount || 0), 0),
+        isOther: true,
+      },
+    ]
+  }, [processedCategories])
 
   /**
    * Category totals keyed by name, for the in-card Select.
@@ -931,7 +995,40 @@ export default function BudgetDashboard() {
         </Stack>
       </Popover>
       
-      {loadErrorMessage ? (
+      {hasNoStatements ? (
+        /* Checked before the error branch, and before any data is read.
+
+           Deleting the last statement left the dashboard showing the deleted
+           numbers. `/analytics/overall/overview` answers 404 for an empty ledger,
+           useResetSessionOnMissing ignores 404 when the session is already
+           'overall' (there is nowhere to fall back to), so nothing cleared - and
+           `placeholderData: keepPreviousData` kept the previous response on screen
+           behind the failed refetch.
+
+           The session list is the authoritative answer to "does this user have any
+           data", it is invalidated by the same delete, and it does not depend on the
+           analytics endpoints agreeing about what empty means. */
+        <Card sx={{ textAlign: 'center', p: 8, background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 4 }}>
+          <AccountBalanceIcon sx={{ fontSize: 64, color: '#6366f1', mb: 2, opacity: 0.8 }} />
+          <Typography variant="h5" sx={{ fontWeight: 600, color: '#f8fafc' }}>
+            No statements yet
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#94a3b8', mt: 1, maxWidth: 500, mx: 'auto', mb: 3 }}>
+            Upload statements from HDFC, ICICI, SBI, Axis, Kotak, or other banks to start tracking.
+          </Typography>
+          <Button
+            variant="contained"
+            onClick={() => setIsUploadModalOpen(true)}
+            startIcon={<CloudUploadIcon />}
+            sx={{
+              background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+              px: 3, py: 1.2, borderRadius: 2, fontWeight: 600, textTransform: 'none'
+            }}
+          >
+            Upload Statement
+          </Button>
+        </Card>
+      ) : loadErrorMessage ? (
         /* A failed load is never the empty state. The three getters this replaces
            returned null/[]/{} on any error, so a 500 rendered "No accounts uploaded
            yet" with an Upload CTA - over data the user had already uploaded. */
@@ -1794,17 +1891,25 @@ export default function BudgetDashboard() {
                               <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                   <Pie
-                                    data={processedCategories}
+                                    data={donutData}
                                     dataKey="amount"
                                     nameKey="category"
                                     cx="50%"
                                     cy="50%"
                                     innerRadius={48}
                                     outerRadius={78}
-                                    paddingAngle={3}
+                                    /* Scaled to the slice count: a fixed 3 degrees is
+                                       fine for 4 slices and eats a quarter of the
+                                       circle at 10. */
+                                    paddingAngle={donutData.length > 6 ? 1 : 3}
+                                    minAngle={2}
                                   >
-                                    {processedCategories.map((_, index) => (
-                                      <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} stroke="rgba(0,0,0,0.5)" />
+                                    {donutData.map((entry: any, index: number) => (
+                                      <Cell
+                                        key={`cell-${entry.category}`}
+                                        fill={entry.isOther ? OTHER_COLOR : CATEGORY_COLORS[index % CATEGORY_COLORS.length]}
+                                        stroke="rgba(0,0,0,0.5)"
+                                      />
                                     ))}
                                   </Pie>
                                   <RechartsTooltip 
@@ -1819,7 +1924,13 @@ export default function BudgetDashboard() {
                             <Box sx={{ width: { xs: '100%', sm: '58%' }, height: '100%', maxHeight: 220, overflowY: 'auto', pr: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
                               {processedCategories.map((cat: any, idx: number) => {
                                 const pct = totalFilteredCategoryAmount > 0 ? (cat.amount / totalFilteredCategoryAmount) * 100 : 0
-                                const color = CATEGORY_COLORS[idx % CATEGORY_COLORS.length]
+                                // Matches the donut: rows inside the top N carry their
+                                // slice colour, the tail carries the "Other" grey it was
+                                // merged into. Previously this wrapped the palette every
+                                // 10 rows, so row 11 was the same colour as row 1 and the
+                                // list stopped being a legend for the chart beside it.
+                                const inDonut = processedCategories.length <= DONUT_SLICES || idx < DONUT_SLICES - 1
+                                const color = inDonut ? CATEGORY_COLORS[idx % CATEGORY_COLORS.length] : OTHER_COLOR
                                 const isCatSelected = categoryFilter.toLowerCase() === cat.category.toLowerCase()
                                 const natureEmoji = cat.nature === 'needs' ? '🛡️' : cat.nature === 'wants' ? '🎯' : cat.nature === 'investments' ? '📈' : '🏷️'
                                 

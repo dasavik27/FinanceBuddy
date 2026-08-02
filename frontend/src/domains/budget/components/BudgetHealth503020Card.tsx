@@ -48,58 +48,85 @@ interface BudgetHealth503020CardProps {
   onCategoryClick?: (categoryName: string) => void
 }
 
+/*
+ * The three helpers below were defined inside the component, so every render rebuilt
+ * three closures and - for getBucketStatusUI - three fresh object literals each
+ * containing a fresh React element. They are pure functions of a number or a string
+ * with no access to props or state, and this component re-renders on every filter
+ * change, so none of that allocation bought anything.
+ *
+ * The status objects are frozen constants rather than built per call: there are
+ * exactly six possible results (three statuses x is-investments), so they can all
+ * exist once.
+ */
+
+const SCORE_COLORS: [number, string][] = [
+  [80, '#10b981'],
+  [60, '#38bdf8'],
+  [45, '#f59e0b'],
+]
+
+function getScoreColor(score: number): string {
+  for (const [floor, color] of SCORE_COLORS) if (score >= floor) return color
+  return '#ef4444'
+}
+
+interface ScoreBadge { label: string; color: string; bg: string; border: string }
+
+/* The threshold is kept beside the badge rather than inside it: the returned object is
+ * spread into styles, and a stray `min` key riding along is the kind of thing that
+ * ends up on a DOM node. */
+const CRITICAL_BADGE: ScoreBadge = {
+  label: '🔴 Overspending / Needs Heavy', color: '#f87171', bg: 'rgba(248, 113, 113, 0.15)', border: 'rgba(248, 113, 113, 0.3)',
+}
+
+const SCORE_BADGES: { min: number; badge: ScoreBadge }[] = [
+  { min: 85, badge: { label: '🌟 Golden Balance',      color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)' } },
+  { min: 70, badge: { label: '🟢 Healthy Budget',      color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: 'rgba(52, 211, 153, 0.3)' } },
+  { min: 50, badge: { label: '🟡 Discretionary Creep', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.3)' } },
+]
+
+/* `?? CRITICAL_BADGE` rather than a -Infinity sentinel band: `NaN >= -Infinity` is
+ * false, so a sentinel makes find() return undefined for NaN where the original
+ * if/else chain fell through to critical - and the caller reads badge.label
+ * unguarded. */
+function getScoreBadge(score: number): ScoreBadge {
+  return SCORE_BADGES.find(b => score >= b.min)?.badge ?? CRITICAL_BADGE
+}
+
+// Built once. The icon elements in particular were previously re-created on every
+// render of every bucket.
+const OPTIMAL_ICON  = <CheckCircleIcon style={{ fontSize: 13, color: '#34d399' }} />
+const WARNING_ICON  = <WarningAmberIcon style={{ fontSize: 13, color: '#fbbf24' }} />
+const CRITICAL_ICON = <ErrorOutlineIcon style={{ fontSize: 13, color: '#f87171' }} />
+
+const BUCKET_STATUS_UI = {
+  optimal:  { icon: OPTIMAL_ICON,  color: '#34d399', bg: 'rgba(16, 185, 129, 0.12)', border: 'rgba(16, 185, 129, 0.3)',
+              label: 'Within Limit',    investmentsLabel: 'Target Achieved' },
+  warning:  { icon: WARNING_ICON,  color: '#fbbf24', bg: 'rgba(245, 158, 11, 0.12)', border: 'rgba(245, 158, 11, 0.3)',
+              label: 'Near Limit',      investmentsLabel: 'Moderate Saving' },
+  critical: { icon: CRITICAL_ICON, color: '#f87171', bg: 'rgba(239, 68, 68, 0.12)',  border: 'rgba(239, 68, 68, 0.3)',
+              label: 'Over Target',     investmentsLabel: 'Under-saving' },
+} as const
+
+function getBucketStatusUI(status: string, isInvestments = false) {
+  const ui = BUCKET_STATUS_UI[status as keyof typeof BUCKET_STATUS_UI] ?? BUCKET_STATUS_UI.critical
+  // investmentsLabel is destructured out, not spread through: the result is read for
+  // its label/colour/bg/border, and an extra key riding along is how internal naming
+  // leaks into a DOM attribute later.
+  const { investmentsLabel, ...rest } = ui
+  return { ...rest, label: isInvestments ? investmentsLabel : ui.label }
+}
+
 function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020CardProps) {
-  const [showDetails, setShowDetails] = useState(false)
   const [showExplanation, setShowExplanation] = useState(false)
 
   if (!data) return null
 
   const { health_score, base_amount, base_type, needs, wants, investments, recommendations } = data
 
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return '#10b981'
-    if (score >= 60) return '#38bdf8'
-    if (score >= 45) return '#f59e0b'
-    return '#ef4444'
-  }
-
-  const getScoreBadge = (score: number) => {
-    if (score >= 85) return { label: '🌟 Golden Balance', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)' }
-    if (score >= 70) return { label: '🟢 Healthy Budget', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: 'rgba(52, 211, 153, 0.3)' }
-    if (score >= 50) return { label: '🟡 Discretionary Creep', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.3)' }
-    return { label: '🔴 Overspending / Needs Heavy', color: '#f87171', bg: 'rgba(248, 113, 113, 0.15)', border: 'rgba(248, 113, 113, 0.3)' }
-  }
-
   const badge = getScoreBadge(health_score)
   const scoreColor = getScoreColor(health_score)
-
-  const getBucketStatusUI = (status: string, isInvestments = false) => {
-    if (status === 'optimal') {
-      return {
-        label: isInvestments ? 'Target Achieved' : 'Within Limit',
-        icon: <CheckCircleIcon style={{ fontSize: 13, color: '#34d399' }} />,
-        color: '#34d399',
-        bg: 'rgba(16, 185, 129, 0.12)',
-        border: 'rgba(16, 185, 129, 0.3)'
-      }
-    }
-    if (status === 'warning') {
-      return {
-        label: isInvestments ? 'Moderate Saving' : 'Near Limit',
-        icon: <WarningAmberIcon style={{ fontSize: 13, color: '#fbbf24' }} />,
-        color: '#fbbf24',
-        bg: 'rgba(245, 158, 11, 0.12)',
-        border: 'rgba(245, 158, 11, 0.3)'
-      }
-    }
-    return {
-      label: isInvestments ? 'Under-saving' : 'Over Target',
-      icon: <ErrorOutlineIcon style={{ fontSize: 13, color: '#f87171' }} />,
-      color: '#f87171',
-      bg: 'rgba(239, 68, 68, 0.12)',
-      border: 'rgba(239, 68, 68, 0.3)'
-    }
-  }
 
   const needsUI = getBucketStatusUI(needs.status)
   const wantsUI = getBucketStatusUI(wants.status)

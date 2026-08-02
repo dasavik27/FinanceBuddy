@@ -52,6 +52,10 @@ const BODY_CELL_SX = {
   borderBottom: '1px solid rgba(148, 163, 184, 0.08)',
 } as const
 
+/** Pairs rendered before the "show all" prompt. Two screens' worth: enough to
+ *  see the pattern, small enough to mount instantly. */
+const PAIRS_PREVIEW = 50
+
 const CONFIDENCE_COLOURS: Record<string, string> = {
   high: '#34d399',
   medium: '#fbbf24',
@@ -85,6 +89,23 @@ function TransfersExcludedCard({ sessionId }: TransfersExcludedCardProps) {
   const { data, isPending, isError, error, refetch } = useBudgetTransfers(sessionId)
 
   const pairs: BudgetTransferPair[] = useMemo(() => data?.pairs ?? [], [data])
+
+  /*
+   * The table renders a capped window, not the whole list.
+   *
+   * GET /transfers deliberately returns every pair - the pairing is a heuristic and a
+   * number the user cannot audit is a number they will not trust - but a multi-account
+   * year produces thousands, and every one of them was mounted the moment the section
+   * expanded: five MUI TableCells plus a Tooltip and two Chips each. Collapse's
+   * unmountOnExit meant the cost only landed on expand, which made it a click that
+   * visibly froze the tab rather than a slow page load.
+   *
+   * Auditing is still possible - "show all" is one click - but the default is a window
+   * that renders instantly.
+   */
+  const [showAllPairs, setShowAllPairs] = useState(false)
+  const visiblePairs = showAllPairs ? pairs : pairs.slice(0, PAIRS_PREVIEW)
+  const hiddenPairCount = pairs.length - visiblePairs.length
 
   if (isPending) {
     return <Skeleton variant="rounded" height={110} sx={{ mb: 3, bgcolor: 'rgba(148,163,184,0.08)' }} />
@@ -166,7 +187,7 @@ function TransfersExcludedCard({ sessionId }: TransfersExcludedCardProps) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {pairs.map(pair => (
+              {visiblePairs.map(pair => (
                 <TableRow key={`${pair.debit_txn_id}-${pair.credit_txn_id}`}>
                   <TableCell sx={BODY_CELL_SX}>{shortAccount(pair.from_account)}</TableCell>
                   <TableCell sx={BODY_CELL_SX}>
@@ -204,6 +225,17 @@ function TransfersExcludedCard({ sessionId }: TransfersExcludedCardProps) {
               ))}
             </TableBody>
           </Table>
+
+          {hiddenPairCount > 0 && (
+            <Button
+              size="small"
+              onClick={() => setShowAllPairs(true)}
+              sx={{ mt: 1, color: '#a78bfa', textTransform: 'none', fontWeight: 600 }}
+            >
+              Show the remaining {hiddenPairCount.toLocaleString('en-IN')} pair
+              {hiddenPairCount === 1 ? '' : 's'}
+            </Button>
+          )}
 
           <Typography sx={{ ...MUTED_SX, mt: 1.5, fontSize: '0.78rem' }}>
             Pairs are matched on an exact amount within a few days across two different
