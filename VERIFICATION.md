@@ -250,6 +250,6 @@ PYEOF
 
 ---
 
-See ONBOARDING.md for setup, ARCHITECTURE.md for design, BUDGET_ANALYSIS.md for Budget domain details.
+See ONBOARDING.md for setup, ARCHITECTURE.md for design, domain architecture, and security.
 
 Last updated: 2026-08-02

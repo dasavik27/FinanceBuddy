@@ -2,7 +2,7 @@
 
 Everything needed to run Finance Buddy locally and deploy it.
 
-Read ARCHITECTURE.md for design, BUDGET_ANALYSIS.md for Budget domain, SECURITY.md for threat model.
+Read ARCHITECTURE.md for system design, domain architecture, and security model.
 
 ---
 

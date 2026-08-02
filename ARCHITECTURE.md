@@ -4,7 +4,7 @@ Complete personal finance analytics platform with four independent domains: Budg
 
 This describes the system as it is. Where a design looks unusual, the reason is stated — most of the unusual choices trace back to one constraint (below) and are wrong to "clean up" without removing that constraint first.
 
-Companion documents: **ONBOARDING.md** (setup instructions), **SECURITY.md** (threat model), **BUDGET_ANALYSIS.md** (Budget deep dive), and **VERIFICATION.md** (setup validation).
+Companion documents: **ONBOARDING.md** (setup instructions) and **VERIFICATION.md** (setup validation).
 
 ---
 
@@ -65,7 +65,7 @@ backend/
 │   │   └── cache.py            # in-process TTL cache
 │   └── routers/                # /auth, /market, /accounts, /history
 └── domains/
-    ├── budget/                 # transaction parsing, categorization, rules
+    ├── budget/                 # transaction parsing, categorization, rules, insights
     ├── mutual_funds/           # XIRR, allocation, peer comparison
     ├── tax_expert/             # capital gains, regime comparison
     └── equity/                 # holdings sync, sector analysis, P&L
@@ -124,7 +124,7 @@ All are Postgres-validated by `test_sql_is_valid_postgres`.
 ```
 frontend/src/
 ├── domains/
-│   ├── budget/                 # BudgetDashboard, upload, sessions
+│   ├── budget/                 # BudgetDashboard, upload, sessions, insights
 │   ├── mutual-funds/           # MF portfolio, holdings, insights
 │   ├── tax-expert/             # Tax computation, ITR comparison
 │   └── equity/                 # Stock holdings, sector allocation
@@ -136,8 +136,242 @@ frontend/src/
 
 ---
 
+## Budget Analyzer — Domain Architecture & Engines
+
+The **Budget Analyzer** is a multi-bank personal finance engine built for Indian bank statements and transaction ledgers. It converts raw PDF, CSV, and Excel statements into actionable cash flow intelligence without requiring open banking credentials or screen scraping.
+
+### Architecture & Data Pipeline
+
+```mermaid
+graph TD
+    A[Bank Statement PDF / CSV / XLSX] --> B[Statement Parser & Bank Detector]
+    B --> C[Merchant Normalizer]
+    C --> D[Categorizer & Rules Engine]
+    D --> E[(Encrypted Storage & Session Ledger)]
+    E --> F[Analytics Engine - analytics.py]
+    F --> G[50/30/20 Health Suite]
+    F --> H[Category Spend & Drilldown]
+    F --> I[Monthly Velocity & Cash Flows]
+    F --> J[Transactions Ledger Tab]
+    G --> K[React 18 MUI UI Dashboard]
+    H --> K
+    I --> K
+    J --> K
+```
+
+#### Pipeline Lifecycle:
+1. **Upload**: User uploads a statement file via `UploadStatementModal.tsx`.
+2. **Extraction**: `parser.py` parses tables, normalizes dates (`YYYY-MM-DD`), splits debit/credit amounts, and extracts descriptions.
+3. **Enrichment**: `categorizer.py` matches keywords and custom rules to assign categories and payment modes (`UPI`, `NetBanking`, `Card`, `ATM`, `Cheque`).
+4. **Persistence**: `sessions.py` persists encrypted session records in PostgreSQL and updates the user's aggregated master ledger.
+5. **Analytics**: `analytics.py` executes vectorized pandas aggregations to deliver sub-millisecond KPI computations.
+
+---
+
+### Bank Statement Ingestion Pipeline
+
+#### Parser Engine (`backend/domains/budget/parser.py`)
+- **Password Protection**: Supports encrypted PDFs (e.g. DOB, PAN, Account number combinations).
+- **Format Normalization**: Standardizes multi-column schemas into a unified transaction schema:
+  - `date`: Transaction posting date (`YYYY-MM-DD`).
+  - `narration`: Cleaned bank transaction description.
+  - `merchant`: Extracted merchant/payee entity name.
+  - `amount`: Absolute numeric transaction value.
+  - `txn_type`: `debit` or `credit`.
+  - `category`: Primary budget category.
+  - `payment_mode`: Payment channel (`UPI`, `NetBanking`, `Card`, `ATM`, `Cheque`, etc.).
+  - `balance`: Post-transaction balance (if provided).
+
+#### Supported Banks (`backend/domains/budget/bank_config.json`)
+- **HDFC Bank**: Savings & Current Account statements.
+- **ICICI Bank**: Detailed transaction ledgers & Credit Card statements.
+- **State Bank of India (SBI)**: Standard savings passbooks & e-statements.
+- **Axis Bank**: Multi-column monthly statements.
+- **Kotak Mahindra Bank**: NetBanking exports & PDF statements.
+- **IndusInd & PNB**: Tabular statements.
+- **Generic CSV / XLSX**: User-defined CSV/XLSX ledgers.
+
+---
+
+### Computational Engines & Financial Intelligence
+
+#### 1. 50 / 30 / 20 Budget Health Evaluation Suite
+Implements the macro-financial allocation framework:
+- **Needs ($\le 50\%$)**: Fixed living obligations (Rent, Utilities, Groceries, EMI, Insurance, Healthcare, Education).
+- **Wants ($\le 30\%$)**: Discretionary lifestyle spending (Dining, Shopping, Entertainment, Travel, Electronics, Hobbies).
+- **Investments / Savings ($\ge 20\%$)**: Wealth generation & debt payoff (Mutual Funds, Equity, SIP, PPF, FD, RD, Gold, Crypto).
+
+##### Health Scoring Algorithm:
+$$\text{Health Score} = \max\left(0, \min\left(100, 100 - (\text{Needs Penalty} \times 1.2) - (\text{Wants Penalty} \times 1.0) - (\text{Invest Gap} \times 1.5)\right)\right)$$
+- **Score $\ge 80$**: 🟢 *Excellent* (Prudent financial allocation)
+- **Score $65 - 79$**: 🟡 *Good* (Balanced with slight lifestyle drift)
+- **Score $50 - 64$**: 🟠 *Moderate* (Wants or fixed costs exceeding baseline)
+- **Score $< 50$**: 🔴 *Needs Attention* (Under-investing or critical overspending)
+
+#### 2. Category Spend Analytics & Payee Drilldown
+- **Dynamic Category Chips**: Populates direct category badges based on transaction data with live spend totals (`Shopping • ₹45.2k`, etc.).
+- **Debits (Outflows) vs Credits (Inflows)**: Dual-mode toggle.
+- **Deep Drilldown**: Payee / merchant volume, average ticket size, and ranked merchant breakdowns.
+
+#### 3. Cash Flow Velocity, Burn Rate & Liquidity Projections
+- **Net Savings Rate**: $(\text{Inflows} - \text{Outflows}) / \text{Inflows} \times 100$.
+- **Monthly Velocity**: Debit vs credit bar charts over time.
+- **Cash Flow Balance Trend**: Cumulative liquid balance progression.
+- **Burn Rate**: Average daily outflow and projected runway under existing cash balances.
+- **Spending Shifts**: Detects month-over-month category expansion.
+
+#### 4. Rule-Based Categorization Engine (`categorizer.py`, `rules_safety.py`)
+- **Pattern Matching**: Evaluates user-defined rules in priority order.
+- **Regex & Keyword Support**: Matches merchant names and raw narration text.
+- **Batch Re-Categorization**: Updates category tags across past and future transactions.
+
+---
+
+### Multi-Level Dynamic Filtering System
+
+Contextual In-Card Filters eliminate global filter clutter:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 🌍 Global Filter Bar: Session (All vs Account) • Bank • Date Range          │
+└─────────────────────────────────────────────────────────────────────────────┘
+      │
+      ├─── 💳 Cash Flow Trends Card
+      │     └─ Local: [3M | 6M | 1Y | All] Range Toggle
+      │
+      ├─── 🏷️ Category Spend Analytics Card
+      │     └─ Local: [Debits / Credits] • Min Amount Filter • Direct Category Chips
+      │
+      ├─── 🏪 Top Merchants Card
+      │     └─ Local: [Outflows / Inflows] • Search Merchant • Sort By [₹ / Count]
+      │
+      └─── 📋 Transactions Tab
+            └─ Local: Multi-column Filter Bar • Category Tagger • Full-text Search
+```
+
+---
+
+### Budget Domain API Reference
+
+The live OpenAPI schema at `GET /docs` is the source of truth for response contracts. Ownership is enforced inside `domains/budget/sessions.py` using verified user identities.
+
+#### `/budget/accounts` — Bank & card accounts
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/accounts` | Every account seen across the user's statements, with balances and card utilisation. |
+| `PUT` | `/budget/accounts/{account_key}` | Write fields a statement cannot supply. |
+
+#### `/budget/analytics` — Overview, categories, transactions
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/budget/analytics/transactions/update` | Update transaction metadata / tags. |
+| `GET` | `/budget/analytics/{session_id}/categories` | Category aggregation totals. |
+| `GET` | `/budget/analytics/{session_id}/overview` | Dashboard headline aggregation, memoized on frame and filter set. |
+| `GET` | `/budget/analytics/{session_id}/transactions` | Filtered transactions, paginated. |
+
+#### `/budget/insights` — Transfers, recurring, forecast, anomalies, envelopes
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/budget/insights/envelopes` | Set or clear one category's monthly cap. |
+| `PUT` | `/budget/insights/merchants/alias` | Remember a merchant rename. |
+| `POST` | `/budget/insights/transfers/flag` | Override the pairing heuristic for one transaction. |
+| `GET` | `/budget/insights/{session_id}/anomalies` | Duplicate charges, category spikes and unusual first-time merchants. |
+| `GET` | `/budget/insights/{session_id}/coverage` | Statement coverage months per account and missing gaps. |
+| `GET` | `/budget/insights/{session_id}/envelopes` | Spend against each monthly category cap with pace verdict. |
+| `GET` | `/budget/insights/{session_id}/forecast` | Month-end projection and daily safe-to-spend figure. |
+| `GET` | `/budget/insights/{session_id}/reconciliation` | Agreement between printed statement balance and transactions. |
+| `GET` | `/budget/insights/{session_id}/recurring` | Subscriptions and standing charges with price changes. |
+| `GET` | `/budget/insights/{session_id}/sankey` | Nodes and links for income → nature → category flow diagram. |
+| `GET` | `/budget/insights/{session_id}/transfers` | Internal account movements netted out of income/expense. |
+
+#### `/budget/portfolio` — Upload & sessions
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/portfolio/sessions` | List the caller's budget uploads. |
+| `DELETE` | `/budget/portfolio/sessions/{session_id}` | Delete one budget upload. |
+| `POST` | `/budget/portfolio/upload` | Parse bank/card statement (CSV / XLS / XLSX) into budget session. |
+
+#### `/budget/rules` — Categorisation rules
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/budget/rules` | List user rules. |
+| `POST` | `/budget/rules` | Create rule. |
+| `POST` | `/budget/rules/apply-all` | Apply rules across transactions. |
+| `GET` | `/budget/rules/match-types` | Match types accepted by the server. |
+| `POST` | `/budget/rules/test` | Test regex/keyword pattern against sample text. |
+| `DELETE` | `/budget/rules/{rule_id}` | Delete rule. |
+
+*Note*: `session_id` accepts a specific upload session ID or the literal `overall` (aggregating all uploaded accounts).
+
+---
+
+### Budget Frontend Component Architecture
+
+All Budget components reside in `frontend/src/domains/budget/`:
+
+| Component | Path | Responsibility |
+|---|---|---|
+| **BudgetDashboard** | `components/BudgetDashboard.tsx` | Master view: KPIs, charts, tab routing, and shared filter state. |
+| **BudgetHealth503020Card** | `components/BudgetHealth503020Card.tsx` | Health score, 3 bucket cards, macro allocation strip, recommendations. |
+| **TransactionsTab** | `components/TransactionsTab.tsx` | Transaction grid (client-paginated at 50 rows), inline category tagger, CSV export. |
+| **AccountsTab** | `components/AccountsTab.tsx` | Per-account balances, card utilisation, editable account metadata. |
+| **InsightsTab** | `components/InsightsTab.tsx` | Recurring charges, anomalies, envelope budgets, coverage gaps. |
+| **MoneyFlowCard** | `components/MoneyFlowCard.tsx` | Income → nature → category Sankey diagram. |
+| **TransfersExcludedCard** | `components/TransfersExcludedCard.tsx` | Net internal account transfer reconciliation. |
+| **RulesTab** | `components/RulesTab.tsx` | Auto-categorization rule editor (create, edit, delete, priority reorder). |
+| **UploadStatementModal** | `components/UploadStatementModal.tsx` | Multi-bank file uploader with password unlock support. |
+| **BudgetSessionsModal** | `components/BudgetSessionsModal.tsx` | Account management modal for switching and deleting uploaded statements. |
+| **useBudget** | `hooks/useBudget.ts` | Query hooks, cache keys, and invalidation for every budget endpoint. |
+| **types** | `types.ts` | Response contracts for the budget API surface. |
+
+---
+
+### Adding Support for New Bank Formats
+
+To add support for a new bank or custom statement schema:
+1. Open `backend/domains/budget/bank_config.json`.
+2. Add a new configuration entry matching the bank's header signature:
+```json
+{
+  "bank_name": "NewBank",
+  "signatures": ["Txn Date", "Value Date", "Description", "Ref No", "Debit", "Credit", "Balance"],
+  "date_col": "Txn Date",
+  "date_formats": ["%d/%m/%Y", "%d-%m-%Y"],
+  "narration_col": "Description",
+  "debit_col": "Debit",
+  "credit_col": "Credit",
+  "balance_col": "Balance"
+}
+```
+3. `parser.py` automatically detects and matches uploaded statements against the signature list.
+
+---
+
+## Security, Data Encryption & Privacy
+
+### 1. Authentication & Identity
+- **Bearer Token Verification**: `Authorization: Bearer <OIDC id token>` verified against the provider's cached JWKS in `shared/oidc.py` with pinned asymmetric algorithms and mandatory `exp`, `iss`, and `aud` claim checks.
+- **PAN is Not Identity**: User identity is strictly keyed on UUID `users.id`. PAN is stored encrypted (`profiles.pan_encrypted`) solely for CAS/AIS matching; two users sharing a PAN cannot access each other's data.
+- **Fail-Closed Authorization**: Handled at data retrieval layers (`sessions.py`, `identity.owns_record`). Unowned or unauthorized requests respond with `404 Not Found` (never 403) to prevent resource enumeration.
+
+### 2. Encryption at Rest (AES-256-GCM)
+- **Application-Level Envelope Encryption**: Sensitive columns (`profiles.pan_encrypted`, `sessions.metrics`, `session_payloads`, `tax_payloads.data`, `budget_payloads`) are encrypted via `shared/crypto.py` before hitting Postgres.
+- **Randomized Nonces & Row-Binding**: Fresh nonce per write prevents ciphertext equality leakage. Ciphertexts are authenticated against `session_id`/`user_id` as GCM associated data, preventing row-swapping attacks.
+- **No Plaintext Fallback**: The backend raises a fatal error if `FINANCEBUDDY_ENCRYPTION_KEYS` is unconfigured.
+
+### 3. Data Retention & DPDP Compliance
+- **Zero Third-Party Scraping**: Statements are parsed locally in-process without sharing credentials with aggregators. Uploaded raw PDFs/spreadsheets are cleaned up immediately from temporary storage upon parsing.
+- **User-Controlled Retention**: Data persists until explicitly purged by the user (`DELETE /accounts/me`, `DELETE /history/{id}`, or `DELETE /budget/portfolio/sessions/{session_id}`).
+- **Access & Portability**: Supported via full account data export (`GET /accounts/me/export`).
+
+### 4. Response Caching & Logging Hygiene
+- **Strict Anti-Caching Default**: All dynamic route responses default to `Cache-Control: no-store` via `DefaultCacheControlMiddleware`. `public` cache is restricted to user-independent market data.
+- **PII Masking**: PAN and sensitive identifiers are masked to the last 4 characters (`identity.mask_pan`) in server logs.
+
+---
+
 ## Stack
 
-FastAPI · PostgreSQL 11+ · pandas · React 18 · Vite · MUI · Zustand
+FastAPI · PostgreSQL 11+ (psycopg 3, no ORM) · pandas · React 18 · Vite · MUI · Zustand
 
 Single uvicorn worker, ~512 MB RAM. See ONBOARDING.md for full setup and VERIFICATION.md to validate deployment.

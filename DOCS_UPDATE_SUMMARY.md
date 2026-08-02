@@ -64,10 +64,8 @@
 ## How to Use Documentation
 
 1. **First setup:** Start with ONBOARDING.md
-2. **Understand system:** Read ARCHITECTURE.md
-3. **Budget details:** See BUDGET_ANALYSIS.md
-4. **Verify setup:** Use VERIFICATION.md or run verify_setup.py
-5. **Security questions:** Read SECURITY.md
+2. **Understand system:** Read ARCHITECTURE.md (system design, domain architectures, and security model)
+3. **Verify setup:** Use VERIFICATION.md or run verify_setup.py
 
 ---
 
@@ -102,9 +100,7 @@ here: several things the previous pass recorded as documented were documented
 
 | Document | Was | Now |
 |---|---|---|
-| BUDGET_ANALYSIS.md | API Reference documented `/api/budget/upload`, `/overview`, `/category_breakdown`, `/categorize` with invented response bodies | None of those paths ever existed. Replaced with all 26 real `/budget/*` routes, generated from the mounted app |
-| BUDGET_ANALYSIS.md | Component table listed 7 components, called TransactionsTab "virtualized" | All 11 components; TransactionsTab is client-paginated at 50 rows, not virtualized |
-| BUDGET_ANALYSIS.md | Cited `domains/budget/rules.py` | No such file — `categorizer.py` + `rules_safety.py` |
+| ARCHITECTURE.md | System overview only | Comprehensive technical architecture + full Budget Analyzer domain architecture, ingestion pipeline, computational engines, and component hierarchy (merged from BUDGET_ANALYSIS.md) |
 | ARCHITECTURE.md | Migrations 0002 "tax_payloads, indices", 0003 "equity support" | 0002 is row-level security, 0003 is column encryption. 0006 and 0007 were missing entirely |
 | README.md | "362 tests" | 687 backend, 354 frontend |
 | README.md, ONBOARDING.md | `npm run dev` at the repo root | There is no root package.json. `cd frontend && npm run dev:all` |
@@ -114,6 +110,7 @@ here: several things the previous pass recorded as documented were documented
 
 ## Additions
 
+- **ARCHITECTURE.md — Budget Analyzer domain architecture & engines.** Merged all technical details, bank ingestion parser specs, 50/30/20 scoring algorithm, dynamic filtering system, `/budget/*` API reference, and frontend components into [ARCHITECTURE.md](ARCHITECTURE.md).
 - **ARCHITECTURE.md — Frontend routes.** Domains moved from `/dashboard/<domain>` to
   top-level `/<domain>`; `/dashboard` is now the hub. Legacy URLs redirect.
 - **ARCHITECTURE.md — Keeping the domains independent.** The `janitor` and
@@ -127,5 +124,5 @@ here: several things the previous pass recorded as documented were documented
 - `HOW_TO_VERIFY_DOCUMENTATION.md` asserts "ALL DOCUMENTATION COMPLETE ✓" and lists
   file sizes from August 2. A document that certifies its own completeness will keep
   going stale; worth deleting rather than maintaining.
-- Response-body examples are not reproduced in BUDGET_ANALYSIS.md. `GET /docs` is the
+- Response-body examples are not reproduced in ARCHITECTURE.md. `GET /docs` is the
   source of truth — hand-copied payloads are what drifted last time.

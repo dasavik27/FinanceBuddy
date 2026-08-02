@@ -18,9 +18,7 @@ Upload a statement, get analytics. Sign-in is Google; your data persists to your
 | Document | What it covers |
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, storage model, caching strategy, four independent domains, and design constraints. |
-| **[BUDGET_ANALYSIS.md](BUDGET_ANALYSIS.md)** | Comprehensive Budget Analyzer architecture, computational engines, bank format support, and user guide. |
-| **[SECURITY.md](SECURITY.md)** | Threat model, encryption, data handling, and what is still open. |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, domain architecture (including Budget Analyzer), security & privacy model, and design constraints. |
 | **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, and deployment verification scripts. |
 
 ---

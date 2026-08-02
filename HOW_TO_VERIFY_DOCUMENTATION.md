@@ -8,12 +8,12 @@
 
 ```bash
 # 1. Check all docs exist
-ls -1 README.md ARCHITECTURE.md ONBOARDING.md VERIFICATION.md DOCS_UPDATE_SUMMARY.md BUDGET_ANALYSIS.md SECURITY.md
+ls -1 README.md ARCHITECTURE.md ONBOARDING.md VERIFICATION.md DOCS_UPDATE_SUMMARY.md
 
 # 2. Check script exists
 ls -1 backend/scripts/verify_setup.py
 
-# Expected: 8 files all exist ✓
+# Expected: 6 files all exist ✓
 ```
 
 ---
@@ -81,11 +81,11 @@ python scripts/verify_setup.py
 - [x] Code quality tests (in: README, VERIFICATION)
 - [x] Verification script (in: README, VERIFICATION, backend/scripts/)
 
-### Architecture ✓
+### Architecture & Security ✓
 - [x] System design (in: ARCHITECTURE)
 - [x] Domain isolation (in: ARCHITECTURE)
 - [x] API endpoints (in: ARCHITECTURE)
-- [x] Security model (in: SECURITY, ARCHITECTURE)
+- [x] Security & encryption model (in: ARCHITECTURE)
 
 ---
 
@@ -95,10 +95,8 @@ python scripts/verify_setup.py
 |---|---|---|
 | README.md | Overview, quick start | First thing |
 | ONBOARDING.md | Setup instructions | Setting up |
-| ARCHITECTURE.md | System design, domains | Understanding design |
-| BUDGET_ANALYSIS.md | Budget domain details | Need Budget specifics |
+| ARCHITECTURE.md | System design, domain architecture, security & privacy | Understanding design & security |
 | VERIFICATION.md | Setup validation | After setup complete |
-| SECURITY.md | Security model | Understanding encryption |
 | DOCS_UPDATE_SUMMARY.md | What changed | Understanding updates |
 
 ---
@@ -106,10 +104,10 @@ python scripts/verify_setup.py
 ## Document Cross-References
 
 **All docs properly link to each other:**
-- README.md → points to ONBOARDING, ARCHITECTURE, BUDGET_ANALYSIS, SECURITY, VERIFICATION
-- ONBOARDING.md → points to ARCHITECTURE, BUDGET_ANALYSIS, SECURITY, VERIFICATION
-- ARCHITECTURE.md → points to ONBOARDING, SECURITY, BUDGET_ANALYSIS, VERIFICATION
-- VERIFICATION.md → points to ONBOARDING, ARCHITECTURE, BUDGET_ANALYSIS, SECURITY
+- README.md → points to ONBOARDING, ARCHITECTURE, VERIFICATION
+- ONBOARDING.md → points to ARCHITECTURE, VERIFICATION
+- ARCHITECTURE.md → points to ONBOARDING, VERIFICATION
+- VERIFICATION.md → points to ONBOARDING, ARCHITECTURE
 
 ---
 
@@ -200,9 +198,9 @@ Answer these questions. If all are "YES", documentation is complete:
 - [ ] Are all migrations documented? → ONBOARDING.md
 - [ ] Can I deploy this? → ONBOARDING.md Part 3 + VERIFICATION.md
 - [ ] Can I find troubleshooting help? → ONBOARDING.md + VERIFICATION.md
-- [ ] Is the Budget domain explained? → BUDGET_ANALYSIS.md + all docs
+- [ ] Is the Budget domain explained? → ARCHITECTURE.md
 - [ ] Can I understand the architecture? → ARCHITECTURE.md
-- [ ] Can I understand the security model? → SECURITY.md
+- [ ] Can I understand the security model? → ARCHITECTURE.md
 
 If all answers are "YES" → **Documentation is complete ✓**
 
@@ -211,16 +209,12 @@ If all answers are "YES" → **Documentation is complete ✓**
 ## Updated Files Summary
 
 ```
-✓ README.md - 3.7 KB (Updated)
-✓ ARCHITECTURE.md - 3.3 KB (Updated)  
-✓ ONBOARDING.md - 3.1 KB (Updated)
-✓ VERIFICATION.md - 5.9 KB (New)
-✓ DOCS_UPDATE_SUMMARY.md - 2.1 KB (New)
-✓ backend/scripts/verify_setup.py - 2.6 KB (New)
-
-+ Existing docs:
-  BUDGET_ANALYSIS.md (13 KB)
-  SECURITY.md (7 KB)
+✓ README.md (Updated)
+✓ ARCHITECTURE.md (Updated - Includes merged Budget domain & Security model)  
+✓ ONBOARDING.md (Updated)
+✓ VERIFICATION.md (Updated)
+✓ DOCS_UPDATE_SUMMARY.md (Updated)
+✓ backend/scripts/verify_setup.py
 ```
 
 **Total: ~42 KB of documentation**
