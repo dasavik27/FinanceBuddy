@@ -41,8 +41,10 @@ def delete_session(session_id: str):
     # trying to work out which one owns it; forget() on an absent id is a no-op.
     from domains.mutual_funds import sessions as mf_sessions
     from domains.equity import sessions as eq_sessions
+    from domains.tax_expert import tax_sessions
     mf_sessions.forget(session_id)
     eq_sessions.forget(session_id)
+    tax_sessions.delete_tax_session(session_id)
 
     success = storage.delete_session(session_id)
     if not success:

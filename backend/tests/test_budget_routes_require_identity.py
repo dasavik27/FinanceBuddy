@@ -36,8 +36,8 @@ _PATH_VALUES = {
 def _budget_routes():
     """(method, concrete path) for every budget route, path params filled in."""
     found = []
-    for route in app.routes:
-        path = getattr(route, "path", "")
+    schema = app.openapi()
+    for path, path_item in schema.get("paths", {}).items():
         if not path.startswith("/budget"):
             continue
         if path in _PUBLIC:
@@ -50,8 +50,10 @@ def _budget_routes():
                 f"{path} has a path parameter this test does not know how to fill. "
                 "Add it to _PATH_VALUES rather than skipping the route."
             )
-        for method in getattr(route, "methods", set()) - {"HEAD", "OPTIONS"}:
-            found.append((method, concrete))
+        for method in path_item.keys():
+            m = method.upper()
+            if m not in {"HEAD", "OPTIONS"}:
+                found.append((m, concrete))
     return sorted(found)
 
 

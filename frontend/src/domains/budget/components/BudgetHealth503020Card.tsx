@@ -14,6 +14,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
+import SportsEsportsIcon from '@mui/icons-material/SportsEsports'
 
 interface CategoryItem {
   name: string
@@ -106,52 +107,53 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
 
   return (
     <Card sx={{ 
-      p: 3, 
+      p: { xs: 2.5, md: 3 }, 
       mb: 4, 
-      background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%)', 
-      border: '1px solid rgba(255,255,255,0.08)', 
-      borderRadius: 3.5,
-      boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+      background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.6) 100%)', 
+      border: '1px solid rgba(255, 255, 255, 0.08)', 
+      borderRadius: '20px',
+      boxShadow: '0 12px 36px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+      backdropFilter: 'blur(16px)'
     }}>
       {/* Top Header Row */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box sx={{ p: 1, borderRadius: 2.5, background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8', display: 'flex', alignItems: 'center' }}>
+          <Box sx={{ p: 1.2, borderRadius: '14px', background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)', color: '#818cf8', display: 'flex', alignItems: 'center' }}>
             <EmojiEventsIcon fontSize="medium" />
           </Box>
           <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700, color: '#f8fafc', letterSpacing: '-0.01em' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="h6" sx={{ fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.01em' }}>
                 50 / 30 / 20 Budget Health Evaluation
               </Typography>
               <Chip 
                 label={badge.label} 
                 size="small" 
-                sx={{ backgroundColor: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, fontWeight: 700, fontSize: '0.72rem' }} 
+                sx={{ backgroundColor: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, fontWeight: 800, fontSize: '0.74rem' }} 
               />
             </Box>
-            <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+            <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 500, mt: 0.2, display: 'block' }}>
               Benchmarked against {base_type === 'income' ? `Total Net Inflow (₹${base_amount.toLocaleString('en-IN')})` : `Total Outflow Spends (₹${base_amount.toLocaleString('en-IN')})`}
             </Typography>
           </Box>
         </Box>
 
         {/* Health Score Pill & Info Action */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, ml: { xs: 0, sm: 'auto' } }}>
           <Box sx={{ 
             px: 2, py: 0.8, 
-            background: 'rgba(255,255,255,0.03)', 
+            background: 'rgba(255, 255, 255, 0.04)', 
             border: `1px solid ${scoreColor}40`, 
-            borderRadius: 2.5, 
+            borderRadius: '14px', 
             textAlign: 'right',
             display: 'flex',
             alignItems: 'center',
             gap: 1.2
           }}>
             <Box>
-              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontSize: '0.68rem', fontWeight: 600 }}>HEALTH SCORE</Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
-                {health_score}<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 500 }}>/100</span>
+              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontSize: '0.66rem', fontWeight: 700, letterSpacing: 0.5 }}>HEALTH SCORE</Typography>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: scoreColor, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                {health_score}<span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>/100</span>
               </Typography>
             </Box>
           </Box>
@@ -160,7 +162,14 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
             size="small" 
             onClick={() => setShowExplanation(!showExplanation)}
             title="What is the 50/30/20 Rule?"
-            sx={{ color: '#94a3b8', backgroundColor: 'rgba(255,255,255,0.04)', '&:hover': { color: '#fff', backgroundColor: 'rgba(255,255,255,0.1)' } }}
+            sx={{ 
+              color: '#94a3b8', 
+              backgroundColor: 'rgba(255, 255, 255, 0.04)', 
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '12px',
+              p: 0.9,
+              '&:hover': { color: '#fff', backgroundColor: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.15)' } 
+            }}
           >
             <InfoOutlinedIcon fontSize="small" />
           </IconButton>
@@ -185,43 +194,51 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
         {/* 1. 🛡️ NEEDS (50% TARGET) */}
         <Grid item xs={12} md={4}>
           <Box sx={{ 
-            p: 2.2, 
+            p: 2.5, 
             height: '100%',
-            background: 'rgba(56, 189, 248, 0.03)', 
+            background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.05) 0%, rgba(15, 23, 42, 0.6) 100%)', 
             border: '1px solid',
-            borderColor: needs.status === 'optimal' ? 'rgba(56, 189, 248, 0.25)' : needsUI.border, 
-            borderRadius: 3,
+            borderColor: needs.status === 'optimal' ? 'rgba(56, 189, 248, 0.3)' : needsUI.border, 
+            borderRadius: '16px',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            transition: 'all 0.25s ease',
+            '&:hover': {
+              transform: 'translateY(-3px)',
+              borderColor: 'rgba(56, 189, 248, 0.5)',
+              boxShadow: '0 12px 28px rgba(56, 189, 248, 0.12)'
+            }
           }}>
             <Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
-                  <ShieldIcon sx={{ color: '#38bdf8', fontSize: 18 }} />
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#f8fafc' }}>
-                    Needs (Fixed Essentials)
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ p: 0.6, borderRadius: '8px', bgcolor: 'rgba(56, 189, 248, 0.15)', display: 'flex' }}>
+                    <ShieldIcon sx={{ color: '#38bdf8', fontSize: 18 }} />
+                  </Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#f8fafc', fontSize: '0.88rem' }}>
+                    Needs (Essentials)
                   </Typography>
                 </Box>
                 <Chip 
                   label={needsUI.label} 
                   icon={needsUI.icon} 
                   size="small" 
-                  sx={{ backgroundColor: needsUI.bg, color: needsUI.color, border: `1px solid ${needsUI.border}`, fontWeight: 700, fontSize: '0.68rem', height: 22 }} 
+                  sx={{ backgroundColor: needsUI.bg, color: needsUI.color, border: `1px solid ${needsUI.border}`, fontWeight: 800, fontSize: '0.7rem', height: 24 }} 
                 />
               </Box>
 
               {/* Amount & Target Numbers */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: 1.5, mb: 0.5 }}>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#38bdf8' }}>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: '#38bdf8', fontVariantNumeric: 'tabular-nums' }}>
                   {needs.percentage.toFixed(1)}%
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: '#f1f5f9' }}>
+                <Typography variant="body2" sx={{ fontWeight: 800, color: '#f1f5f9', fontVariantNumeric: 'tabular-nums' }}>
                   ₹{needs.amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </Typography>
               </Box>
 
-              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1 }}>
+              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1.2, fontWeight: 500 }}>
                 Target: Max 50.0% (₹{needs.target_amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })})
               </Typography>
 
@@ -241,8 +258,8 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
 
               {/* Variance Tag */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.72rem' }}>Variance vs Target:</Typography>
-                <Typography variant="caption" sx={{ fontWeight: 700, color: needs.percentage <= 50 ? '#34d399' : '#f87171', fontSize: '0.72rem' }}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.74rem', fontWeight: 500 }}>Variance vs Target:</Typography>
+                <Typography variant="caption" sx={{ fontWeight: 800, color: needs.percentage <= 50 ? '#34d399' : '#f87171', fontSize: '0.74rem' }}>
                   {needs.percentage <= 50 
                     ? `₹${(needs.target_amount - needs.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Cushion` 
                     : `+₹${(needs.amount - needs.target_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Over Budget`}
@@ -252,8 +269,8 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
 
             {/* Top Sub-categories */}
             {needs.categories && needs.categories.length > 0 && (
-              <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 600, display: 'block', mb: 0.8, fontSize: '0.68rem' }}>
+              <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, display: 'block', mb: 0.8, fontSize: '0.7rem' }}>
                   Key Categories:
                 </Typography>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.6 }}>
@@ -264,7 +281,15 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
                       size="small"
                       clickable={Boolean(onCategoryClick)}
                       onClick={() => onCategoryClick && onCategoryClick(c.name)}
-                      sx={{ backgroundColor: 'rgba(56, 189, 248, 0.1)', color: '#7dd3fc', fontSize: '0.68rem', height: 20 }} 
+                      sx={{ 
+                        backgroundColor: 'rgba(56, 189, 248, 0.12)', 
+                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                        color: '#7dd3fc', 
+                        fontSize: '0.7rem', 
+                        fontWeight: 600,
+                        height: 22,
+                        '&:hover': { backgroundColor: 'rgba(56, 189, 248, 0.22)' }
+                      }} 
                     />
                   ))}
                 </Box>
@@ -276,42 +301,51 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
         {/* 2. 🎯 WANTS (30% TARGET) */}
         <Grid item xs={12} md={4}>
           <Box sx={{ 
-            p: 2.2, 
+            p: 2.5, 
             height: '100%',
-            background: 'rgba(244, 114, 182, 0.03)', 
+            background: 'linear-gradient(135deg, rgba(244, 114, 182, 0.05) 0%, rgba(15, 23, 42, 0.6) 100%)', 
             border: '1px solid',
-            borderColor: wants.status === 'optimal' ? 'rgba(244, 114, 182, 0.25)' : wantsUI.border, 
-            borderRadius: 3,
+            borderColor: wants.status === 'optimal' ? 'rgba(244, 114, 182, 0.3)' : wantsUI.border, 
+            borderRadius: '16px',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            transition: 'all 0.25s ease',
+            '&:hover': {
+              transform: 'translateY(-3px)',
+              borderColor: 'rgba(244, 114, 182, 0.5)',
+              boxShadow: '0 12px 28px rgba(244, 114, 182, 0.12)'
+            }
           }}>
             <Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#f8fafc' }}>
-                    🎯 Wants (Lifestyle / Fun)
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ p: 0.6, borderRadius: '8px', bgcolor: 'rgba(244, 114, 182, 0.15)', display: 'flex' }}>
+                    <SportsEsportsIcon sx={{ color: '#f472b6', fontSize: 18 }} />
+                  </Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#f8fafc', fontSize: '0.88rem' }}>
+                    Wants (Lifestyle)
                   </Typography>
                 </Box>
                 <Chip 
                   label={wantsUI.label} 
                   icon={wantsUI.icon} 
                   size="small" 
-                  sx={{ backgroundColor: wantsUI.bg, color: wantsUI.color, border: `1px solid ${wantsUI.border}`, fontWeight: 700, fontSize: '0.68rem', height: 22 }} 
+                  sx={{ backgroundColor: wantsUI.bg, color: wantsUI.color, border: `1px solid ${wantsUI.border}`, fontWeight: 800, fontSize: '0.7rem', height: 24 }} 
                 />
               </Box>
 
               {/* Amount & Target Numbers */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: 1.5, mb: 0.5 }}>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#f472b6' }}>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: '#f472b6', fontVariantNumeric: 'tabular-nums' }}>
                   {wants.percentage.toFixed(1)}%
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: '#f1f5f9' }}>
+                <Typography variant="body2" sx={{ fontWeight: 800, color: '#f1f5f9', fontVariantNumeric: 'tabular-nums' }}>
                   ₹{wants.amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </Typography>
               </Box>
 
-              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1 }}>
+              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1.2, fontWeight: 500 }}>
                 Target: Max 30.0% (₹{wants.target_amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })})
               </Typography>
 
@@ -331,8 +365,8 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
 
               {/* Variance Tag */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.72rem' }}>Variance vs Target:</Typography>
-                <Typography variant="caption" sx={{ fontWeight: 700, color: wants.percentage <= 30 ? '#34d399' : '#f87171', fontSize: '0.72rem' }}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.74rem', fontWeight: 500 }}>Variance vs Target:</Typography>
+                <Typography variant="caption" sx={{ fontWeight: 800, color: wants.percentage <= 30 ? '#34d399' : '#f87171', fontSize: '0.74rem' }}>
                   {wants.percentage <= 30 
                     ? `₹${(wants.target_amount - wants.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Within Limit` 
                     : `+₹${(wants.amount - wants.target_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Overspending`}
@@ -342,8 +376,8 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
 
             {/* Top Sub-categories */}
             {wants.categories && wants.categories.length > 0 && (
-              <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 600, display: 'block', mb: 0.8, fontSize: '0.68rem' }}>
+              <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, display: 'block', mb: 0.8, fontSize: '0.7rem' }}>
                   Key Categories:
                 </Typography>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.6 }}>
@@ -354,7 +388,15 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
                       size="small"
                       clickable={Boolean(onCategoryClick)}
                       onClick={() => onCategoryClick && onCategoryClick(c.name)}
-                      sx={{ backgroundColor: 'rgba(244, 114, 182, 0.1)', color: '#fbcfe8', fontSize: '0.68rem', height: 20 }} 
+                      sx={{ 
+                        backgroundColor: 'rgba(244, 114, 182, 0.12)', 
+                        border: '1px solid rgba(244, 114, 182, 0.25)',
+                        color: '#fbcfe8', 
+                        fontSize: '0.7rem', 
+                        fontWeight: 600,
+                        height: 22,
+                        '&:hover': { backgroundColor: 'rgba(244, 114, 182, 0.22)' }
+                      }} 
                     />
                   ))}
                 </Box>
@@ -366,21 +408,29 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
         {/* 3. 📈 INVESTMENTS & SAVINGS (20% TARGET) */}
         <Grid item xs={12} md={4}>
           <Box sx={{ 
-            p: 2.2, 
+            p: 2.5, 
             height: '100%',
-            background: 'rgba(52, 211, 153, 0.03)', 
+            background: 'linear-gradient(135deg, rgba(52, 211, 153, 0.05) 0%, rgba(15, 23, 42, 0.6) 100%)', 
             border: '1px solid',
-            borderColor: investments.status === 'optimal' ? 'rgba(52, 211, 153, 0.25)' : invUI.border, 
-            borderRadius: 3,
+            borderColor: investments.status === 'optimal' ? 'rgba(52, 211, 153, 0.3)' : invUI.border, 
+            borderRadius: '16px',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            transition: 'all 0.25s ease',
+            '&:hover': {
+              transform: 'translateY(-3px)',
+              borderColor: 'rgba(52, 211, 153, 0.5)',
+              boxShadow: '0 12px 28px rgba(52, 211, 153, 0.12)'
+            }
           }}>
             <Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
-                  <TrendingUpIcon sx={{ color: '#34d399', fontSize: 18 }} />
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#f8fafc' }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ p: 0.6, borderRadius: '8px', bgcolor: 'rgba(52, 211, 153, 0.15)', display: 'flex' }}>
+                    <TrendingUpIcon sx={{ color: '#34d399', fontSize: 18 }} />
+                  </Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#f8fafc', fontSize: '0.88rem' }}>
                     Investments & Savings
                   </Typography>
                 </Box>
@@ -388,21 +438,21 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
                   label={invUI.label} 
                   icon={invUI.icon} 
                   size="small" 
-                  sx={{ backgroundColor: invUI.bg, color: invUI.color, border: `1px solid ${invUI.border}`, fontWeight: 700, fontSize: '0.68rem', height: 22 }} 
+                  sx={{ backgroundColor: invUI.bg, color: invUI.color, border: `1px solid ${invUI.border}`, fontWeight: 800, fontSize: '0.7rem', height: 24 }} 
                 />
               </Box>
 
               {/* Amount & Target Numbers */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: 1.5, mb: 0.5 }}>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#34d399' }}>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
                   {investments.percentage.toFixed(1)}%
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: '#f1f5f9' }}>
+                <Typography variant="body2" sx={{ fontWeight: 800, color: '#f1f5f9', fontVariantNumeric: 'tabular-nums' }}>
                   ₹{investments.amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                 </Typography>
               </Box>
 
-              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1 }}>
+              <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mb: 1.2, fontWeight: 500 }}>
                 Target: Min 20.0% (₹{investments.target_amount.toLocaleString('en-IN', { maximumFractionDigits: 0 })})
               </Typography>
 
@@ -415,37 +465,51 @@ function BudgetHealth503020Card({ data, onCategoryClick }: BudgetHealth503020Car
                     height: 8, 
                     borderRadius: 4, 
                     backgroundColor: 'rgba(255,255,255,0.06)',
-                    '& .MuiLinearProgress-bar': { backgroundColor: '#34d399', borderRadius: 4 }
+                    '& .MuiLinearProgress-bar': { backgroundColor: investments.status === 'optimal' ? '#34d399' : invUI.color, borderRadius: 4 }
                   }} 
                 />
               </Box>
 
               {/* Variance Tag */}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.72rem' }}>Variance vs Target:</Typography>
-                <Typography variant="caption" sx={{ fontWeight: 700, color: investments.percentage >= 20 ? '#34d399' : '#f87171', fontSize: '0.72rem' }}>
+                <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.74rem', fontWeight: 500 }}>Variance vs Target:</Typography>
+                <Typography variant="caption" sx={{ fontWeight: 800, color: investments.percentage >= 20 ? '#34d399' : '#f87171', fontSize: '0.74rem' }}>
                   {investments.percentage >= 20 
-                    ? `+₹${(investments.amount - investments.target_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Surplus Saved` 
-                    : `₹${(investments.target_amount - investments.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Shortfall`}
+                    ? `+₹${(investments.amount - investments.target_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Wealth Acceleration` 
+                    : `₹${(investments.target_amount - investments.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })} Below 20% Goal`}
                 </Typography>
               </Box>
             </Box>
 
             {/* Direct SIPs vs Surplus Flow breakdown */}
-            <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 600, display: 'block', mb: 0.8, fontSize: '0.68rem' }}>
+            <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, display: 'block', mb: 0.8, fontSize: '0.7rem' }}>
                 Composition:
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
+              <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
                 <Chip 
                   label={`SIPs/Demat: ₹${(investments.direct_investments || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
                   size="small"
-                  sx={{ backgroundColor: 'rgba(52, 211, 153, 0.1)', color: '#6ee7b7', fontSize: '0.68rem', height: 20 }} 
+                  sx={{ 
+                    backgroundColor: 'rgba(52, 211, 153, 0.12)', 
+                    border: '1px solid rgba(52, 211, 153, 0.25)', 
+                    color: '#6ee7b7', 
+                    fontSize: '0.7rem', 
+                    fontWeight: 600,
+                    height: 22 
+                  }} 
                 />
                 <Chip 
                   label={`Cash Surplus: ₹${(investments.surplus_savings || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} 
                   size="small"
-                  sx={{ backgroundColor: 'rgba(52, 211, 153, 0.1)', color: '#6ee7b7', fontSize: '0.68rem', height: 20 }} 
+                  sx={{ 
+                    backgroundColor: 'rgba(52, 211, 153, 0.12)', 
+                    border: '1px solid rgba(52, 211, 153, 0.25)', 
+                    color: '#6ee7b7', 
+                    fontSize: '0.7rem', 
+                    fontWeight: 600,
+                    height: 22 
+                  }} 
                 />
               </Box>
             </Box>

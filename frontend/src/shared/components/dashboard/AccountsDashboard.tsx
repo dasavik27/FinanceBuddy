@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, alpha } from '@mui/material'
+import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, Alert, Snackbar, alpha } from '@mui/material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import DeleteIcon from '@mui/icons-material/Delete'
 import SecurityIcon from '@mui/icons-material/Security'
@@ -7,6 +7,8 @@ import ShieldIcon from '@mui/icons-material/Shield'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import CachedIcon from '@mui/icons-material/Cached'
+import FileDownloadIcon from '@mui/icons-material/FileDownload'
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 
 import { apiClient } from '../../api/client'
 import { useLogout } from '../../store/appStore'
@@ -15,18 +17,18 @@ export default function AccountsDashboard() {
   const queryClient = useQueryClient()
   const logout = useLogout()
   const [deletePan, setDeletePan] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
+  const [snack, setSnack] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' }>({
+    open: false,
+    msg: '',
+    severity: 'success',
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['accounts-summary'],
     queryFn: () => apiClient.getAccountsSummary(),
-    // No polling. This data only changes when the user themselves purges or clears,
-    // and both mutations below already invalidate this key. A 10s interval was 6
-    // requests/minute at a single-worker backend for data that cannot change on its own.
   })
 
-  // Takes no target. The endpoint is DELETE /accounts/me and always acts on the
-  // signed-in account - naming one was what let a caller purge somebody else's.
-  // A purge removes the account itself, so there is nothing left to sign in to.
   const purgeMutation = useMutation({
     mutationFn: () => apiClient.purgeAccount(),
     onSuccess: () => {
@@ -39,10 +41,39 @@ export default function AccountsDashboard() {
   const clearCacheMutation = useMutation({
     mutationFn: () => apiClient.clearSystemCaches(),
     onSuccess: () => {
-      logout() // Instantly clears LocalStorage (PAN + tokens) and Zustand state
-      queryClient.clear() // Destroys all React Query cache memory completely
+      logout()
+      queryClient.clear()
     }
   })
+
+  const handleExportData = async () => {
+    try {
+      setIsExporting(true)
+      const exportData = await apiClient.exportAccount()
+      const jsonStr = JSON.stringify(exportData, null, 2)
+      const blob = new Blob([jsonStr], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const panTag = exportData?.pan || 'account'
+      const dateTag = new Date().toISOString().slice(0, 10)
+      a.download = `finance_buddy_export_${panTag}_${dateTag}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setSnack({ open: true, msg: 'Account data exported successfully as JSON archive.', severity: 'success' })
+    } catch (err: any) {
+      console.error('Export failed', err)
+      setSnack({
+        open: true,
+        msg: err?.response?.data?.detail || 'Failed to export account data. Please check your session.',
+        severity: 'error',
+      })
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   const handleConfirmDelete = () => {
     if (deletePan) {
@@ -128,10 +159,46 @@ export default function AccountsDashboard() {
         </Grid>
       )}
 
-
+      {/* Export Account Data Section */}
+      <Box sx={{ mt: 6 }}>
+        <Typography variant="h6" sx={{ color: '#F8FAFC', fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <FileDownloadIcon sx={{ color: '#38BDF8' }} /> Data Portability & Export
+        </Typography>
+        <Paper className="glass" sx={{ 
+          p: 3, borderRadius: '24px', border: '1px solid rgba(255,255,255,0.05)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2
+        }}>
+          <Box>
+            <Typography variant="body1" sx={{ color: '#F8FAFC', fontWeight: 700 }}>Export Complete Account Archive</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary', maxWidth: 600 }}>
+              Download a decrypted JSON snapshot of every session and statement you own across Mutual Funds and Tax Expert. Useful for offline analysis or backing up your portfolio history before purging.
+            </Typography>
+          </Box>
+          <Button 
+            variant="contained" 
+            startIcon={isExporting ? <CircularProgress size={16} sx={{ color: '#fff' }} /> : <FileDownloadIcon />}
+            onClick={handleExportData}
+            disabled={isExporting}
+            sx={{ 
+              background: 'linear-gradient(135deg, #6366F1 0%, #38BDF8 100%)',
+              color: '#fff',
+              borderRadius: '12px',
+              fontWeight: 800,
+              px: 3,
+              py: 1.2,
+              boxShadow: '0 8px 24px rgba(99, 102, 241, 0.3)',
+              '&:hover': {
+                background: 'linear-gradient(135deg, #4F46E5 0%, #0284C7 100%)',
+              }
+            }}
+          >
+            {isExporting ? 'Exporting JSON...' : 'Export Account Data'}
+          </Button>
+        </Paper>
+      </Box>
 
       {/* Global Cache Management */}
-      <Box sx={{ mt: 6 }}>
+      <Box sx={{ mt: 4 }}>
         <Typography variant="h6" sx={{ color: '#F8FAFC', fontWeight: 800, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
           <CachedIcon sx={{ color: '#6366F1' }} /> Global System Caches
         </Typography>
@@ -158,6 +225,17 @@ export default function AccountsDashboard() {
           </Button>
         </Paper>
       </Box>
+
+      <Snackbar 
+        open={snack.open} 
+        autoHideDuration={4000} 
+        onClose={() => setSnack((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={snack.severity} sx={{ borderRadius: '12px', fontWeight: 600 }}>
+          {snack.msg}
+        </Alert>
+      </Snackbar>
 
       <Dialog 
         open={!!deletePan} 

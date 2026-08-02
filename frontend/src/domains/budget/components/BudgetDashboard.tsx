@@ -485,12 +485,14 @@ export default function BudgetDashboard() {
       )}
 
       {/* ULTRA-SLEEK COMPACT GLOBAL FILTER BAR */}
-      <Box sx={{ mb: 3 }}>
+      <Box sx={{ mb: 3.5 }}>
         <Box sx={{ 
-          p: 1.2, px: 2, 
-          background: 'rgba(255,255,255,0.03)', 
-          border: '1px solid rgba(255,255,255,0.08)', 
-          borderRadius: 2.5, 
+          p: 1.5, px: 2, 
+          background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.75) 0%, rgba(30, 41, 59, 0.45) 100%)', 
+          border: '1px solid rgba(255, 255, 255, 0.08)', 
+          borderRadius: '18px', 
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+          backdropFilter: 'blur(16px)',
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'space-between', 
@@ -500,26 +502,30 @@ export default function BudgetDashboard() {
           {/* Left: Compact Live Search */}
           <TextField
             size="small"
-            placeholder="Search transactions, payees..."
+            placeholder="Search transactions, payees, tags..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             sx={{
-              flex: { xs: '1 1 100%', sm: '1 1 240px', md: '1 1 280px' },
+              flex: { xs: '1 1 100%', sm: '1 1 240px', md: '1 1 300px' },
               '& .MuiOutlinedInput-root': {
-                backgroundColor: 'rgba(255,255,255,0.04)',
-                borderRadius: 2,
-                color: '#fff',
-                fontSize: '0.85rem',
-                height: 36,
-                '& fieldset': { borderColor: 'rgba(255,255,255,0.1)' },
+                backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '12px',
+                color: '#f8fafc',
+                fontSize: '0.86rem',
+                height: 38,
+                transition: 'all 0.2s ease',
+                '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.09)' },
                 '&:hover fieldset': { borderColor: '#818cf8' },
-                '&.Mui-focused fieldset': { borderColor: '#6366f1' },
+                '&.Mui-focused': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                  '& fieldset': { borderColor: '#6366f1', borderWidth: '1.5px' },
+                }
               }
             }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchIcon sx={{ color: '#94a3b8', fontSize: 17 }} />
+                  <SearchIcon sx={{ color: '#818cf8', fontSize: 18 }} />
                 </InputAdornment>
               ),
               endAdornment: searchQuery ? (
@@ -543,21 +549,26 @@ export default function BudgetDashboard() {
                   onChange={(e) => setBankFilter(e.target.value)}
                   displayEmpty
                   sx={{
-                    height: 36,
-                    color: bankFilter === 'all' ? '#cbd5e1' : '#60a5fa',
-                    backgroundColor: bankFilter === 'all' ? 'rgba(255,255,255,0.04)' : 'rgba(96, 165, 250, 0.15)',
-                    borderRadius: 2,
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
+                    height: 38,
+                    color: bankFilter === 'all' ? '#cbd5e1' : '#38bdf8',
+                    backgroundColor: bankFilter === 'all' ? 'rgba(255, 255, 255, 0.04)' : 'rgba(56, 189, 248, 0.12)',
+                    borderRadius: '12px',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
                     border: '1px solid',
-                    borderColor: bankFilter === 'all' ? 'rgba(255,255,255,0.1)' : 'rgba(96, 165, 250, 0.4)',
+                    borderColor: bankFilter === 'all' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(56, 189, 248, 0.35)',
+                    transition: 'all 0.2s ease',
                     '& .MuiSelect-select': { py: 0.8, pr: 3 },
-                    '& fieldset': { border: 'none' }
+                    '& fieldset': { border: 'none' },
+                    '&:hover': {
+                      borderColor: '#38bdf8',
+                      backgroundColor: 'rgba(56, 189, 248, 0.18)'
+                    }
                   }}
                 >
-                  <MenuItem value="all" sx={{ fontSize: '0.8rem' }}>🏛️ All Banks</MenuItem>
+                  <MenuItem value="all" sx={{ fontSize: '0.82rem', fontWeight: 600 }}>🏛️ All Banks</MenuItem>
                   {uniqueBanks.map((b: string) => (
-                    <MenuItem key={b} value={b} sx={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                    <MenuItem key={b} value={b} sx={{ fontSize: '0.82rem', fontWeight: 600 }}>
                       {b.toUpperCase()}
                     </MenuItem>
                   ))}
@@ -566,7 +577,13 @@ export default function BudgetDashboard() {
             )}
 
             {/* Time Horizon Segmented Pill */}
-            <Box sx={{ display: 'flex', background: 'rgba(255,255,255,0.04)', borderRadius: 2, p: 0.4, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <Box sx={{ 
+              display: 'flex', 
+              background: 'rgba(255, 255, 255, 0.04)', 
+              borderRadius: '12px', 
+              p: 0.4, 
+              border: '1px solid rgba(255, 255, 255, 0.08)' 
+            }}>
               {DATE_RANGE_OPTIONS.map((opt) => {
                 const isSelected = dateRangeFilter === opt.value
                 return (
@@ -575,16 +592,21 @@ export default function BudgetDashboard() {
                     size="small"
                     onClick={() => setDateRangeFilter(opt.value)}
                     sx={{
-                      minWidth: 38,
-                      px: 1.2,
-                      py: 0.4,
-                      fontSize: '0.75rem',
-                      fontWeight: isSelected ? 700 : 500,
-                      borderRadius: 1.5,
+                      minWidth: 40,
+                      px: 1.3,
+                      py: 0.5,
+                      fontSize: '0.76rem',
+                      fontWeight: isSelected ? 800 : 600,
+                      borderRadius: '9px',
                       textTransform: 'none',
                       color: isSelected ? '#fff' : '#94a3b8',
-                      backgroundColor: isSelected ? '#6366f1' : 'transparent',
-                      '&:hover': { backgroundColor: isSelected ? '#4f46e5' : 'rgba(255,255,255,0.06)' }
+                      background: isSelected ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)' : 'transparent',
+                      boxShadow: isSelected ? '0 2px 8px rgba(99, 102, 241, 0.4)' : 'none',
+                      transition: 'all 0.2s ease',
+                      '&:hover': { 
+                        background: isSelected ? 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)' : 'rgba(255, 255, 255, 0.06)',
+                        color: '#fff'
+                      }
                     }}
                   >
                     {opt.label}
@@ -594,23 +616,24 @@ export default function BudgetDashboard() {
             </Box>
 
             {/* More Filters Popover Trigger Button */}
-            <Badge badgeContent={advancedFiltersCount} color="primary" sx={{ '& .MuiBadge-badge': { backgroundColor: '#6366f1', color: '#fff' } }}>
+            <Badge badgeContent={advancedFiltersCount} color="primary" sx={{ '& .MuiBadge-badge': { backgroundColor: '#6366f1', color: '#fff', fontWeight: 700 } }}>
               <Button
                 variant="outlined"
                 size="small"
                 startIcon={<TuneIcon style={{ fontSize: 16 }} />}
                 onClick={(e) => setFilterAnchorEl(e.currentTarget)}
                 sx={{
-                  height: 36,
+                  height: 38,
                   color: advancedFiltersCount > 0 ? '#a5b4fc' : '#cbd5e1',
-                  borderColor: advancedFiltersCount > 0 ? '#6366f1' : 'rgba(255,255,255,0.15)',
-                  backgroundColor: advancedFiltersCount > 0 ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255,255,255,0.02)',
-                  borderRadius: 2,
+                  borderColor: advancedFiltersCount > 0 ? '#6366f1' : 'rgba(255, 255, 255, 0.12)',
+                  backgroundColor: advancedFiltersCount > 0 ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: '12px',
                   textTransform: 'none',
-                  fontSize: '0.8rem',
-                  fontWeight: 600,
-                  px: 1.5,
-                  '&:hover': { borderColor: '#818cf8', backgroundColor: 'rgba(99, 102, 241, 0.15)' }
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  px: 1.8,
+                  transition: 'all 0.2s ease',
+                  '&:hover': { borderColor: '#818cf8', backgroundColor: 'rgba(99, 102, 241, 0.2)' }
                 }}
               >
                 Filters
@@ -623,7 +646,14 @@ export default function BudgetDashboard() {
                 size="small" 
                 onClick={resetAllFilters}
                 title="Reset all filters"
-                sx={{ color: '#f43f5e', backgroundColor: 'rgba(244, 63, 94, 0.1)', p: 0.8, '&:hover': { backgroundColor: 'rgba(244, 63, 94, 0.2)' } }}
+                sx={{ 
+                  color: '#f87171', 
+                  backgroundColor: 'rgba(239, 68, 68, 0.12)', 
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  borderRadius: '12px',
+                  p: 0.9, 
+                  '&:hover': { backgroundColor: 'rgba(239, 68, 68, 0.25)', borderColor: '#ef4444' } 
+                }}
               >
                 <RestartAltIcon fontSize="small" />
               </IconButton>
@@ -970,62 +1000,130 @@ export default function BudgetDashboard() {
               <TransfersExcludedCard sessionId={sessionId} />
 
               {/* Primary KPIs: Inflow, Outflow, Net Balance, Savings Rate */}
-              <Grid container spacing={3} sx={{ mb: 3 }}>
+              <Grid container spacing={2.5} sx={{ mb: 3.5 }}>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 3, background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: 3 }}>
+                  <Card sx={{ 
+                    p: 2.8, 
+                    borderRadius: '20px',
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.75) 0%, rgba(16, 185, 129, 0.05) 100%)', 
+                    border: '1px solid rgba(16, 185, 129, 0.25)', 
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(16px)',
+                    transition: 'all 0.25s ease',
+                    '&:hover': {
+                      transform: 'translateY(-3px)',
+                      borderColor: 'rgba(16, 185, 129, 0.45)',
+                      boxShadow: '0 16px 36px rgba(16, 185, 129, 0.15)'
+                    }
+                  }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 600 }}>Total Inflow (Credits)</Typography>
-                      <ArrowUpwardIcon sx={{ color: '#10b981' }} />
+                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Total Inflow
+                      </Typography>
+                      <Box sx={{ p: 0.8, borderRadius: '10px', bgcolor: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.25)', display: 'flex', alignItems: 'center' }}>
+                        <ArrowUpwardIcon sx={{ color: '#34d399', fontSize: 18 }} />
+                      </Box>
                     </Box>
-                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 700, color: '#34d399' }}>
+                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 800, color: '#34d399', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
                       +₹{overview.total_income.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
-                      Deposits, Salary & Credits
+                    <Typography variant="caption" sx={{ color: '#94a3b8', mt: 0.5, display: 'block', fontWeight: 500 }}>
+                      Deposits, Salary & Income
                     </Typography>
                   </Card>
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 3, background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.02) 100%)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 3 }}>
+                  <Card sx={{ 
+                    p: 2.8, 
+                    borderRadius: '20px',
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.75) 0%, rgba(239, 68, 68, 0.05) 100%)', 
+                    border: '1px solid rgba(239, 68, 68, 0.25)', 
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(16px)',
+                    transition: 'all 0.25s ease',
+                    '&:hover': {
+                      transform: 'translateY(-3px)',
+                      borderColor: 'rgba(239, 68, 68, 0.45)',
+                      boxShadow: '0 16px 36px rgba(239, 68, 68, 0.15)'
+                    }
+                  }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 600 }}>Total Outflow (Debits)</Typography>
-                      <ArrowDownwardIcon sx={{ color: '#ef4444' }} />
+                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Total Outflow
+                      </Typography>
+                      <Box sx={{ p: 0.8, borderRadius: '10px', bgcolor: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.25)', display: 'flex', alignItems: 'center' }}>
+                        <ArrowDownwardIcon sx={{ color: '#f87171', fontSize: 18 }} />
+                      </Box>
                     </Box>
-                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 700, color: '#f87171' }}>
+                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 800, color: '#f87171', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
                       -₹{overview.total_expense.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="caption" sx={{ color: '#94a3b8', mt: 0.5, display: 'block', fontWeight: 500 }}>
                       Expenses, Card Spends & Bills
                     </Typography>
                   </Card>
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 3, background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0.02) 100%)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: 3 }}>
+                  <Card sx={{ 
+                    p: 2.8, 
+                    borderRadius: '20px',
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.75) 0%, rgba(56, 189, 248, 0.05) 100%)', 
+                    border: '1px solid rgba(56, 189, 248, 0.25)', 
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(16px)',
+                    transition: 'all 0.25s ease',
+                    '&:hover': {
+                      transform: 'translateY(-3px)',
+                      borderColor: 'rgba(56, 189, 248, 0.45)',
+                      boxShadow: '0 16px 36px rgba(56, 189, 248, 0.15)'
+                    }
+                  }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 600 }}>Net Cash Flow</Typography>
-                      <SavingsIcon sx={{ color: '#38bdf8' }} />
+                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Net Cash Flow
+                      </Typography>
+                      <Box sx={{ p: 0.8, borderRadius: '10px', bgcolor: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.25)', display: 'flex', alignItems: 'center' }}>
+                        <SavingsIcon sx={{ color: '#38bdf8', fontSize: 18 }} />
+                      </Box>
                     </Box>
-                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 700, color: overview.net_savings >= 0 ? '#38bdf8' : '#fb7185' }}>
-                      ₹{overview.net_savings.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 800, color: overview.net_savings >= 0 ? '#38bdf8' : '#fb7185', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+                      {overview.net_savings >= 0 ? '+' : ''}₹{overview.net_savings.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
-                      {overview.net_savings >= 0 ? 'Surplus cash flow' : 'Deficit spend'}
+                    <Typography variant="caption" sx={{ color: overview.net_savings >= 0 ? '#38bdf8' : '#fb7185', mt: 0.5, display: 'block', fontWeight: 600 }}>
+                      {overview.net_savings >= 0 ? '✨ Surplus cash flow' : '⚠️ Deficit spend'}
                     </Typography>
                   </Card>
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 3, background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(139, 92, 246, 0.02) 100%)', border: '1px solid rgba(139, 92, 246, 0.2)', borderRadius: 3 }}>
+                  <Card sx={{ 
+                    p: 2.8, 
+                    borderRadius: '20px',
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.75) 0%, rgba(167, 139, 250, 0.05) 100%)', 
+                    border: '1px solid rgba(167, 139, 250, 0.25)', 
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(16px)',
+                    transition: 'all 0.25s ease',
+                    '&:hover': {
+                      transform: 'translateY(-3px)',
+                      borderColor: 'rgba(167, 139, 250, 0.45)',
+                      boxShadow: '0 16px 36px rgba(167, 139, 250, 0.15)'
+                    }
+                  }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 600 }}>Savings Rate</Typography>
-                      <TrendingUpIcon sx={{ color: '#a78bfa' }} />
+                      <Typography variant="body2" sx={{ color: '#94a3b8', fontWeight: 700, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        Savings Rate
+                      </Typography>
+                      <Box sx={{ p: 0.8, borderRadius: '10px', bgcolor: 'rgba(167, 139, 250, 0.12)', border: '1px solid rgba(167, 139, 250, 0.25)', display: 'flex', alignItems: 'center' }}>
+                        <TrendingUpIcon sx={{ color: '#a78bfa', fontSize: 18 }} />
+                      </Box>
                     </Box>
-                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 700, color: '#a78bfa' }}>
+                    <Typography variant="h4" sx={{ mt: 1.5, fontWeight: 800, color: '#a78bfa', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
                       {overview.savings_rate.toFixed(1)}%
                     </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8' }}>
+                    <Typography variant="caption" sx={{ color: '#94a3b8', mt: 0.5, display: 'block', fontWeight: 500 }}>
                       Ratio of Inflows saved
                     </Typography>
                   </Card>
@@ -1035,13 +1133,23 @@ export default function BudgetDashboard() {
               {/* Financial Health & Velocity Row */}
               <Grid container spacing={2} sx={{ mb: 4 }}>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Box sx={{ p: 1, borderRadius: 2, background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }}>
+                  <Card sx={{ 
+                    p: 2, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255, 255, 255, 0.06)', 
+                    borderRadius: '16px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1.5,
+                    transition: 'all 0.2s ease',
+                    '&:hover': { transform: 'translateY(-2px)', borderColor: 'rgba(255, 255, 255, 0.12)' }
+                  }}>
+                    <Box sx={{ p: 1, borderRadius: '12px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.25)', color: '#f87171', display: 'flex' }}>
                       <LocalFireDepartmentIcon fontSize="small" />
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>Avg Monthly Burn</Typography>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontWeight: 600, fontSize: '0.72rem' }}>Avg Monthly Burn</Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>
                         ₹{(health.avg_monthly_burn || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}/mo
                       </Typography>
                     </Box>
@@ -1049,13 +1157,23 @@ export default function BudgetDashboard() {
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Box sx={{ p: 1, borderRadius: 2, background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8' }}>
+                  <Card sx={{ 
+                    p: 2, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255, 255, 255, 0.06)', 
+                    borderRadius: '16px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1.5,
+                    transition: 'all 0.2s ease',
+                    '&:hover': { transform: 'translateY(-2px)', borderColor: 'rgba(255, 255, 255, 0.12)' }
+                  }}>
+                    <Box sx={{ p: 1, borderRadius: '12px', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.25)', color: '#38bdf8', display: 'flex' }}>
                       <TodayIcon fontSize="small" />
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>Avg Daily Spend</Typography>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontWeight: 600, fontSize: '0.72rem' }}>Avg Daily Spend</Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>
                         ₹{(health.avg_daily_spend || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}/day
                       </Typography>
                     </Box>
@@ -1063,13 +1181,23 @@ export default function BudgetDashboard() {
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Box sx={{ p: 1, borderRadius: 2, background: 'rgba(239, 68, 68, 0.1)', color: '#f87171' }}>
+                  <Card sx={{ 
+                    p: 2, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255, 255, 255, 0.06)', 
+                    borderRadius: '16px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1.5,
+                    transition: 'all 0.2s ease',
+                    '&:hover': { transform: 'translateY(-2px)', borderColor: 'rgba(255, 255, 255, 0.12)' }
+                  }}>
+                    <Box sx={{ p: 1, borderRadius: '12px', background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.25)', color: '#f87171', display: 'flex' }}>
                       <TrendingDownIcon fontSize="small" />
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>Largest Outflow (Debit)</Typography>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#f87171', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={health.largest_debit?.description}>
+                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontWeight: 600, fontSize: '0.72rem' }}>Largest Outflow (Debit)</Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#f87171', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }} title={health.largest_debit?.description}>
                         ₹{(health.largest_debit?.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                       </Typography>
                     </Box>
@@ -1077,13 +1205,23 @@ export default function BudgetDashboard() {
                 </Grid>
 
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ p: 2, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Box sx={{ p: 1, borderRadius: 2, background: 'rgba(16, 185, 129, 0.1)', color: '#34d399' }}>
+                  <Card sx={{ 
+                    p: 2, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255, 255, 255, 0.06)', 
+                    borderRadius: '16px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1.5,
+                    transition: 'all 0.2s ease',
+                    '&:hover': { transform: 'translateY(-2px)', borderColor: 'rgba(255, 255, 255, 0.12)' }
+                  }}>
+                    <Box sx={{ p: 1, borderRadius: '12px', background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399', display: 'flex' }}>
                       <TrendingUpIcon fontSize="small" />
                     </Box>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>Largest Inflow (Credit)</Typography>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#34d399', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={health.largest_credit?.description}>
+                      <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', fontWeight: 600, fontSize: '0.72rem' }}>Largest Inflow (Credit)</Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#34d399', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }} title={health.largest_credit?.description}>
                         ₹{(health.largest_credit?.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                       </Typography>
                     </Box>

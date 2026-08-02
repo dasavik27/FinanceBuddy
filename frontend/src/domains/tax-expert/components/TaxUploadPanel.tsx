@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Box, Typography, Button, Alert, CircularProgress,
   Paper, Chip, Stack, Popover, Divider, IconButton, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
 } from '@mui/material'
 import UploadFileIcon     from '@mui/icons-material/UploadFile'
 import CheckCircleIcon    from '@mui/icons-material/CheckCircle'
@@ -27,8 +28,17 @@ import SwapHorizIcon      from '@mui/icons-material/SwapHoriz'
 import CloudUploadIcon    from '@mui/icons-material/CloudUpload'
 import CloseIcon          from '@mui/icons-material/Close'
 import DescriptionIcon    from '@mui/icons-material/Description'
+import DeleteOutlineIcon  from '@mui/icons-material/DeleteOutline'
 import { apiClient }      from '../../../shared/api/client'
 import { useAppStore, useIsAuthenticated } from '../../../shared/store/appStore'
+
+/** Safely convert any error detail (string or structured object) to a display string. */
+function extractErrorMessage(detail: any): string {
+  if (!detail) return 'An unexpected error occurred.'
+  if (typeof detail === 'string') return detail
+  if (detail.message) return detail.message
+  return JSON.stringify(detail)
+}
 
 // ────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -83,11 +93,12 @@ function withAY(sessions: any[]): TaxHistoryItem[] {
 interface HistoryListProps {
   history: TaxHistoryItem[]
   onSelect: (sid: string) => void
+  onDelete?: (item: TaxHistoryItem) => void
   activeSessionId?: string | null
   compact?: boolean
 }
 
-function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryListProps) {
+function HistoryList({ history, onSelect, onDelete, activeSessionId, compact }: HistoryListProps) {
   if (history.length === 0) return (
     <Box sx={{ textAlign: 'center', py: compact ? 2 : 4 }}>
       <Typography sx={{ color: '#475569', fontSize: '0.85rem' }}>No previous AIS sessions found</Typography>
@@ -106,7 +117,6 @@ function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryLis
             transition={{ delay: i * 0.06 }}
           >
             <Box
-              onClick={() => onSelect(h.session_id)}
               sx={{
                 display: 'flex', alignItems: 'center',
                 p: compact ? 1.5 : 2,
@@ -115,17 +125,19 @@ function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryLis
                   : 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
                 border: `1px solid ${isActive ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.07)'}`,
                 borderRadius: '16px',
-                cursor: isActive ? 'default' : 'pointer',
                 transition: 'all 0.25s ease',
                 '&:hover': isActive ? {} : {
                   background: 'linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(79,70,229,0.05) 100%)',
                   borderColor: 'rgba(99,102,241,0.35)',
-                  transform: 'translateY(-1px)',
                   '& .chevron': { color: '#818CF8', transform: 'translateX(3px)' },
                 },
               }}
             >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
+              {/* Clickable content area */}
+              <Box
+                onClick={() => !isActive && onSelect(h.session_id)}
+                sx={{ flex: 1, minWidth: 0, cursor: isActive ? 'default' : 'pointer' }}
+              >
                 {/* Primary identifiers: FY & AY */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75, flexWrap: 'wrap' }}>
                   {h.fy && (
@@ -167,9 +179,23 @@ function HistoryList({ history, onSelect, activeSessionId, compact }: HistoryLis
                 </Box>
               </Box>
 
-              {!isActive && (
-                <ChevronRightIcon className="chevron" sx={{ color: '#475569', fontSize: 18, transition: 'all 0.25s ease', flexShrink: 0 }} />
-              )}
+              {/* Action icons */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, flexShrink: 0 }}>
+                {!isActive && (
+                  <ChevronRightIcon className="chevron" onClick={() => onSelect(h.session_id)} sx={{ color: '#475569', fontSize: 18, cursor: 'pointer', transition: 'all 0.25s ease' }} />
+                )}
+                {onDelete && (
+                  <Tooltip title="Delete this session" placement="top">
+                    <IconButton
+                      size="small"
+                      onClick={(e) => { e.stopPropagation(); onDelete(h) }}
+                      sx={{ color: '#475569', '&:hover': { color: '#F87171', background: 'rgba(248,113,113,0.1)' }, transition: 'all 0.2s ease' }}
+                    >
+                      <DeleteOutlineIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Box>
             </Box>
           </motion.div>
         )
@@ -208,11 +234,12 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
       setSession(data.session_id, 'tax_expert', data)
       onUploaded()
     } catch (e: any) {
-      const type = e?.response?.data?.detail?.type
+      const detail = e?.response?.data?.detail
+      const type = detail?.type
       if (type === 'AIS_UNKNOWN_CODE') {
-        setError(`⚠️ New AIS code detected: ${e.response.data.detail.code}. Contact support.`)
+        setError(`⚠️ New AIS code detected: ${detail.code}. Contact support.`)
       } else {
-        setError(e?.response?.data?.detail ?? 'Failed to parse AIS. Please verify the file.')
+        setError(extractErrorMessage(detail))
       }
     } finally {
       setLoading(false)
@@ -283,7 +310,11 @@ interface SwitchTaxPopoverProps {
 export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [history, setHistory]   = useState<TaxHistoryItem[]>([])
+  const [deleteConfirm, setDeleteConfirm] = useState<TaxHistoryItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const setSessionById = useAppStore((s) => s.setSessionById)
+  const clearSession = useAppStore((s) => s.clearSession)
+  const activeSessionId = useAppStore((s) => s.taxSessionId)
   const isAuthenticated = useIsAuthenticated()
   const open = Boolean(anchorEl)
 
@@ -301,6 +332,20 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
   const handleSelect = (sid: string) => {
     setSessionById(sid, 'tax_expert')
     setAnchorEl(null)
+  }
+
+  const handleDelete = async (item: TaxHistoryItem) => {
+    setDeleting(true)
+    try {
+      await apiClient.deleteTaxSession(item.session_id)
+      if (item.session_id === activeSessionId) clearSession('tax_expert')
+      setHistory((prev) => prev.filter((h) => h.session_id !== item.session_id))
+    } catch {
+      // keep dialog open on error
+    } finally {
+      setDeleting(false)
+      setDeleteConfirm(null)
+    }
   }
 
   return (
@@ -347,7 +392,7 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
         </Box>
 
         <Box sx={{ px: 2.5, pb: 1.5 }}>
-          <HistoryList history={history} onSelect={handleSelect} activeSessionId={sessionId} compact />
+          <HistoryList history={history} onSelect={handleSelect} onDelete={setDeleteConfirm} activeSessionId={sessionId} compact />
         </Box>
 
         <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)', mx: 2.5 }} />
@@ -366,6 +411,27 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
           </Typography>
         </Box>
       </Popover>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={Boolean(deleteConfirm)} onClose={() => !deleting && setDeleteConfirm(null)}>
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete this AIS session?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The AIS data for FY {deleteConfirm?.fy || '—'} will be permanently removed.
+            You would need to re-upload the statement to restore it.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setDeleteConfirm(null)} disabled={deleting} sx={{ textTransform: 'none' }}>Cancel</Button>
+          <Button
+            color="error" variant="contained" disabled={deleting}
+            onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            {deleting ? 'Deleting…' : 'Delete permanently'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   )
 }
@@ -384,7 +450,11 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const [history, setHistory] = useState<TaxHistoryItem[]>([])
+  const [deleteConfirm, setDeleteConfirm] = useState<TaxHistoryItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const setSessionById = useAppStore((s) => s.setSessionById)
+  const clearSession = useAppStore((s) => s.clearSession)
+  const activeSessionId = useAppStore((s) => s.taxSessionId)
   const isAuthenticated = useIsAuthenticated()
 
   const fetchHistory = useCallback(() => {
@@ -395,6 +465,20 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
   }, [isAuthenticated])
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
+
+  const handleDelete = async (item: TaxHistoryItem) => {
+    setDeleting(true)
+    try {
+      await apiClient.deleteTaxSession(item.session_id)
+      if (item.session_id === activeSessionId) clearSession('tax_expert')
+      setHistory((prev) => prev.filter((h) => h.session_id !== item.session_id))
+    } catch {
+      // silently retain dialog open; user can retry
+    } finally {
+      setDeleting(false)
+      setDeleteConfirm(null)
+    }
+  }
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -590,12 +674,38 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
               </Typography>
 
               <Box sx={{ flex: 1 }}>
-                <HistoryList history={history} onSelect={(sid) => setSessionById(sid, 'tax_expert')} compact={false} />
+                <HistoryList
+                  history={history}
+                  onSelect={(sid) => setSessionById(sid, 'tax_expert')}
+                  onDelete={setDeleteConfirm}
+                  compact={false}
+                />
               </Box>
             </Paper>
           </motion.div>
         )}
       </Box>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={Boolean(deleteConfirm)} onClose={() => !deleting && setDeleteConfirm(null)}>
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete this AIS session?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            The AIS data for FY {deleteConfirm?.fy || '—'} will be permanently removed.
+            You would need to re-upload the statement to restore it.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setDeleteConfirm(null)} disabled={deleting} sx={{ textTransform: 'none' }}>Cancel</Button>
+          <Button
+            color="error" variant="contained" disabled={deleting}
+            onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            {deleting ? 'Deleting…' : 'Delete permanently'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

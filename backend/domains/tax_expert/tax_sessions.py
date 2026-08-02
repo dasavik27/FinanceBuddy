@@ -93,7 +93,6 @@ def _load_from_disk_locked():
     """
     global _sessions_loaded
     _tax_sessions.clear()
-    cutoff = time.time() - SESSION_TTL_SECONDS
     try:
         with db.connect() as conn:
             rows = conn.execute(
@@ -105,12 +104,8 @@ def _load_from_disk_locked():
                 """,
                 (MAX_SESSIONS,),
             ).fetchall()
-            expired = []
             # Oldest-first insertion => most-recently-used ends up last.
             for sid, blob, updated_at in reversed(rows):
-                if updated_at and updated_at < cutoff:
-                    expired.append(sid)
-                    continue
                 try:
                     session = crypto.decrypt_json(blob, aad=sid)
                     if not isinstance(session, dict):
@@ -124,12 +119,6 @@ def _load_from_disk_locked():
                 session.setdefault("_version", 0)
                 session["_last_access"] = updated_at or time.time()
                 _tax_sessions[sid] = session
-            if expired:
-                conn.executemany(
-                    "DELETE FROM sessions WHERE session_id = %s",
-                    [(s,) for s in expired],
-                )
-                logger.info(f"Purged {len(expired)} expired/unreadable tax session(s).")
         logger.info(f"Loaded {len(_tax_sessions)} tax session(s) from the database.")
     except Exception as e:
         logger.error(f"Failed to load tax sessions: {e}")
@@ -164,9 +153,7 @@ def _rehydrate(session_id: str) -> Optional[dict]:
     if row is None:
         return None
 
-    blob, updated_at = row
-    if updated_at and updated_at < time.time() - SESSION_TTL_SECONDS:
-        return None
+    blob, _ = row
     try:
         session = crypto.decrypt_json(blob, aad=session_id)
         if not isinstance(session, dict):
@@ -293,10 +280,9 @@ def _delete_many(session_ids: list):
         return
     try:
         with db.connect() as conn:
-            conn.executemany(
-                "DELETE FROM sessions WHERE session_id = %s",
-                [(s,) for s in session_ids],
-            )
+            for s in session_ids:
+                conn.execute("DELETE FROM tax_payloads WHERE session_id = %s", (s,))
+                conn.execute("DELETE FROM sessions WHERE session_id = %s", (s,))
     except Exception as e:
         logger.error(f"Failed to delete tax sessions {session_ids}: {e}")
 

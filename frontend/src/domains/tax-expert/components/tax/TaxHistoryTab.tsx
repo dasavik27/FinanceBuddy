@@ -47,6 +47,7 @@ function formatWhen(iso: string | null): string {
 export default function TaxHistoryTab() {
   const queryClient = useQueryClient()
   const activeSessionId = useAppStore((s) => s.taxSessionId)
+  const clearSession = useAppStore((s) => s.clearSession)
   const setSessionById = useAppStore((s) => s.setSessionById)
   const [pendingDelete, setPendingDelete] = useState<TaxHistoryEntry | null>(null)
 
@@ -60,8 +61,14 @@ export default function TaxHistoryTab() {
     onSuccess: (_result, sessionId) => {
       // Deleting the session currently loaded would otherwise leave the dashboard
       // rendering a session that no longer exists, and every subsequent tab 404s.
-      if (sessionId === activeSessionId) setSessionById('', 'tax_expert')
+      if (sessionId === activeSessionId) clearSession('tax_expert')
       queryClient.invalidateQueries({ queryKey: ['tax-history'] })
+      queryClient.invalidateQueries({ queryKey: ['tax-sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['tax-summary'] })
+      queryClient.invalidateQueries({ queryKey: ['tax-income'] })
+      queryClient.invalidateQueries({ queryKey: ['tax-capital-gains'] })
+      queryClient.invalidateQueries({ queryKey: ['tax-itr'] })
       setPendingDelete(null)
     },
   })
@@ -177,16 +184,21 @@ export default function TaxHistoryTab() {
 
       {/* Confirmed, because this is now permanent - stored filings used to be swept
           after 24 hours regardless, and are not any more. */}
-      <Dialog open={Boolean(pendingDelete)} onClose={() => setPendingDelete(null)}>
+      <Dialog open={Boolean(pendingDelete)} onClose={() => !remove.isPending && setPendingDelete(null)}>
         <DialogTitle sx={{ fontWeight: 800 }}>Delete this filing?</DialogTitle>
         <DialogContent>
+          {remove.isError && (
+            <Alert severity="error" sx={{ mb: 2, borderRadius: '10px' }}>
+              {(remove.error as any)?.response?.data?.detail || 'Failed to delete filing session.'}
+            </Alert>
+          )}
           <DialogContentText>
             The AIS data for FY {pendingDelete?.fy || '—'} will be permanently removed.
             You would need to upload the statement again to restore it.
           </DialogContentText>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setPendingDelete(null)} sx={{ textTransform: 'none' }}>
+          <Button onClick={() => setPendingDelete(null)} disabled={remove.isPending} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
           <Button

@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from shared import identity
+from shared import identity, storage
 from domains.tax_expert.ais_parser import parse_ais_pdf
 from domains.tax_expert.ais_schemas import AISStructureChangedError, AISUnknownCodeError
 from domains.tax_expert.computation_cache import get_computation
@@ -354,9 +354,9 @@ def delete_tax_history_entry(session_id: str):
     """
     Delete one of the caller's own tax sessions.
 
-    Mirrors DELETE /history/{session_id} on the mutual-funds side, which had no tax
-    equivalent - `delete_tax_session` existed but was only ever reached from logout,
-    so a user could accumulate sessions with no way to remove one.
+    Mirrors DELETE /history/{session_id} on the mutual-funds side.
+    Uses direct registry ownership check so that removing expired or unhydrated
+    sessions succeeds cleanly without relying on payload decryption.
 
     404 rather than 403 when the session belongs to someone else: a 403 confirms it
     exists, which turns id guessing into an enumeration oracle.
@@ -365,8 +365,25 @@ def delete_tax_history_entry(session_id: str):
     if not caller:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    # get_tax_session applies the ownership check and returns None either way.
-    if get_tax_session(session_id) is None:
+    exists, owner = storage.get_session_owner(session_id)
+    if not exists:
+        from domains.tax_expert.tax_sessions import _tax_sessions, _SESSIONS_LOCK
+        with _SESSIONS_LOCK:
+            if session_id in _tax_sessions:
+                exists = True
+                owner = _tax_sessions[session_id].get("user_id")
+    if not exists:
+        try:
+            from shared import db
+            with db.connect() as conn:
+                r = conn.execute("SELECT 1 FROM tax_payloads WHERE session_id = %s", (session_id,)).fetchone()
+                if r:
+                    exists = True
+                    owner = caller
+        except Exception:
+            pass
+
+    if not exists or not identity.owns_record(owner):
         raise HTTPException(status_code=404, detail="Tax session not found.")
 
     delete_tax_session(session_id)
