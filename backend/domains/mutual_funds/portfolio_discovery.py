@@ -1,5 +1,5 @@
 """
-services/portfolio_discovery.py
+domains/mutual_funds/portfolio_discovery.py
 The Deterministic Insights Engine.
 Fetches deep institutional metadata (AUM, Risk, ER, Sectors) via Yahoo Finance.
 Implements robust categorical heuristic fallbacks if upstream APIs fail, ensuring 100% UI uptime.

@@ -332,7 +332,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                   </MenuItem>
 
                   <MenuItem 
-                    onClick={() => { setProfileAnchor(null); navigate('/dashboard/accounts'); }}
+                    onClick={() => { setProfileAnchor(null); navigate('/accounts'); }}
                     sx={{ color: '#F8FAFC' }}
                   >
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>

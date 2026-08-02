@@ -10,7 +10,7 @@ import logging
 
 from psycopg.rows import dict_row
 
-from shared import crypto, db, identity, storage, users
+from shared import crypto, db, identity, session_stores, storage, users
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +97,12 @@ def export_account_data():
             SELECT s.session_id, s.upload_type, s.created_at, s.statement_period,
                    s.metrics,
                    p.holdings, p.transactions, p.sips, p.meta,
-                   t.data AS tax_data
+                   t.data AS tax_data,
+                   b.transactions AS budget_txns, b.accounts AS budget_accounts
             FROM sessions s
             LEFT JOIN session_payloads p ON p.session_id = s.session_id
             LEFT JOIN tax_payloads     t ON t.session_id = s.session_id
+            LEFT JOIN budget_payloads  b ON b.session_id = s.session_id
             WHERE s.user_id = %s
             ORDER BY s.created_at DESC
             """,
@@ -129,6 +131,18 @@ def export_account_data():
         try:
             if row["upload_type"] == "tax_expert":
                 entry["ais_data"] = crypto.decrypt_json(row["tax_data"], aad=session_id)
+            elif row["upload_type"] == "budget":
+                # Budget was absent from this export entirely - its sessions came out
+                # as a heading with no transactions, which is not portability, and
+                # this endpoint exists for the DPDP access right. Decoded through the
+                # domain's own codec rather than a second implementation here.
+                from domains.budget.sessions import decode_budget_payload
+
+                df_txns, accounts = decode_budget_payload(
+                    row["budget_txns"], row["budget_accounts"], session_id,
+                )
+                entry["transactions"] = df_txns.to_dict(orient="records")
+                entry["accounts"] = accounts
             else:
                 df_h, df_t, df_s = storage.decode_payload({
                     "holdings": crypto.decrypt(row["holdings"], aad=session_id),
@@ -183,19 +197,16 @@ def purge_account_data():
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in to purge your data.")
 
-    from domains.mutual_funds import sessions as mf_sessions
-    from domains.equity import sessions as eq_sessions
-    from domains.tax_expert import tax_sessions as tax_store
-
     # Memory first: an eviction that happens after the delete leaves a window where
     # the rows are gone but the resident copy is not, and with no row left to name an
     # owner the ownership check has nothing to compare against.
     #
-    # Every domain holding resident state has to appear here. Equity was missing, so a
-    # purge deleted the rows and left the stock portfolios readable.
-    mf_sessions.evict_for_user(caller)
-    eq_sessions.evict_for_user(caller)
-    tax_store.evict_for_user(caller)
+    # Every domain holding resident state is covered because each registers itself -
+    # this no longer depends on remembering to add one here. Equity was once missing
+    # from the hardcoded list, and a purge deleted the rows while leaving the stock
+    # portfolios readable. session_stores.evict_user does not swallow exceptions, so a
+    # failing store aborts the request before anything is deleted.
+    session_stores.evict_user(caller)
 
     deleted = storage.delete_all_for_user(caller)
     users.invalidate(caller)
@@ -215,22 +226,21 @@ def clear_all_system_caches():
     """
     try:
         from shared.services.market_data import clear_market_data_cache
-        from domains.mutual_funds import sessions
-        from domains.equity import sessions as eq_sessions
-        from domains.tax_expert import tax_sessions
-        from domains.tax_expert import computation_cache
 
         clear_market_data_cache()
-        # Via the module's own accessor, not `sessions._SESSIONS.clear()`: that
-        # reached into the private dict without _SESSIONS_LOCK, racing the GC daemon
-        # and every request thread.
-        sessions.clear_all()
-        eq_sessions.clear_all()
-        tax_sessions.clear_all()
-        # Memoized tax computations reference the sessions just dropped; without
-        # this they would sit in memory until LRU eviction pushed them out.
-        computation_cache.clear_all()
-        
-        return {"status": "ok", "message": "Global market and session caches cleared successfully."}
+        # Each domain clears itself through its registered accessor - never
+        # `sessions._SESSIONS.clear()`, which reached into the private dict without
+        # the store's lock, racing every request thread.
+        #
+        # The tax domain registers a hook that drops its memoized computations along
+        # with its sessions; that pairing used to be this router's job to remember,
+        # and a computation outlives the session it came from.
+        cleared = session_stores.clear_all()
+
+        return {
+            "status": "ok",
+            "message": "Global market and session caches cleared successfully.",
+            "cleared": cleared,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")

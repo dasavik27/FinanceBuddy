@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from shared import db, identity, oidc, users
+from shared import db, identity, janitor, oidc, session_stores, users
 from shared.identity import identity_scope
 from shared.services.cache import cache_stats, request_scope
 
@@ -100,6 +100,28 @@ async def lifespan(app: FastAPI):
         db.get_pool()
     except Exception as e:
         logger.error("[STARTUP] database pool unavailable: %s", e)
+
+    # Start the periodic sweep. Each domain registers its own purge at import (see
+    # shared/janitor.py); this only starts the thread. It lives here rather than as an
+    # import side effect so that importing a domain module - in a test, a script, or a
+    # migration - does not silently spawn a daemon.
+    janitor.start()
+
+    # Registration happens as an import side effect of each domain's session module,
+    # which the router imports above pull in. That is load-bearing and silent when it
+    # fails: shared/routers/accounts.py no longer imports the domains itself, so a
+    # store that never registered means DELETE /accounts/me evicts nothing and then
+    # deletes the rows - leaving resident portfolios with no row left to name their
+    # owner, readable by anyone holding a session id. Log the roster at startup so a
+    # missing store is visible in the boot output rather than at the next purge.
+    stores = session_stores.registered()
+    logger.info("[STARTUP] resident session stores registered: %s", stores or "(none)")
+    for expected in ("mutual_funds", "equity", "tax_expert"):
+        if expected not in stores:
+            logger.error(
+                "[STARTUP] session store '%s' did not register - logout, purge and "
+                "history-delete will NOT evict its resident state", expected,
+            )
 
     yield
 

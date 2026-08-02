@@ -104,7 +104,7 @@ function getProfile(category: string, fundName: string) {
 }
 
 import { useFundInsights } from '../hooks/useData'
-import { getTaxProfile } from '../../tax-expert/rules/taxRules'
+import { getTaxProfile } from '../rules/fundTaxRules'
 
 // ── Stat chip ─────────────────────────────────────────────────────────────────
 function StatChip({ label, value, tip, valueColor, isLive }: { label: string; value: string; tip?: string; valueColor?: string; isLive?: boolean }) {

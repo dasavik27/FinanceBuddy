@@ -1,4 +1,4 @@
-import { fmtInr } from '../../utils/fmt'
+import { fmtInr } from '../../../shared/utils/fmt'
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Box, Typography, Chip, Menu, MenuItem, Checkbox,
          ListItemText, IconButton, Tooltip as MuiTooltip,

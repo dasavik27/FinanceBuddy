@@ -6,7 +6,8 @@ from typing import List, Optional
 from shared import identity
 from domains.budget.merchants import clean_merchant_name
 from domains.budget.natures import nature_of
-from domains.budget.pipeline import BudgetContext, load_context
+from domains.budget import derived
+from domains.budget.pipeline import BudgetContext, filter_signature, load_context
 from domains.budget.sessions import update_budget_transactions
 import datetime
 import re
@@ -118,15 +119,26 @@ def _apply_budget_filters(
 
     # Search keyword filter
     if search and search.strip():
-        q = search.strip().lower()
+        q = search.strip()
         search_mask = pd.Series(False, index=df.index)
         for col in ["description", "notes", "category", "source_bank"]:
             if col in df.columns:
-                search_mask = search_mask | df[col].astype(str).str.lower().str.contains(q, na=False)
+                # regex=False matters: this is a raw string from the dashboard's search
+                # box, and str.contains defaults to regex=True. Typing "(a+)+$" compiled
+                # a catastrophically-backtracking pattern and ran it over every row of
+                # four columns - the same hazard rules_safety.py guards the user's
+                # *rules* against, reachable through the search field. case=False also
+                # drops the four full .str.lower() copies of the frame this used to
+                # allocate on every keystroke.
+                search_mask |= df[col].astype(str).str.contains(
+                    q, case=False, na=False, regex=False
+                )
         df = df[search_mask]
 
-    # Date Range filter
-    if "date" in df.columns and not df.empty:
+    # Date Range filter. Skipped entirely for the default "all" - it used to parse the
+    # whole date column on every request just to discard the result.
+    if date_range and date_range != "all" and "date" in df.columns and not df.empty:
+        df = df.copy()
         df["parsed_date"] = pd.to_datetime(df["date"], errors="coerce")
         max_dt = df["parsed_date"].max()
         if pd.notna(max_dt):
@@ -162,7 +174,7 @@ _infer_category_nature = nature_of
 
 
 @router.get("/{session_id}/overview")
-async def get_budget_overview(
+def get_budget_overview(
     session_id: str,
     bank: Optional[str] = None,
     account_type: Optional[str] = None,
@@ -175,8 +187,47 @@ async def get_budget_overview(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
+    """
+    The dashboard's headline aggregation, memoized on the frame and the filter set.
+
+    derived.overview() was written for exactly this and had no caller - this router did
+    not even import `derived` - so 400 lines of aggregation re-ran on every keystroke of
+    the debounced search box and every filter chip.
+
+    The key covers the transaction frame plus the two user-editable inputs that are not
+    recoverable from it (transfer overrides, account metadata), because the response
+    embeds ctx.accounts.
+    """
     user_id = _require_caller()
     ctx = load_context(session_id, user_id)
+
+    signature = filter_signature(
+        bank=bank, account_type=account_type, txn_type=txn_type, date_range=date_range,
+        from_date=from_date, to_date=to_date, amount_bracket=amount_bracket,
+        payment_mode=payment_mode, category=category, search=search,
+        _flags=ctx.flag_signature, _accounts=ctx.meta_signature,
+    )
+    return derived.overview(ctx.real, signature, lambda: _build_overview(
+        ctx, bank=bank, account_type=account_type, txn_type=txn_type,
+        date_range=date_range, from_date=from_date, to_date=to_date,
+        amount_bracket=amount_bracket, payment_mode=payment_mode, category=category,
+        search=search,
+    ))
+
+
+def _build_overview(
+    ctx: BudgetContext,
+    bank: Optional[str] = None,
+    account_type: Optional[str] = None,
+    txn_type: Optional[str] = None,
+    date_range: Optional[str] = "all",
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    amount_bracket: Optional[str] = "all",
+    payment_mode: Optional[str] = "all",
+    category: Optional[str] = "all",
+    search: Optional[str] = None
+):
     df, accounts = ctx.real, ctx.meta
 
     # The internal movement that was netted out, reported alongside the corrected
@@ -285,17 +336,19 @@ async def get_budget_overview(
         if not df_valid_dates.empty:
             df_valid_dates["month"] = df_valid_dates["parsed_date"].dt.strftime("%Y-%m")
             
-            income_df = df_valid_dates[df_valid_dates["type"] == "credit"]
-            expense_df = df_valid_dates[df_valid_dates["type"] == "debit"]
-            
-            months = sorted(df_valid_dates["month"].unique())
-            for m in months:
-                inc = income_df[income_df["month"] == m]["amount"].sum() if not income_df.empty else 0
-                exp = expense_df[expense_df["month"] == m]["amount"].sum() if not expense_df.empty else 0
+            # One grouped pass instead of two full boolean scans per month. The loop
+            # this replaces was O(months x rows) - 36 months over 50k rows is 1.8M
+            # comparisons and 72 intermediate frames for a result groupby gives directly.
+            by_month = (
+                df_valid_dates.groupby(["month", "type"])["amount"].sum().unstack(fill_value=0.0)
+            )
+            income_by_month = by_month["credit"] if "credit" in by_month.columns else None
+            expense_by_month = by_month["debit"] if "debit" in by_month.columns else None
+            for m in sorted(by_month.index):
                 monthly_trend.append({
                     "month": m,
-                    "income": float(inc),
-                    "expense": float(exp)
+                    "income": float(income_by_month[m]) if income_by_month is not None else 0.0,
+                    "expense": float(expense_by_month[m]) if expense_by_month is not None else 0.0,
                 })
             
     # Top Merchants / Payees Breakdown
@@ -366,10 +419,17 @@ async def get_budget_overview(
 
             # 2. Cumulative Trajectory (grouped daily or monthly depending on size)
             df_sorted["date_str"] = df_sorted["parsed_date"].dt.strftime("%Y-%m-%d")
-            daily_flow = df_sorted.groupby("date_str").apply(
-                lambda x: float(x[x["type"] == "credit"]["amount"].sum() - x[x["type"] == "debit"]["amount"].sum())
-            ).reset_index(name="net")
-            
+            # Sign the amounts once, vectorised, then a single groupby. groupby.apply
+            # with a Python lambda ran the interpreter once per day and built two
+            # boolean masks plus two sub-frames per group - ~1,100 calls and ~4,400
+            # temporary frames over three years, for a series that is immediately
+            # downsampled to 50 points.
+            signed = df_sorted["amount"].where(df_sorted["type"] == "credit", -df_sorted["amount"])
+            daily_flow = (
+                signed.groupby(df_sorted["date_str"]).sum().reset_index(name="net")
+            )
+
+
             daily_flow["cumulative"] = daily_flow["net"].cumsum()
             # Downsample if too many points (> 60) for smooth rendering
             step = max(1, len(daily_flow) // 50)
@@ -470,11 +530,46 @@ async def get_budget_overview(
     wants_cats = {}
     inv_cats = {}
     
-    for _, row in expenses_df.iterrows():
-        cat = str(row.get("category", "Uncategorized"))
-        amt = float(row.get("amount", 0.0))
+    # Aggregate first, classify second. This was iterrows() with a nature_of() call per
+    # transaction: a fresh pd.Series allocated per row, and the (uncached) category
+    # classifier - up to ~120 substring scans - run once per row rather than once per
+    # distinct category. On a 20k-row debit set that is 20k Series plus ~2.4M substring
+    # checks to produce a bucketing over ~20 categories. groupby makes it O(categories).
+    #
+    # fillna("Uncategorized") also fixes a latent labelling bug. The old line read
+    # `str(row.get("category", "Uncategorized"))`, but for a *present* column holding
+    # NaN the default never fired, so str(NaN) put blank categories under the literal
+    # string "nan" in the breakdown the UI renders. Bucket totals are unaffected -
+    # nature_of() classifies "nan" and "Uncategorized" identically as wants - so that
+    # changes only the label the user sees.
+    #
+    # The missing-column branch is the case where the old default *did* fire: with no
+    # `category` column at all, row.get() returned "Uncategorized" and every debit was
+    # still bucketed (as wants). Synthesising the column preserves that, rather than
+    # bucketing nothing and reporting a 50/30/20 split of all zeros.
+    if expenses_df.empty:
+        category_totals = []
+    else:
+        categories = (
+            expenses_df["category"].fillna("Uncategorized").astype(str)
+            if "category" in expenses_df.columns
+            else "Uncategorized"
+        )
+        category_totals = (
+            expenses_df.assign(
+                category=categories,
+                amount=pd.to_numeric(expenses_df["amount"], errors="coerce").fillna(0.0),
+            )
+            .groupby("category", sort=False)["amount"]
+            .sum()
+            .items()
+        )
+
+    for cat, amt in category_totals:
+        cat = str(cat)
+        amt = float(amt)
         nat = _infer_category_nature(cat)
-        
+
         if nat == "needs":
             needs_amount += amt
             needs_cats[cat] = needs_cats.get(cat, 0.0) + amt
@@ -572,7 +667,7 @@ async def get_budget_overview(
     }
 
 @router.get("/{session_id}/transactions")
-async def get_transactions(
+def get_transactions(
     session_id: str,
     bank: Optional[str] = None,
     account_type: Optional[str] = None,
@@ -624,6 +719,18 @@ async def get_transactions(
     total = len(df)
     # Newest first: a statement view that opens on the oldest transaction is useless,
     # and paginating an unsorted frame would return rows in decode order.
+    #
+    # This endpoint parses `date` itself when the filter helper did not. The helper now
+    # skips the parse for date_range="all" (the default), which is a real saving for
+    # /overview and /categories - but sorting the *string* column here is not
+    # equivalent: sessions._normalise_dates leaves unparseable values as their original
+    # text, so "N.A." sorts above "2024-07-09" lexicographically and garbage rows land
+    # on page 1. to_datetime(errors="coerce") puts them last instead, which is where
+    # they were before.
+    if "parsed_date" not in df.columns and "date" in df.columns:
+        df = df.copy()
+        df["parsed_date"] = pd.to_datetime(df["date"], errors="coerce")
+
     if "parsed_date" in df.columns:
         df = df.sort_values("parsed_date", ascending=False)
     elif "date" in df.columns:
@@ -640,7 +747,7 @@ async def get_transactions(
     }
 
 @router.get("/{session_id}/categories")
-async def get_category_breakdown(
+def get_category_breakdown(
     session_id: str,
     bank: Optional[str] = None,
     account_type: Optional[str] = None,
@@ -833,7 +940,7 @@ class TransactionUpdate(BaseModel):
     notes: Optional[str] = None
 
 @router.put("/transactions/update")
-async def bulk_update_transactions(
+def bulk_update_transactions(
     updates: List[TransactionUpdate] = Body(...)
 ):
     user_id = _require_caller()

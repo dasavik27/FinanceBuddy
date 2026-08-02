@@ -48,7 +48,7 @@ def no_network(monkeypatch):
     whole suite offline - and pins that the domain no longer talks to a provider SDK
     directly, because if it did, this stub would not be enough.
     """
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     monkeypatch.setattr(eq, "_download_closes", lambda tickers: pd.DataFrame())
     monkeypatch.setattr(eq, "_download_history", lambda tickers, days: pd.DataFrame())

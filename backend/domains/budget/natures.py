@@ -13,6 +13,7 @@ keyword pass after the exact-match table.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Dict
 
 NEEDS = "needs"
@@ -71,6 +72,7 @@ _WANTS_TOKENS = (
 )
 
 
+@lru_cache(maxsize=1024)
 def nature_of(category_name: str) -> str:
     """
     The 50/30/20 nature of a category name, standard or user-created.
@@ -79,6 +81,12 @@ def nature_of(category_name: str) -> str:
     counted as discretionary makes the wants percentage look worse than it is, which
     prompts the user to categorise it. Defaulting to "needs" would flatter the number
     and hide the gap.
+
+    Cached because the miss path is up to ~120 substring scans across five token
+    tuples, and the callers (the 50/30/20 engine, the Sankey builder, the envelope
+    report) ask about the same handful of category names repeatedly. Pure function of
+    its argument over a bounded key space - the category vocabulary - so the cache
+    cannot go stale or grow without limit.
     """
     if not category_name or not str(category_name).strip():
         return WANTS

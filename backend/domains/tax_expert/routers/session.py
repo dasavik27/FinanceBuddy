@@ -11,7 +11,7 @@ from typing import Optional
 import difflib
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from shared import identity, storage
 from domains.tax_expert.ais_parser import parse_ais_pdf
@@ -22,6 +22,7 @@ from domains.tax_expert.reconciliation import reconcile_trades, _normalize
 from domains.tax_expert.tax_sessions import (
     create_tax_session, get_tax_session, get_sessions_by_user,
     delete_tax_session, update_ais_data,
+    HISTORY_PAGE_SIZE, HISTORY_MAX_PAGE_SIZE, clamp_history_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -334,8 +335,11 @@ def reconcile_broker(
 
 
 @router.get("/tax-history")
-def get_tax_history():
-    """Get all tax sessions for the current user.
+def get_tax_history(
+    limit: int = Query(HISTORY_PAGE_SIZE, ge=1, le=HISTORY_MAX_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
+):
+    """Get a page of the current user's tax sessions, newest first.
 
     The PAN comes from the request-scoped identity rather than the raw header, so
     it is normalized the same way every ownership check in the app normalizes it.
@@ -346,7 +350,16 @@ def get_tax_history():
     caller = identity.current_user_id()
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in to view your tax history.")
-    return {"sessions": get_sessions_by_user(caller)}
+    sessions = get_sessions_by_user(caller, limit=limit, offset=offset)
+    return {
+        "sessions": sessions,
+        "limit": limit,
+        "offset": offset,
+        # Cheap "is there another page" signal without a COUNT(*) over the history.
+        # clamp_history_limit rather than a second copy of the bound: if the two
+        # disagree, has_more is wrong forever.
+        "has_more": len(sessions) == clamp_history_limit(limit),
+    }
 
 
 @router.delete("/tax-history/{session_id}")
@@ -365,23 +378,27 @@ def delete_tax_history_entry(session_id: str):
     if not caller:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
-    exists, owner = storage.get_session_owner(session_id)
+    try:
+        exists, owner = storage.get_session_owner(session_id)
+    except storage.OwnerLookupFailed:
+        # storage documents this as fail-closed: a registry we cannot read must not
+        # be treated as "no such session", or a database blip becomes a 404 that
+        # tells the caller their session is gone.
+        raise HTTPException(status_code=503, detail="Session registry unavailable.")
+
     if not exists:
         from domains.tax_expert.tax_sessions import _tax_sessions, _SESSIONS_LOCK
         with _SESSIONS_LOCK:
             if session_id in _tax_sessions:
                 exists = True
                 owner = _tax_sessions[session_id].get("user_id")
-    if not exists:
-        try:
-            from shared import db
-            with db.connect() as conn:
-                r = conn.execute("SELECT 1 FROM tax_payloads WHERE session_id = %s", (session_id,)).fetchone()
-                if r:
-                    exists = True
-                    owner = caller
-        except Exception:
-            pass
+
+    # There is deliberately no tax_payloads fallback here. tax_payloads.session_id is
+    # `REFERENCES sessions(session_id) ON DELETE CASCADE`, so a payload row cannot
+    # outlive the registry row the lookup above already searched for - the branch was
+    # unreachable, cost a second pooled connection on the 404 path, and set
+    # `owner = caller`, which would have made the ownership check below pass for
+    # anyone had the foreign key ever been relaxed.
 
     if not exists or not identity.owns_record(owner):
         raise HTTPException(status_code=404, detail="Tax session not found.")

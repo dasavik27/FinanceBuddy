@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header
-from shared import identity, storage
+from shared import identity, session_stores, storage
 import pandas as pd
 from typing import Dict, Any
 
@@ -36,15 +36,11 @@ def delete_session(session_id: str):
     # portfolio resident and, with no row left to name its owner, readable by anyone
     # holding the id.
     #
-    # Every domain with a resident store has to be named here. A session id is not
-    # tagged by domain at this layer, so we ask each of them to forget it rather than
-    # trying to work out which one owns it; forget() on an absent id is a no-op.
-    from domains.mutual_funds import sessions as mf_sessions
-    from domains.equity import sessions as eq_sessions
-    from domains.tax_expert import tax_sessions
-    mf_sessions.forget(session_id)
-    eq_sessions.forget(session_id)
-    tax_sessions.delete_tax_session(session_id)
+    # A session id is not tagged by domain at this layer, so every store is asked to
+    # forget it rather than working out which one owns it; forgetting an absent id is a
+    # no-op. Domains register themselves, so this no longer has to name them - see
+    # shared/session_stores.py.
+    session_stores.forget_session(session_id)
 
     success = storage.delete_session(session_id)
     if not success:

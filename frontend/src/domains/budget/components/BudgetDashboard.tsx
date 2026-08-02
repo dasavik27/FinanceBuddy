@@ -47,7 +47,6 @@ import TransactionsTab from './TransactionsTab'
 import RulesTab from './RulesTab'
 import AccountsTab from './AccountsTab'
 import InsightsTab from './InsightsTab'
-import NetWorthRibbon from './NetWorthRibbon'
 import MoneyFlowCard from './MoneyFlowCard'
 import TransfersExcludedCard from './TransfersExcludedCard'
 import BudgetSessionsModal from './BudgetSessionsModal'
@@ -991,10 +990,6 @@ export default function BudgetDashboard() {
           {/* TAB 0: OVERVIEW & ANALYTICS */}
           {activeTab === 0 && (
             <Box>
-              {/* Assets less liabilities across every domain - the one figure this
-                  application can produce that a standalone budgeting app cannot. */}
-              <NetWorthRibbon sessionId={sessionId} />
-
               {/* Why the KPIs below are smaller than the sum of the statements. The
                   correction is often lakhs; unexplained, it reads as a bug. */}
               <TransfersExcludedCard sessionId={sessionId} />

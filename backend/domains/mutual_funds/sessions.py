@@ -20,12 +20,12 @@ Sessions ARE persisted (Postgres, via shared/storage.py) for dedup, history and
 rehydration. An earlier version of this docstring claimed "zero disk retention...
 institutional privacy compliance", which was not true and is a claim worth being
 accurate about. What is true: the uploaded PDF itself is never retained (the parser
-deletes its temp file), and disk rows are purged after 24 hours by the sweeper below.
+deletes its temp file). Stored rows are NOT swept on a timer - purge_expired() below
+bounds memory only. Deletion is the user's: DELETE /accounts/me or DELETE /history/{id}.
 """
 
 import os
 import threading
-import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -36,7 +36,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from domains.mutual_funds.models import Portfolio
-from shared import identity, storage
+from shared import identity, janitor, session_stores, storage
 import logging
 logger = logging.getLogger(__name__)
 
@@ -184,77 +184,36 @@ def create_session(df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, i
 
 # ── Automated Session Garbage Collector ───────────────────────────────────
 
-def _session_purge_worker():
+def purge_expired() -> int:
     """
-    Daemon thread executing periodic background purges of abandoned sessions.
-    Evaluates expiration against last active API interaction heartbeat.
+    Drop resident sessions idle beyond the TTL. Registered with the shared janitor.
+
     Memory only: stored rows are the user's data and are never swept on a timer.
+    That used to happen here - every session older than 24 hours was deleted - back
+    when the filesystem was ephemeral and keeping rows past a deploy was pointless.
+    Storage is durable now, so a timer that deletes a user's parsed statements is data
+    loss, not housekeeping. Retention belongs to the user: DELETE /accounts/me removes
+    everything, DELETE /history/{id} removes one statement. Eviction here is a cache
+    bound, and an evicted session is rehydrated from the database on next access.
     """
-    while True:
-        try:
-            now = datetime.now()
+    now = datetime.now()
+    with _SESSIONS_LOCK:
+        expired = [
+            sid for sid, data in _SESSIONS.items()
+            if (now - data.get("last_accessed", data["created_at"])).total_seconds()
+            > (SESSION_TTL_HOURS * 3600)
+        ]
+        for sid in expired:
+            _SESSIONS.pop(sid, None)
+    return len(expired)
 
-            # 1. In-Memory Purge (4 hours idle)
-            with _SESSIONS_LOCK:
-                expired = [
-                    sid for sid, data in _SESSIONS.items()
-                    if (now - data.get("last_accessed", data["created_at"])).total_seconds()
-                    > (SESSION_TTL_HOURS * 3600)
-                ]
-                for sid in expired:
-                    _SESSIONS.pop(sid, None)
 
-            # 2. No disk purge.
-            #
-            # This used to delete every session older than 24 hours. That existed
-            # because the filesystem was ephemeral and the database was a
-            # within-process convenience - keeping rows past a deploy was pointless,
-            # and bounding the table was free.
-            #
-            # Storage is durable now, and a user's uploaded statements are their
-            # data. Deleting them on a timer would mean signing in tomorrow to an
-            # empty dashboard. Retention is a product decision and belongs to the
-            # user: DELETE /accounts/me removes everything, DELETE /history/{id}
-            # removes one statement.
-            #
-            # In-memory eviction above is unaffected - it is a cache bound, and an
-            # evicted session is rehydrated from the database on next access.
-
-            # 3. Trim the disk cache alongside sessions, so the .cache directory
-            #    cannot outgrow its budget on a long-lived instance.
-            try:
-                from shared.cache import MarketCache
-                MarketCache.sweep()
-            except Exception as e:
-                logger.error(f"[GC CACHE SWEEP ERROR] {e}")
-
-            # 4. Expire tax_sessions rows. Tax-session eviction is deliberately
-            #    non-destructive (the row is what makes rehydration possible), so
-            #    without a periodic sweep that table would only grow between
-            #    restarts.
-            try:
-                from domains.tax_expert.tax_sessions import purge_expired_from_disk
-                purge_expired_from_disk()
-            except Exception as e:
-                logger.error(f"[GC TAX SWEEP ERROR] {e}")
-
-            # 5. Expire resident equity portfolios. One daemon rather than a second
-            #    thread: the sweep is a few dictionary operations, and equity's store
-            #    has the same TTL semantics as the one above. Equity enforces the TTL
-            #    lazily on read too, so this is about releasing memory from sessions
-            #    nobody comes back to, not about correctness.
-            try:
-                from domains.equity.sessions import purge_expired as purge_equity
-                purge_equity()
-            except Exception as e:
-                logger.error(f"[GC EQUITY SWEEP ERROR] {e}")
-
-        except Exception as e:
-            logger.error(f"[GC ERROR] {e}")
-        time.sleep(600)  # GC sweep execution interval: 10 minutes
-
-# Initialize background garbage collection daemon
-threading.Thread(target=_session_purge_worker, daemon=True).start()
+# This module used to own the whole application's GC thread: it started a daemon at
+# import and swept tax-expert rows and equity portfolios as well as its own sessions.
+# That made two unrelated domains silently depend on this one being loaded. Each domain
+# now registers its own sweep and shared/janitor.py runs them; main.py starts the
+# thread.
+janitor.register("mutual_funds.sessions", purge_expired)
 
 
 _NOT_FOUND_DETAIL = "Session expired or not found. Please re-upload your CAS."
@@ -430,3 +389,14 @@ def df_to_records(df: pd.DataFrame) -> list:
     # NaN, and NaN is not valid JSON.
     mask = df2.notna()
     return df2.astype(object).where(mask, None).to_dict(orient="records")
+
+
+# Logout, account purge and history-delete used to name this module explicitly from
+# three shared routers. They iterate the registry instead; see shared/session_stores.py.
+# Registered at the foot of the module because it references the functions above.
+session_stores.register(session_stores.SessionStore(
+    name="mutual_funds",
+    evict_user=evict_for_user,
+    forget_session=forget,
+    clear_all=clear_all,
+))

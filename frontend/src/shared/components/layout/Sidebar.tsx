@@ -11,6 +11,7 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import LogoutIcon from '@mui/icons-material/Logout'
+import HomeIcon from '@mui/icons-material/GridView'
 import PersonIcon from '@mui/icons-material/Person'
 import TimelineIcon from '@mui/icons-material/Timeline'
 import SecurityIcon from '@mui/icons-material/Security'
@@ -18,11 +19,16 @@ import { useAppStore } from '../../store/appStore'
 
 const DRAWER_W = 280
 
+// The hub is separated from the domains below it: it is the way back out, not a
+// fifth domain. Without an entry for it there was no route to the hub from inside a
+// domain at all - the only way back was editing the URL or the browser back button.
+const HOME = { label: 'Dashboard', icon: <HomeIcon />, path: '/dashboard' }
+
 const NAV = [
-  { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/dashboard/mutual-funds' },
-  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/dashboard/equity' },
-  { label: 'Tax Expert',            icon: <ReceiptIcon />,       path: '/dashboard/tax-expert' },
-  { label: 'Budget Analyzer',       icon: <LightbulbIcon />,     path: '/dashboard/budget' },
+  { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/mutual-funds' },
+  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/equity' },
+  { label: 'Tax Expert',            icon: <ReceiptIcon />,       path: '/tax-expert' },
+  { label: 'Budget Analyzer',       icon: <LightbulbIcon />,     path: '/budget' },
 ]
 
 interface SidebarProps {
@@ -112,7 +118,14 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5 }}>
       {/* Branding */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', mb: 6, px: 0.5, mt: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {/* The brand doubles as the way home, which is the convention everywhere
+            else on the web and costs nothing here. */}
+        <Box
+          onClick={() => { navigate(HOME.path); onClose() }}
+          role="link"
+          aria-label="Go to dashboard"
+          sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer' }}
+        >
           <Box sx={{
             width: 44, height: 44, borderRadius: '14px',
             background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.main} 0%, #4F46E5 100%)`,
@@ -135,11 +148,13 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
         </Box>
       </Box>
 
-      {/* Nav List */}
+      {/* Nav List. HOME first and exact-matched - it is the hub, not a prefix of the
+          domains below it. */}
       <List dense disablePadding>
-        {NAV.map((item) => {
-          const active = location.pathname === item.path ||
-            (item.path !== '/dashboard' && location.pathname.startsWith(item.path))
+        {[HOME, ...NAV].map((item) => {
+          const active = item.path === HOME.path
+            ? location.pathname === HOME.path
+            : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
           return (
             <ListItem key={item.path} disablePadding sx={{ mb: 1 }}>
               <Tooltip title={collapsed ? item.label : ""} placement="right">

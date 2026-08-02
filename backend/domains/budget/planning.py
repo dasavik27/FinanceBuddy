@@ -1,5 +1,5 @@
 """
-domains/budget/planning.py - envelope budgets and cross-domain net worth.
+domains/budget/planning.py - envelope budgets and cash position.
 
 Envelopes
 ---------
@@ -8,27 +8,26 @@ you have spent 60% of your dining budget is not useful on its own; knowing you h
 spent 60% of it on the 10th is. Pace is what turns a budget from a report into a
 warning.
 
-Net worth
----------
-The one number this application can produce that a standalone budgeting app cannot.
-Bank balances and card debt live here, mutual funds and equities live in their own
-domains, and nobody was adding them up. The cross-domain read is deliberately
-best-effort: if the equity module raises, net worth still renders with the parts it
-could reach and says which parts are missing, because a dashboard that 500s because one
-domain is unavailable is worse than one that is honest about a gap.
+Cash position
+-------------
+Deliberately budget-only: bank balances and card debt, nothing else.
+
+This module used to compute a cross-domain net worth by reading the mutual-funds and
+equity sessions out of the shared registry and summing a "Market Value" column out of
+their payloads. That coupling ran the wrong way - it made the budget domain
+undeployable without two other domains present, and pinned it to their payload
+schemas, so an equity column rename silently zeroed a user's net worth. Investments
+are reported by the domains that own them.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from shared import db
-from domains.budget.accounts import Account, CREDIT_CARD
 
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -139,128 +138,7 @@ def envelope_status(
     return out
 
 
-# ---------------------------------------------------------------------------
-# Net worth
-# ---------------------------------------------------------------------------
-
-def net_worth(user_id: str, accounts: List[Account]) -> Dict[str, Any]:
-    """
-    Assets less liabilities, across every domain that holds a position.
-
-    Bank balances and card outstandings come from the budget accounts passed in.
-    Mutual funds and equities are read from their own domains, each behind its own
-    try/except so one unavailable domain degrades that line rather than the response.
-    """
-    breakdown: List[Dict[str, Any]] = []
-    unavailable: List[str] = []
-
-    cash = 0.0
-    card_debt = 0.0
-    for account in accounts:
-        if account.kind == CREDIT_CARD:
-            owed = account.outstanding or 0.0
-            if owed > 0:
-                card_debt += owed
-                breakdown.append({
-                    "domain": "budget", "label": account.label or account.account_key,
-                    "kind": "liability", "value": round(owed, 2),
-                })
-        else:
-            balance = account.balance
-            if balance is not None:
-                cash += balance
-                breakdown.append({
-                    "domain": "budget", "label": account.label or account.account_key,
-                    "kind": "asset", "value": round(balance, 2),
-                })
-
-    investments = 0.0
-
-    mf_value = _mutual_fund_value(user_id)
-    if mf_value is None:
-        unavailable.append("mutual_funds")
-    elif mf_value > 0:
-        investments += mf_value
-        breakdown.append({"domain": "mutual_funds", "label": "Mutual funds",
-                          "kind": "asset", "value": round(mf_value, 2)})
-
-    equity_value = _equity_value(user_id)
-    if equity_value is None:
-        unavailable.append("equity")
-    elif equity_value > 0:
-        investments += equity_value
-        breakdown.append({"domain": "equity", "label": "Stocks",
-                          "kind": "asset", "value": round(equity_value, 2)})
-
-    assets = cash + investments
-    return {
-        "assets": round(assets, 2),
-        "liabilities": round(card_debt, 2),
-        "net_worth": round(assets - card_debt, 2),
-        "cash": round(cash, 2),
-        "investments": round(investments, 2),
-        "card_debt": round(card_debt, 2),
-        "breakdown": sorted(breakdown, key=lambda b: -abs(b["value"])),
-        # Named explicitly so the UI can say "excluding mutual funds - could not load"
-        # instead of quietly under-reporting the user's net worth.
-        "unavailable_domains": unavailable,
-    }
-
-
-def _latest_session_id(user_id: str, upload_type: str) -> Optional[str]:
-    with db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT session_id FROM sessions
-            WHERE user_id = %s AND upload_type = %s
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (user_id, upload_type),
-        ).fetchone()
-    return str(row[0]) if row else None
-
-
-def _mutual_fund_value(user_id: str) -> Optional[float]:
-    """Current MF value, or None if the domain could not be read."""
-    try:
-        session_id = _latest_session_id(user_id, "mutual_funds")
-        if not session_id:
-            return 0.0
-        from shared import storage
-
-        loaded = storage.load_session(session_id)
-        if not loaded:
-            return 0.0
-        df_h = loaded[0]
-        if df_h is None or df_h.empty:
-            return 0.0
-        for column in ("Market Value", "market_value", "current_value"):
-            if column in df_h.columns:
-                return float(pd.to_numeric(df_h[column], errors="coerce").fillna(0).sum())
-        return 0.0
-    except Exception as e:
-        logger.warning("[budget.networth] mutual fund value unavailable: %s", e)
-        return None
-
-
-def _equity_value(user_id: str) -> Optional[float]:
-    """Current equity value, or None if the domain could not be read."""
-    try:
-        session_id = _latest_session_id(user_id, "equity")
-        if not session_id:
-            return 0.0
-        from shared import storage
-
-        loaded = storage.load_session(session_id)
-        if not loaded:
-            return 0.0
-        df_h = loaded[0]
-        if df_h is None or df_h.empty:
-            return 0.0
-        for column in ("Market Value", "current_value", "market_value"):
-            if column in df_h.columns:
-                return float(pd.to_numeric(df_h[column], errors="coerce").fillna(0).sum())
-        return 0.0
-    except Exception as e:
-        logger.warning("[budget.networth] equity value unavailable: %s", e)
-        return None
+# net_worth() lived here. It has been removed rather than trimmed: the bank-only half
+# of it duplicated the `totals` block that GET /budget/accounts already returns, so
+# keeping a cash-only version would have been a second way to compute the same two
+# numbers.

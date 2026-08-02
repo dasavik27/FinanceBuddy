@@ -38,7 +38,7 @@ def clean_store():
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    import shared.services.equity_quotes as eq
+    import domains.equity.quotes as eq
 
     monkeypatch.setattr(eq, "_download_closes", lambda tickers: pd.DataFrame())
 

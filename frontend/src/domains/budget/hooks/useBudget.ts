@@ -10,7 +10,7 @@ import type {
   BudgetAccountsResponse, BudgetAccountMetaUpdate, BudgetTransfersResponse,
   BudgetRecurringResponse, BudgetForecast, BudgetAnomaliesResponse,
   BudgetReconciliationResponse, BudgetCoverageResponse, BudgetSankey,
-  BudgetNetWorth, BudgetEnvelope,
+  BudgetEnvelope,
 } from '../types'
 
 /**
@@ -338,17 +338,6 @@ export function useBudgetSankey(
   return useQuery({
     queryKey: ['budget', 'sankey', sessionId],
     queryFn: () => apiClient.getBudgetSankey(sessionId),
-    enabled: enabled && !!sessionId,
-    ...insightQuery,
-  })
-}
-
-export function useBudgetNetWorth(
-  sessionId: string, enabled = true,
-): UseQueryResult<BudgetNetWorth> {
-  return useQuery({
-    queryKey: ['budget', 'networth', sessionId],
-    queryFn: () => apiClient.getBudgetNetWorth(sessionId),
     enabled: enabled && !!sessionId,
     ...insightQuery,
   })

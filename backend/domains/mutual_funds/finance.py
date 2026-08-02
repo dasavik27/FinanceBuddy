@@ -583,74 +583,18 @@ def compute_benchmark_xirr(
 # Computes precise historical performance across standardized time horizons.
 # ---------------------------------------------------------------------------
 
-def compute_trailing_returns(nav_series: pd.Series) -> Dict[str, Optional[float]]:
-    """
-    Compute point-to-point trailing returns for standard periods.
-    Returns <1Y as simple return, >=1Y as annualised CAGR.
-
-    Returns
-    -------
-    Dict keyed by period label: {"1M": 4.2, "3M": 8.1, "6M": 12.3,
-                                  "1Y": 14.5, "3Y": 19.2, "5Y": 22.1}
-    None if insufficient history for that period.
-    """
-    if nav_series is None or nav_series.empty:
-        return {p: None for p in ["1M", "3M", "6M", "1Y", "3Y", "5Y"]}
-
-    nav_sorted = nav_series.sort_index().dropna()
-    end_date   = nav_sorted.index[-1]
-    end_nav    = float(nav_sorted.iloc[-1])
-
-    # Standard Industry Periods (using calendar offsets for higher accuracy)
-    PERIODS = {
-        "1M": pd.DateOffset(months=1),
-        "3M": pd.DateOffset(months=3),
-        "6M": pd.DateOffset(months=6),
-        "1Y": pd.DateOffset(years=1),
-        "3Y": pd.DateOffset(years=3),
-        "5Y": pd.DateOffset(years=5)
-    }
-    result   = {}
-    _start_navs = {}  # For cross-period sanity check
-
-    for label, offset in PERIODS.items():
-        target_date = end_date - offset
-        candidates  = nav_sorted[nav_sorted.index <= target_date]
-
-        if candidates.empty:
-            result[label] = None
-            continue
-
-        start_date = candidates.index[-1]
-        start_nav  = float(candidates.iloc[-1])
-        if start_nav <= 0:
-            result[label] = None
-            continue
-
-        _start_navs[label] = (start_date, start_nav)
-        days_actual = (end_date - start_date).days
-        years = days_actual / 365.25
-        if years < 0.99:  # Simple return for < 1Y
-            ret = (end_nav / start_nav - 1) * 100
-        else:             # CAGR for >= 1Y
-            ret = ((end_nav / start_nav) ** (1.0 / years) - 1) * 100
-
-        result[label] = round(ret, 2)
-
-    # ── Sanity Check: Cross-period NAV proximity (catches data alignment bugs) ──
-    # If 3Y and 5Y starting NAVs are within 2% of each other, the identical
-    # returns are a data issue (fund NAV flat in years 4-5) — worth logging.
-    if "3Y" in _start_navs and "5Y" in _start_navs:
-        nav_3y = _start_navs["3Y"][1]
-        nav_5y = _start_navs["5Y"][1]
-        if nav_5y > 0:
-            pct_diff = abs(nav_3y - nav_5y) / nav_5y * 100
-            if pct_diff < 2.0:  # Less than 2% difference
-                logger.warning(f"[TRAILING RETURNS WARN] 3Y ({_start_navs['3Y'][0].date()} NAV={nav_3y:.2f}) and "
-                      f"5Y ({_start_navs['5Y'][0].date()} NAV={nav_5y:.2f}) start NAVs differ by only {pct_diff:.2f}%. "
-                      f"Returns 3Y={result.get('3Y')}% 5Y={result.get('5Y')}% — verify NAV data availability.")
-
-    return result
+# Moved to shared/services/returns.py and re-exported here.
+#
+# The implementation is pure series maths - it works the same on a fund NAV, an index
+# level or a stock close - and shared/services/market_indices.py needed it to compute
+# benchmark returns. It was importing it from this module, which made the *shared*
+# layer depend on this *domain*, and dragged Mutual Funds code into the Equity
+# performance tab by way of market_indices.
+#
+# Re-exported rather than relocated-and-rewritten so a fund and its benchmark keep
+# being measured by exactly the same code, and so the five call sites in this domain
+# (routers/compare.py, routers/performance.py, tab_common.py) are untouched.
+from shared.services.returns import compute_trailing_returns  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

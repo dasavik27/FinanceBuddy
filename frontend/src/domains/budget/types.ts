@@ -378,17 +378,9 @@ export interface BudgetSankey {
   links: { source: number; target: number; value: number }[]
 }
 
-export interface BudgetNetWorth {
-  assets: number
-  liabilities: number
-  net_worth: number
-  cash: number
-  investments: number
-  card_debt: number
-  breakdown: { domain: string; label: string; kind: 'asset' | 'liability'; value: number }[]
-  /** Domains that could not be read. Net worth is understated by however much they hold. */
-  unavailable_domains: string[]
-}
+// BudgetNetWorth was removed with the cross-domain net-worth endpoint. It was the only
+// budget type that named other domains (`domain: 'mutual_funds' | 'equity' | ...`,
+// `unavailable_domains`). Deposit and card totals come from BudgetAccountsResponse.
 
 // ── Envelopes ────────────────────────────────────────────────────────────────
 
