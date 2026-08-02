@@ -4,6 +4,7 @@ import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
 import authClient from './shared/auth/authClient'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
+import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
 import { TabFallback } from './shared/components/ui'
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
@@ -15,6 +16,7 @@ const Dashboard = lazy(() => import('./shared/components/layout/Dashboard'))
 
 export default function App() {
   const isAuthenticated = useIsAuthenticated()
+  const pan = useAppStore((s) => s.pan)
   const setIdentity = useAppStore((s) => s.setIdentity)
   const clearIdentity = useAppStore((s) => s.clearIdentity)
 
@@ -29,12 +31,15 @@ export default function App() {
 
     // Fires once on mount with the restored session (or null), then on every
     // sign-in, sign-out and token refresh.
-    const unsubscribe = authClient.onAuthStateChange((user) => {
+    const unsubscribe = authClient.onAuthStateChange(async (user) => {
       if (user) {
         setIdentity({ userId: user.id, email: user.email })
-        apiClient.getMe().then((me: { pan: string | null }) => {
+        try {
+          const me = await apiClient.getMe()
           setIdentity({ userId: user.id, email: user.email, pan: me.pan })
-        }).catch((e: unknown) => console.error('Failed to fetch profile', e))
+        } catch (e: unknown) {
+          console.error('Failed to fetch profile', e)
+        }
       } else {
         clearIdentity()
       }
@@ -44,6 +49,13 @@ export default function App() {
   }, [setIdentity, clearIdentity])
 
   if (resolvingSession) return <TabFallback />
+
+  // If the user has authenticated with Google/Supabase but has not registered a PAN,
+  // PAN registration is compulsory before dashboard access is permitted.
+  if (isAuthenticated && !pan) {
+    return <MandatoryPanPrompt />
+  }
+
   // A skeleton fallback rather than null: `null` renders a blank white screen for
   // however long the dashboard chunk takes to arrive, which reads as a broken app on a
   // slow connection.

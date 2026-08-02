@@ -10,6 +10,7 @@ from domains.equity.stock_analyzer import (
     UnknownSymbol,
     analyze_stock,
     compute_portfolio_impact,
+    get_market_indices,
     search_stocks,
 )
 from shared import identity
@@ -29,6 +30,14 @@ def _require_caller() -> str:
     if not caller:
         raise HTTPException(status_code=401, detail="Sign in to use the stock analyzer.")
     return caller
+
+
+@router.get("/indices")
+def market_indices():
+    """
+    Live levels for NIFTY 50, SENSEX, BANK NIFTY, NIFTY IT for the top ticker ribbon.
+    """
+    return {"indices": get_market_indices()}
 
 
 @router.get("/search")

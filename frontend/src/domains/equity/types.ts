@@ -121,28 +121,199 @@ export interface StockSearchResult {
   name: string
 }
 
+export interface MarketIndex {
+  symbol: string
+  name: string
+  price: number
+  change: number
+  p_change: number
+}
+
+export interface PeerStock {
+  symbol: string
+  name: string
+  current_price?: number | null
+  change?: number | null
+  p_change?: number | null
+  pe_ratio?: number | null
+  market_cap_cr?: number | null
+  sector?: string
+}
+
+export interface IncomeStatementItem {
+  period: string
+  date: string
+  revenue_cr?: number | null
+  operating_expense_cr?: number | null
+  net_income_cr?: number | null
+  net_margin_pct?: number | null
+  eps?: number | null
+  ebitda_cr?: number | null
+  effective_tax_rate_pct?: number | null
+}
+
+export interface BalanceSheetItem {
+  period: string
+  date: string
+  cash_and_equivalents_cr?: number | null
+  total_assets_cr?: number | null
+  total_liabilities_cr?: number | null
+  total_equity_cr?: number | null
+  shares_outstanding?: number | null
+  price_to_book?: number | null
+  return_on_assets_pct?: number | null
+}
+
+export interface CashFlowItem {
+  period: string
+  date: string
+  net_income_cr?: number | null
+  cash_from_operations_cr?: number | null
+  cash_from_investing_cr?: number | null
+  cash_from_financing_cr?: number | null
+  net_change_in_cash_cr?: number | null
+  free_cash_flow_cr?: number | null
+  change_in_inventories_cr?: number | null
+  gain_loss_on_sale_assets_cr?: number | null
+}
+
+export interface FinancialStatementsPeriod {
+  income_statement: IncomeStatementItem[]
+  balance_sheet: BalanceSheetItem[]
+  cash_flow: CashFlowItem[]
+}
+
+export interface FinancialStatements {
+  quarterly: FinancialStatementsPeriod
+  annual: FinancialStatementsPeriod
+}
+
+export interface EarningsHistoryItem {
+  period: string
+  date: string
+  reported_eps?: number | null
+  estimated_eps?: number | null
+  surprise_pct?: number | null
+  eps_surprise_type?: 'beat' | 'miss'
+  reported_revenue_cr?: number | null
+  estimated_revenue_cr?: number | null
+  revenue_surprise_pct?: number | null
+  revenue_surprise_type?: 'beat' | 'miss'
+}
+
+export interface EarningsSummary {
+  last_report_date?: string
+  financial_period?: string
+  reported_eps?: number | null
+  estimated_eps?: number | null
+  eps_surprise_pct?: number | null
+  eps_surprise_type?: 'beat' | 'miss' | 'met'
+  reported_revenue_cr?: number | null
+  estimated_revenue_cr?: number | null
+  revenue_surprise_pct?: number | null
+  revenue_surprise_type?: 'beat' | 'miss'
+  history?: EarningsHistoryItem[]
+}
+
+export interface QuarterlyFinancial {
+  quarter: string
+  date: string
+  revenue_cr: number
+  net_income_cr: number
+  operating_income_cr: number
+  net_margin_pct: number
+}
+
+export interface QuarterlyEarnings {
+  date: string
+  quarter: string
+  reported_eps?: number | null
+  estimated_eps?: number | null
+  surprise_pct?: number | null
+}
+
+export interface TimeframeSlice {
+  dates: string[]
+  prices: number[]
+  start_price: number
+  end_price: number
+  change: number
+  p_change: number
+}
+
+export interface CandlestickPoint {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export interface VolumePoint {
+  date: string
+  volume: number
+  is_up: boolean
+}
+
+export interface StockTechnicals {
+  sma_50?: number | null
+  sma_200?: number | null
+  above_50_dma?: boolean | null
+  above_200_dma?: boolean | null
+  rsi_14?: number | null
+  rsi_status?: 'Oversold' | 'Overbought' | 'Neutral' | string
+  trend?: string
+  dist_52w_high_pct?: number | null
+  dist_52w_low_pct?: number | null
+}
+
 export interface StockAnalysis {
+  source?: string
   symbol: string
   name?: string
   sector?: string
   industry?: string
   ticker?: string
+  isin?: string
+  series?: string
   current_price?: number
+  day_open?: number | null
+  day_high?: number | null
+  day_low?: number | null
   market_cap?: number | null
   market_cap_cr?: number | null
   pe_ratio?: number | null
+  sector_pe?: number | null
+  forward_pe?: number | null
+  peg_ratio?: number | null
   pb_ratio?: number | null
+  price_to_sales?: number | null
   eps?: number | null
   dividend_yield?: number | null
   roe?: number | null
+  profit_margins?: number | null
+  operating_margins?: number | null
   debt_to_equity?: number | null
+  free_cash_flow_cr?: number | null
   week52_high?: number | null
   week52_low?: number | null
+  vwap?: number | null
+  delivery_pct?: number | null
   avg_volume?: number | null
+  volume?: number | null
   beta?: number | null
   year_return?: number
+  technicals?: StockTechnicals
+  peers?: PeerStock[]
+  financials?: QuarterlyFinancial[]
+  financial_statements?: FinancialStatements
+  earnings?: QuarterlyEarnings[]
+  earnings_summary?: EarningsSummary
   description?: string
   chart?: { dates: string[]; prices: number[] }
+  timeframes?: Record<string, TimeframeSlice>
+  candlesticks?: CandlestickPoint[]
+  volume_series?: VolumePoint[]
 }
 
 export interface EquityUploadResult {

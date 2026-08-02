@@ -7,7 +7,7 @@ import type {
 } from './types'
 import type {
   EquityAllocation, EquityHoldingsResponse, EquityInsights, EquityPerformance,
-  EquityPnl, EquitySummary, EquityUploadResult, StockAnalysis, StockSearchResult,
+  EquityPnl, EquitySummary, EquityUploadResult, MarketIndex, StockAnalysis, StockSearchResult,
 } from '../../domains/equity/types'
 import type {
   BudgetCategoriesResponse, BudgetMatchTypes, BudgetOverview, BudgetRule,
@@ -418,6 +418,12 @@ export const apiClient = {
   /** Smart insights: top movers, concentrated positions, tax-loss harvest. */
   getEquityInsights: async (sid: string): Promise<EquityInsights> => {
     const { data } = await api.get(`/equity/insights/${sid}/insights`)
+    return data
+  },
+
+  /** Fetch live benchmark indices (NIFTY 50, SENSEX, BANK NIFTY, NIFTY IT). */
+  getMarketIndices: async (): Promise<{ indices: MarketIndex[] }> => {
+    const { data } = await api.get('/equity/analyzer/indices')
     return data
   },
 

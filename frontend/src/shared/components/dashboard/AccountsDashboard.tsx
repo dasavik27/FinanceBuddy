@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, Alert, Snackbar, alpha } from '@mui/material'
+import { useNavigate } from 'react-router-dom'
+import { Box, Typography, Paper, Grid, Stack, Chip, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, Alert, Snackbar, Tooltip, alpha } from '@mui/material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import DeleteIcon from '@mui/icons-material/Delete'
 import SecurityIcon from '@mui/icons-material/Security'
@@ -9,6 +10,7 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import CachedIcon from '@mui/icons-material/Cached'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
+import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 
 import ShowChartIcon from '@mui/icons-material/ShowChart'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
@@ -25,33 +27,42 @@ import { useLogout } from '../../store/appStore'
  * modules. Driving the list off a table means adding a domain is one entry here, and a
  * module nobody has mapped still renders (see the fallback below) instead of vanishing.
  */
-const MODULES: Record<string, { label: string; icon: React.ReactNode }> = {
-  mutual_funds: { label: 'Mutual Funds',      icon: <AccountBalanceWalletIcon sx={{ color: '#38BDF8', fontSize: 20 }} /> },
-  equity:       { label: 'Indian Stocks',     icon: <ShowChartIcon sx={{ color: '#3B82F6', fontSize: 20 }} /> },
-  tax_expert:   { label: 'Tax Expert (AIS)',  icon: <ReceiptIcon sx={{ color: '#F59E0B', fontSize: 20 }} /> },
-  budget:       { label: 'Budget Analyzer',   icon: <LightbulbIcon sx={{ color: '#FBBF24', fontSize: 20 }} /> },
+const MODULES: Record<string, { label: string; path: string; icon: React.ReactNode }> = {
+  mutual_funds: { label: 'Mutual Funds',      path: '/mutual-funds', icon: <AccountBalanceWalletIcon sx={{ color: '#38BDF8', fontSize: 19 }} /> },
+  equity:       { label: 'Indian Stocks',     path: '/equity',       icon: <ShowChartIcon sx={{ color: '#3B82F6', fontSize: 19 }} /> },
+  tax_expert:   { label: 'Tax Expert (AIS)',  path: '/tax-expert',   icon: <ReceiptIcon sx={{ color: '#F59E0B', fontSize: 19 }} /> },
+  budget:       { label: 'Budget Analyzer',   path: '/budget',       icon: <LightbulbIcon sx={{ color: '#FBBF24', fontSize: 19 }} /> },
+}
+
+interface ActiveModuleItem {
+  key: string
+  label: string
+  path?: string
+  icon: React.ReactNode
+  count: number
 }
 
 /** Modules present on an account, in MODULES order, with per-module session counts. */
-function activeModules(sessions: { module: string }[]) {
+function activeModules(sessions: { module: string }[]): ActiveModuleItem[] {
   const counts = new Map<string, number>()
   for (const s of sessions) counts.set(s.module, (counts.get(s.module) ?? 0) + 1)
 
-  const known = Object.keys(MODULES)
+  const known: ActiveModuleItem[] = Object.keys(MODULES)
     .filter((k) => counts.has(k))
     .map((k) => ({ key: k, ...MODULES[k], count: counts.get(k)! }))
 
   // Anything the registry reports that this table does not know about. Shown rather
   // than dropped: a session the user cannot see is one they cannot reason about
   // before hitting Purge.
-  const unknown = [...counts.keys()]
+  const unknown: ActiveModuleItem[] = [...counts.keys()]
     .filter((k) => !(k in MODULES))
-    .map((k) => ({ key: k, label: k, icon: <ShieldIcon sx={{ color: '#64748B', fontSize: 20 }} />, count: counts.get(k)! }))
+    .map((k) => ({ key: k, label: k, path: undefined, icon: <ShieldIcon sx={{ color: '#64748B', fontSize: 20 }} />, count: counts.get(k)! }))
 
   return [...known, ...unknown]
 }
 
 export default function AccountsDashboard() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const logout = useLogout()
   const [deletePan, setDeletePan] = useState<string | null>(null)
@@ -174,20 +185,69 @@ export default function AccountsDashboard() {
                     </IconButton>
                   </Box>
 
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, mb: 1.5, display: 'block' }}>ACTIVE MODULES ({acc.sessions.length} Sessions)</Typography>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, mb: 1.5, display: 'block', letterSpacing: '0.05em' }}>
+                    ACTIVE MODULES ({acc.sessions.length} {acc.sessions.length === 1 ? 'SESSION' : 'SESSIONS'})
+                  </Typography>
                   <Stack spacing={1}>
                     {modules.map((m) => (
-                      <Box key={m.key} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, borderRadius: '12px', bgcolor: 'rgba(255,255,255,0.03)' }}>
-                        {m.icon}
-                        <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 600, flex: 1 }}>{m.label}</Typography>
-                        {/* The per-module count is what makes the header total add up.
-                            Without it, "3 Sessions" over two rows looks like a bug. */}
-                        <Chip
-                          label={m.count}
-                          size="small"
-                          sx={{ height: 20, fontSize: 11, fontWeight: 800, bgcolor: 'rgba(255,255,255,0.06)', color: 'text.secondary' }}
-                        />
-                      </Box>
+                      <Tooltip key={m.key} title={m.path ? `Open ${m.label} Dashboard` : ''} arrow placement="top">
+                        <Box
+                          onClick={() => m.path && navigate(m.path)}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1.5,
+                            p: 1.25,
+                            px: 1.5,
+                            borderRadius: '12px',
+                            bgcolor: 'rgba(255,255,255,0.03)',
+                            border: '1px solid rgba(255,255,255,0.05)',
+                            cursor: m.path ? 'pointer' : 'default',
+                            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                            '&:hover': m.path ? {
+                              bgcolor: 'rgba(99, 102, 241, 0.08)',
+                              borderColor: 'rgba(99, 102, 241, 0.3)',
+                              transform: 'translateX(3px)',
+                              '& .chevron-icon': {
+                                color: '#38BDF8',
+                                transform: 'translateX(2px)',
+                              },
+                            } : {},
+                          }}
+                        >
+                          <Box sx={{ p: 0.5, borderRadius: '8px', bgcolor: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {m.icon}
+                          </Box>
+                          <Typography variant="body2" sx={{ color: '#F8FAFC', fontWeight: 600, flex: 1, fontSize: 13 }}>
+                            {m.label}
+                          </Typography>
+                          <Chip
+                            label={`${m.count} ${m.count === 1 ? 'session' : 'sessions'}`}
+                            size="small"
+                            icon={<Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#10B981', ml: 0.75, mr: -0.5, boxShadow: '0 0 6px #10B981' }} />}
+                            sx={{
+                              height: 22,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              bgcolor: 'rgba(16, 185, 129, 0.08)',
+                              color: '#34D399',
+                              border: '1px solid rgba(16, 185, 129, 0.2)',
+                              '& .MuiChip-label': { px: 0.75 },
+                            }}
+                          />
+                          {m.path && (
+                            <ChevronRightIcon
+                              className="chevron-icon"
+                              sx={{
+                                fontSize: 18,
+                                color: 'rgba(255,255,255,0.25)',
+                                transition: 'all 0.2s ease',
+                                ml: -0.5,
+                              }}
+                            />
+                          )}
+                        </Box>
+                      </Tooltip>
                     ))}
                   </Stack>
                 </Paper>

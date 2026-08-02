@@ -40,14 +40,8 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const email = useAppStore((s) => s.email)
   const isAuthenticated = useIsAuthenticated()
   const [panDialogOpen, setPanDialogOpen] = useState(false)
-  const [promptDismissed, setPromptDismissed] = useState(false)
   const logout = useLogout()
 
-  // A Google account has no PAN until the user adds one, so neither the avatar nor
-  // the label can assume there is one to slice.
-  // Prompt once per visit for a signed-in account with no PAN. Not persisted: a
-  // dismissal that outlived the session would leave no way back except the menu.
-  const promptForPan = isAuthenticated && !pan && !promptDismissed
   const accountLabel = pan ?? email ?? 'Account'
   const avatarInitials = (pan ?? email ?? '?').substring(0, 2).toUpperCase()
   // Selector form: the destructured `useAppStore()` re-rendered this whole component
@@ -455,12 +449,10 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
           </Menu>
       </Toolbar>
 
-      {/* Opens by itself once for an account that has no PAN yet, and on demand from
-          the account menu. Dismissable: nothing breaks without a PAN, the upload form
-          just asks for the CAS password manually. */}
+      {/* Profile PAN update dialog accessible from account menu */}
       <ProfilePanDialog
-        open={panDialogOpen || promptForPan}
-        onClose={() => { setPanDialogOpen(false); setPromptDismissed(true) }}
+        open={panDialogOpen}
+        onClose={() => setPanDialogOpen(false)}
       />
     </AppBar>
   )
