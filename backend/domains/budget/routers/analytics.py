@@ -1,10 +1,13 @@
 import logging
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from shared import identity
-from domains.budget.sessions import get_budget_session, get_all_budget_sessions, update_budget_transactions
+from domains.budget.merchants import clean_merchant_name
+from domains.budget.natures import nature_of
+from domains.budget.pipeline import BudgetContext, load_context
+from domains.budget.sessions import update_budget_transactions
 import datetime
 import re
 
@@ -12,19 +15,41 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["budget"])
 
-def _clean_merchant_name(desc: str) -> str:
-    if not desc or str(desc).strip().lower() in ("nan", "none", "null", ""):
-        return "Uncategorized Payee"
-    raw = str(desc).strip()
-    # Remove common banking prefix noise
-    clean = re.sub(r'^(UPI/(DR|CR)/[\d\w]+/|POS\s*\d*\s*|NEFT[-\s]*\d*[-\s]*|RTGS[-\s]*\d*[-\s]*|IMPS[-\s]*\d*[-\s]*|ACH\s*[DC][-\s]*|INF\*|BIL/|E-COMM\s*|INB\s*)', '', raw, flags=re.IGNORECASE).strip()
-    clean = re.sub(r'[/@].*$', '', clean).strip()  # Cut off after / or @ (like @okaxis or /paytm)
-    clean = re.sub(r'\s{2,}', ' ', clean)
-    if clean.lower() in ("nan", "none", "null", ""):
-        return "Uncategorized Payee"
-    if len(clean) > 28:
-        clean = clean[:25] + "..."
-    return clean.title() if clean else raw[:25].title()
+
+def _require_caller() -> str:
+    """
+    The authenticated user_id, or 401.
+
+    These handlers used to follow the 401 check with `identity.owns_record(user_id)` on
+    a bare line. That call passed the caller's *own* id, so it compared the caller to
+    themselves and was always True, and its return value was discarded - it enforced
+    nothing while looking like it did. Per-session ownership is enforced inside
+    domains/budget/sessions.py, which is the only way to reach a payload.
+    """
+    user_id = identity.current_user_id()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Sign in to use the budget analyzer.")
+    return user_id
+
+
+def _load(session_id: str, user_id: str):
+    """
+    The caller's transactions, with transfers already excluded.
+
+    Returns (real_transactions, metadata). `ctx.real` rather than `ctx.df` is the
+    default on purpose: money moved between the user's own accounts is neither income
+    nor expense, and every total on this page - savings rate, monthly burn, the
+    50/30/20 split - was inflated by counting both legs. Endpoints that genuinely want
+    the internal movement ask load_context for it directly.
+    """
+    ctx = load_context(session_id, user_id)
+    return ctx.real, ctx.meta
+
+# Merchant normalisation lives in domains/budget/merchants.py so that this router, the
+# recurring detector, the anomaly scanner and the Sankey builder all group by the same
+# name. Two implementations of "which merchant is this" produce two different top-payee
+# lists from one dataset, which is exactly what happened before.
+_clean_merchant_name = clean_merchant_name
 
 def _infer_payment_mode(desc: str) -> str:
     if not desc:
@@ -128,51 +153,13 @@ def _apply_budget_filters(
 
     return df
 
-def _infer_category_nature(category_name: str) -> str:
-    """
-    Dynamically and intelligently maps any category name (standard, custom, or user-created)
-    to its 50/30/20 financial nature: 'needs', 'wants', 'investments', 'transfers', or 'income'.
-    """
-    if not category_name or not str(category_name).strip():
-        return "wants"
-    
-    c = str(category_name).strip().lower()
-    
-    exact_map = {
-        "utilities & bills": "needs",
-        "loans & emi": "needs",
-        "health & medical": "needs",
-        "taxes": "needs",
-        "bank charges & fees": "needs",
-        "food & dining": "wants",
-        "shopping & groceries": "wants",
-        "entertainment": "wants",
-        "travel & transport": "wants",
-        "investments": "investments",
-        "salary/income": "income",
-        "interest Income": "income",
-        "transfers & payments": "transfers",
-        "cash withdrawal": "transfers",
-    }
-    if c in exact_map:
-        return exact_map[c]
-        
-    if any(k in c for k in ("utilit", "bill", "electr", "water", "gas", "recharge", "wifi", "rent", "emi", "loan", "mortgage", "insur", "medic", "health", "doctor", "pharm", "tax", "gst", "tds", "fee", "charg", "grocer", "ration")):
-        return "needs"
-        
-    if any(k in c for k in ("invest", "sip", "fund", "stock", "equity", "demat", "groww", "zerodha", "nps", "ppf", "fd", "gold", "crypto", "wealth")):
-        return "investments"
-        
-    if any(k in c for k in ("transfer", "tfr", "atm", "cash", "self", "card pay", "credit card pay", "cc bill", "settle")):
-        return "transfers"
-        
-    if any(k in c for k in ("salary", "wage", "payroll", "dividend", "interest", "refund", "cashback", "credit interest")):
-        return "income"
-        
-    if any(k in c for k in ("dine", "dining", "food", "restaurant", "swiggy", "zomato", "cafe", "coffee", "shop", "apparel", "cloth", "fashion", "movie", "cinema", "netflix", "ott", "game", "travel", "flight", "hotel", "trip", "vacation", "cab", "uber", "ola", "lifestyle", "hobby")):
-        return "wants"
-        
-    return "wants"
+# The 50/30/20 classification lives in domains/budget/natures.py. It was a private
+# function in this router, so the Sankey builder and the envelope report could only
+# reach it by importing from a router module or reimplementing it. It also carried a
+# dead entry - "interest Income", keyed with a capital I against a lowercased lookup,
+# which could never match.
+_infer_category_nature = nature_of
+
 
 @router.get("/{session_id}/overview")
 async def get_budget_overview(
@@ -188,16 +175,23 @@ async def get_budget_overview(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, accounts = get_all_budget_sessions(user_id)
-    else:
-        df, accounts = get_budget_session(session_id)
-        
+    user_id = _require_caller()
+    ctx = load_context(session_id, user_id)
+    df, accounts = ctx.real, ctx.meta
+
+    # The internal movement that was netted out, reported alongside the corrected
+    # totals rather than silently dropped.
+    internal = ctx.internal
+    transfers_excluded = {
+        "pair_count": len(ctx.transfers),
+        "from_income": round(
+            float(internal[internal["type"] == "credit"]["amount"].sum()) if not internal.empty else 0.0, 2),
+        "from_expense": round(
+            float(internal[internal["type"] == "debit"]["amount"].sum()) if not internal.empty else 0.0, 2),
+        "card_payments": round(
+            sum(p.amount for p in ctx.transfers if p.is_card_payment), 2),
+    }
+
     if df.empty:
         raise HTTPException(404, detail="Session not found or empty")
 
@@ -569,7 +563,12 @@ async def get_budget_overview(
         "account_types": all_account_types,
         "categories": all_categories,
         "bank_breakdown": bank_breakdown,
-        "budget_50_30_20": budget_50_30_20
+        "budget_50_30_20": budget_50_30_20,
+        # What the pairing removed. Shown so the user can see why these totals differ
+        # from the raw sum of their statements - an unexplained correction reads as a
+        # bug, and the amounts involved are often large.
+        "transfers_excluded": transfers_excluded,
+        "accounts": [a.as_dict() for a in ctx.accounts],
     }
 
 @router.get("/{session_id}/transactions")
@@ -584,20 +583,29 @@ async def get_transactions(
     amount_bracket: Optional[str] = "all",
     payment_mode: Optional[str] = "all",
     category: Optional[str] = "all",
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    include_transfers: bool = False,
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, _ = get_all_budget_sessions(user_id)
-    else:
-        df, _ = get_budget_session(session_id)
-        
+    """
+    Filtered transactions, paginated.
+
+    This used to return the whole filtered frame, and for session_id="overall" that is
+    every transaction across every statement the user has uploaded - tens of thousands
+    of rows serialised on the server and mounted, unvirtualised, in the browser. The
+    page defaults to 500 with `total` returned alongside so the client can paginate.
+
+    Internal transfers are excluded by default for consistency with every other figure
+    on the dashboard, but can be asked for: the transactions table is the one place a
+    user reasonably wants to see them.
+    """
+    user_id = _require_caller()
+    ctx = load_context(session_id, user_id)
+    df = ctx.df if include_transfers else ctx.real
+
     if df.empty:
-        return {"transactions": []}
+        return {"transactions": [], "total": 0, "limit": limit, "offset": offset}
 
     df = _apply_budget_filters(
         df,
@@ -612,8 +620,24 @@ async def get_transactions(
         category=category,
         search=search
     )
-        
-    return {"transactions": df.fillna("").to_dict(orient="records")}
+
+    total = len(df)
+    # Newest first: a statement view that opens on the oldest transaction is useless,
+    # and paginating an unsorted frame would return rows in decode order.
+    if "parsed_date" in df.columns:
+        df = df.sort_values("parsed_date", ascending=False)
+    elif "date" in df.columns:
+        df = df.sort_values("date", ascending=False)
+
+    page = df.iloc[offset: offset + limit]
+
+    return {
+        "transactions": page.fillna("").to_dict(orient="records"),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(page) < total,
+    }
 
 @router.get("/{session_id}/categories")
 async def get_category_breakdown(
@@ -629,19 +653,27 @@ async def get_category_breakdown(
     category: Optional[str] = "all",
     search: Optional[str] = None
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
-    if session_id == "overall":
-        df, _ = get_all_budget_sessions(user_id)
-    else:
-        df, _ = get_budget_session(session_id)
-        
-    # Keep unfiltered copy for total reference and all categories list
-    all_available_categories = sorted(df[df["type"] == (txn_type.lower() if txn_type in ("debit", "credit") else "debit")]["category"].dropna().unique().tolist())
-    overall_total_spend = float(df[df["type"] == (txn_type.lower() if txn_type in ("debit", "credit") else "debit")]["amount"].sum())
+    user_id = _require_caller()
+    df, _ = _load(session_id, user_id)
+
+    # An empty frame has no columns, so the reference figures below would raise KeyError
+    # rather than returning an empty breakdown.
+    if df.empty:
+        return {
+            "is_drilldown": False,
+            "selected_category": None,
+            "all_categories": [],
+            "categories": [],
+            "available_natures": [],
+            "nature_summary": {"needs": 0.0, "wants": 0.0, "investments": 0.0, "transfers": 0.0, "other": 0.0},
+            "total_amount": 0.0,
+        }
+
+    # Keep unfiltered reference figures for the "% of total" denominators.
+    reference_type = txn_type.lower() if txn_type in ("debit", "credit") else "debit"
+    reference_df = df[df["type"] == reference_type]
+    all_available_categories = sorted(reference_df["category"].dropna().unique().tolist())
+    overall_total_spend = float(reference_df["amount"].sum())
 
     df = _apply_budget_filters(
         df,
@@ -804,11 +836,8 @@ class TransactionUpdate(BaseModel):
 async def bulk_update_transactions(
     updates: List[TransactionUpdate] = Body(...)
 ):
-    user_id = identity.current_user_id()
-    if not user_id:
-        raise HTTPException(401, detail="Unauthorized")
-    identity.owns_record(user_id)
-    
+    user_id = _require_caller()
+
     # Group updates by session_id
     from collections import defaultdict
     session_updates = defaultdict(list)

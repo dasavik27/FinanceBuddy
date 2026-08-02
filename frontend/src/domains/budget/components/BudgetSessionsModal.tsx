@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box,
   Typography, Stack, Chip, IconButton, Tooltip, CircularProgress, Divider
@@ -30,7 +30,7 @@ const BANK_COLOR_MAP: Record<string, { bg: string, border: string, text: string 
   GENERIC: { bg: 'rgba(100, 116, 139, 0.15)', border: 'rgba(100, 116, 139, 0.4)', text: '#94a3b8' },
 }
 
-export default function BudgetSessionsModal({
+function BudgetSessionsModal({
   open,
   onClose,
   sessions,
@@ -303,3 +303,7 @@ export default function BudgetSessionsModal({
     </Dialog>
   )
 }
+
+// Mounted permanently by the dashboard, so without this it re-rendered its whole
+// session list on every filter keystroke even while closed.
+export default React.memo(BudgetSessionsModal)
