@@ -231,6 +231,39 @@ export interface CorporateAction {
   face_value?: string | number | null
 }
 
+/**
+ * The company's own most recent quarterly filing, parsed from its XBRL. Kept separate
+ * from the yfinance statements rather than merged: it states its own basis
+ * (consolidated vs standalone) and audit status, which yfinance does not.
+ */
+export interface LatestFiling {
+  symbol: string
+  source: string
+  quarter_end: string
+  basis?: string
+  audited?: string
+  filed_at?: string | null
+  filing_url?: string
+  revenue_cr?: number | null
+  total_income_cr?: number | null
+  total_expenses_cr?: number | null
+  pbt_cr?: number | null
+  tax_expense_cr?: number | null
+  net_income_cr?: number | null
+  net_margin_pct?: number | null
+  eps_basic?: number | null
+  eps_diluted?: number | null
+  face_value?: number | null
+}
+
+export interface Announcement {
+  symbol: string
+  subject: string
+  detail?: string | null
+  broadcast_at?: string | null
+  attachment?: string | null
+}
+
 export interface CorporateEvent {
   symbol: string
   company: string
@@ -367,6 +400,14 @@ export interface StockAnalysis {
    */
   corporate_actions?: CorporateAction[]
   upcoming_events?: CorporateEvent[]
+  latest_filing?: LatestFiling | null
+  /**
+   * Per-company exchange filings. Preferred over a media news feed: the newswire RSS
+   * options are category-level only, so per-company relevance would mean matching
+   * names against a firehose, and "Tata" alone matches five listed companies. These
+   * are authoritative and already tagged with the symbol.
+   */
+  announcements?: Announcement[]
   /** True when served past its freshness window while a refresh runs in background. */
   stale?: boolean
   description?: string

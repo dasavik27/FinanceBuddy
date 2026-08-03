@@ -15,7 +15,7 @@ from typing import Any
 
 import pandas as pd
 
-from domains.equity import nse_corporate
+from domains.equity import nse_corporate, nse_results
 from domains.equity.sector_map import SECTOR_MAP, get_sector
 from shared.services import market_hours, refresh
 from shared.services.cache import MARKET_CACHE, ttl_for
@@ -1031,8 +1031,39 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     # NSE's disclosure endpoints still serve, unlike its quote API. These fail soft to
     # empty lists - notably on a cloud host, where NSE blocks datacenter IPs outright -
     # so the analyzer degrades to "no corporate actions" rather than to an error.
-    actions = nse_corporate.corporate_actions(clean)
-    calendar_events = nse_corporate.event_calendar(clean)
+    # Four independent NSE lookups, overlapped rather than run in series.
+    #
+    # Each is a separate cache entry and a separate round trip, and NSE is slow: run
+    # sequentially they took a cold SWIGGY analysis from ~35s to 91.6s. They are pure
+    # I/O wait, so the threads cost almost no CPU, and the pool is sized to exactly the
+    # number of tasks so nothing is left idle. Each already fails soft to an
+    # empty result, so a failure here degrades one section rather than the response.
+    #
+    #   corporate_actions - dividends, bonuses, splits (NSE is authoritative; yfinance
+    #                       reports bonuses as splits and mis-scales compound actions)
+    #   event_calendar    - upcoming board meetings and results dates
+    #   latest_results    - the company's own most recent filing, with its basis and
+    #                       audit status stated; fills the quarter yfinance leaves thin
+    #   announcements     - per-symbol exchange filings, used in place of a news feed
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="nse") as pool:
+        f_actions = pool.submit(nse_corporate.corporate_actions, clean)
+        f_events = pool.submit(nse_corporate.event_calendar, clean)
+        f_filing = pool.submit(nse_results.latest_results, clean)
+        f_announce = pool.submit(nse_corporate.announcements, clean, 6)
+
+        def _settled(future, default):
+            try:
+                return future.result()
+            except Exception as e:
+                logger.warning("[analyzer] NSE lookup failed for %s: %s", clean, e)
+                return default
+
+        actions = _settled(f_actions, [])
+        calendar_events = _settled(f_events, [])
+        latest_filing = _settled(f_filing, None)
+        recent_filings = _settled(f_announce, [])
 
     fin_currency = _f("financialCurrency") or "INR"
     stmt_fx = _fx_to_inr(fin_currency)
@@ -1103,6 +1134,8 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         # wrong outright (BAJFINANCE Jun-2025 is 10x; yfinance says 2.0).
         "corporate_actions": actions[:12],
         "upcoming_events": [e for e in calendar_events if e.get("date")][:6],
+        "latest_filing": latest_filing,
+        "announcements": recent_filings,
         "description": (_f("longBusinessSummary", "")[:600] + "...") if _f("longBusinessSummary") else "",
         "chart": {
             "dates": price_dates,

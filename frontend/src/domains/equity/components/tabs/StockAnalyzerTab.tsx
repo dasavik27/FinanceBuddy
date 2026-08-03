@@ -1055,6 +1055,39 @@ export default function StockAnalyzerTab() {
                     </Box>
                   ) : null}
 
+                  {/*
+                    Exchange filings rather than a news feed. Newswire RSS is
+                    category-level only, so per-company relevance would mean matching
+                    names against a firehose — "Tata" alone matches five listed
+                    companies. These arrive tagged with the symbol and are official.
+                  */}
+                  {stock.announcements && stock.announcements.length > 0 && (
+                    <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 1.8 }}>
+                        Recent exchange filings
+                      </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {stock.announcements.slice(0, 6).map((a, i) => (
+                          <Box
+                            key={i}
+                            sx={{
+                              display: 'flex', gap: 1.5, alignItems: 'baseline',
+                              p: 1.3, borderRadius: '10px',
+                              background: 'rgba(255,255,255,0.025)',
+                            }}
+                          >
+                            <Typography sx={{ color: '#64748B', fontSize: '0.72rem', fontFamily: 'monospace', flexShrink: 0, minWidth: 92 }}>
+                              {(a.broadcast_at || '').split(' ')[0] || '—'}
+                            </Typography>
+                            <Typography sx={{ color: '#CBD5E1', fontSize: '0.84rem' }}>
+                              {a.subject || 'Filing'}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+
                   {/* Company Description */}
                   {stock.description && (
                     <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
@@ -1715,6 +1748,59 @@ export default function StockAnalyzerTab() {
                 border: '1px solid rgba(255,255,255,0.08)',
               }}
             >
+              {/*
+                The company's own latest filing, shown above the Yahoo-derived
+                statements rather than merged into them. It is the more current and
+                more precise of the two — yfinance returns no quarterly cash flow at
+                all for several large names and does not say whether its figures are
+                consolidated or standalone — so its basis and audit status are stated
+                on the card rather than left to be assumed.
+              */}
+              {stock.latest_filing && (
+                <Box
+                  sx={{
+                    mb: 3, p: 2.2, borderRadius: '16px',
+                    background: 'rgba(16,185,129,0.05)',
+                    border: '1px solid rgba(16,185,129,0.18)',
+                  }}
+                >
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1.6 }}>
+                    <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.98rem' }}>
+                      Latest filed quarter · {stock.latest_filing.quarter_end}
+                    </Typography>
+                    {stock.latest_filing.basis && (
+                      <Chip size="small" label={stock.latest_filing.basis}
+                        sx={{ height: 20, fontSize: '0.68rem', fontWeight: 800, bgcolor: 'rgba(16,185,129,0.15)', color: '#10B981' }} />
+                    )}
+                    {stock.latest_filing.audited && (
+                      <Chip size="small" label={stock.latest_filing.audited}
+                        sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700, bgcolor: 'rgba(148,163,184,0.14)', color: '#94A3B8' }} />
+                    )}
+                    <Typography sx={{ color: '#64748B', fontSize: '0.72rem' }}>
+                      {stock.latest_filing.source}
+                    </Typography>
+                  </Box>
+                  <Grid container spacing={2}>
+                    {([
+                      ['Revenue', fmtCr(stock.latest_filing.revenue_cr)],
+                      ['Profit before tax', fmtCr(stock.latest_filing.pbt_cr)],
+                      ['Net profit', fmtCr(stock.latest_filing.net_income_cr)],
+                      ['Net margin', fmtPctVal(stock.latest_filing.net_margin_pct)],
+                      ['EPS (basic)', stock.latest_filing.eps_basic != null ? `₹${stock.latest_filing.eps_basic}` : '—'],
+                    ] as const).map(([label, value]) => (
+                      <Grid item xs={6} sm={4} md={2.4} key={label}>
+                        <Typography sx={{ color: '#94A3B8', fontSize: '0.72rem', fontWeight: 600 }}>
+                          {label}
+                        </Typography>
+                        <Typography sx={{ color: '#F8FAFC', fontSize: '0.98rem', fontWeight: 800, fontFamily: 'monospace' }}>
+                          {value}
+                        </Typography>
+                      </Grid>
+                    ))}
+                  </Grid>
+                </Box>
+              )}
+
               {/* Statement and Period Switcher Controls */}
               <Box
                 sx={{
