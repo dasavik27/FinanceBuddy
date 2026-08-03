@@ -67,6 +67,30 @@ class Quote:
         return self.ltp - self.prev_close
 
 
+#: Symbols that have been renamed on the exchange, old -> current.
+#:
+#: A rename is invisible until it isn't: Zomato became Eternal and ZOMATO.NS now returns
+#: zero rows from Yahoo and zero records from NSE, while ETERNAL returns the full
+#: history back to 2021 - so a saved watchlist entry or an older broker statement
+#: silently produced an empty chart rather than an error. Tata Motors is the same story
+#: post-demerger (TATAMOTORS.NS is a hard 404 on both .NS and .BO).
+#:
+#: The durable fix is keying on ISIN, which survives renames. This table is the
+#: stopgap that covers the names people actually hold today.
+_RENAMED: dict[str, str] = {
+    "ZOMATO": "ETERNAL",
+    "TATAMOTORS": "TMPV",
+}
+
+
+def resolve_symbol(symbol: str) -> str:
+    """Current NSE symbol for a possibly-renamed one."""
+    s = str(symbol).upper().strip()
+    if s.endswith("-EQ"):
+        s = s[:-3]
+    return _RENAMED.get(s, s)
+
+
 def to_yahoo_ticker(symbol: str) -> str:
     """NSE trading symbol -> Yahoo ticker. Already-suffixed symbols pass through."""
     s = str(symbol).upper().strip()
@@ -74,7 +98,7 @@ def to_yahoo_ticker(symbol: str) -> str:
         s = s[:-3]
     if s.endswith(".NS") or s.endswith(".BO"):
         return s
-    return s + ".NS"
+    return _RENAMED.get(s, s) + ".NS"
 
 
 def is_valid_symbol(symbol: str) -> bool:

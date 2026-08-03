@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import {
   Box,
   Typography,
@@ -110,6 +110,29 @@ function fmtCr(v?: number | null) {
 function fmtPctVal(v?: number | null) {
   if (v === null || v === undefined) return '—'
   return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
+}
+
+/**
+ * Corporate-action colours. Bonus and split are deliberately distinct: they are
+ * different events with different cost-basis consequences, and conflating them is the
+ * exact mistake the NSE feed exists to correct.
+ */
+const ACTION_TONE: Record<string, string> = {
+  dividend: 'rgba(16,185,129,0.14)',
+  bonus: 'rgba(168,85,247,0.16)',
+  split: 'rgba(56,189,248,0.14)',
+  rights: 'rgba(245,158,11,0.14)',
+  buyback: 'rgba(236,72,153,0.14)',
+  demerger: 'rgba(148,163,184,0.14)',
+}
+
+const ACTION_INK: Record<string, string> = {
+  dividend: '#10B981',
+  bonus: '#A855F7',
+  split: '#38BDF8',
+  rights: '#F59E0B',
+  buyback: '#EC4899',
+  demerger: '#94A3B8',
 }
 
 /** Absent yield renders as a dash, never as "0.0%" — that asserts a fact we lack. */
@@ -285,6 +308,10 @@ export default function StockAnalyzerTab() {
 
   const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [loadingImpact, setLoadingImpact] = useState(false)
+  const [impactError, setImpactError] = useState<string | null>(null)
+  //: Monotonic request id, so a slow response for a stock you have navigated away from
+  //: cannot overwrite the one you actually asked for.
+  const analysisSeq = useRef(0)
   const [loadingCompareStock, setLoadingCompareStock] = useState<string | null>(null)
 
   // Financial Statements & Earnings sub-tab state
@@ -325,11 +352,14 @@ export default function StockAnalyzerTab() {
   const handleImpact = async (symbol: string, amt: number) => {
     if (!sessionId || !amt || Number.isNaN(amt) || amt <= 0) return
     setLoadingImpact(true)
+    setImpactError(null)
     try {
       const data = await apiClient.stockPortfolioImpact(symbol, amt, sessionId)
       setImpact(data)
-    } catch (e) {
-      console.error(e)
+    } catch {
+      // Was `console.error` only: the spinner stopped, the panel stayed empty, and the
+      // user was given no indication that anything had failed.
+      setImpactError('Could not run that simulation. Please retry.')
     } finally {
       setLoadingImpact(false)
     }
@@ -344,13 +374,21 @@ export default function StockAnalyzerTab() {
     setQuery(`${val.symbol} - ${val.name}`)
     setLoadingAnalysis(true)
     setAnalysisError(null)
+
+    // Last-request-wins. Two quick selections — easy to trigger from the peer cards or
+    // the watchlist pills — previously raced, and whichever response *arrived* last
+    // won regardless of which was asked for last, so you could end up looking at a
+    // stock you had already navigated away from.
+    const seq = ++analysisSeq.current
     try {
       const data = await apiClient.analyzeStock(val.symbol)
+      if (seq !== analysisSeq.current) return
       setStock(data)
       if (sessionId) {
         void handleImpact(data.symbol, parseFloat(impactAmount))
       }
     } catch (e) {
+      if (seq !== analysisSeq.current) return
       const status = (e as { response?: { status?: number } })?.response?.status
       setAnalysisError(
         status === 404
@@ -358,7 +396,7 @@ export default function StockAnalyzerTab() {
           : 'Could not load analysis for that stock. Please try again.',
       )
     } finally {
-      setLoadingAnalysis(false)
+      if (seq === analysisSeq.current) setLoadingAnalysis(false)
     }
   }
 
@@ -606,7 +644,19 @@ export default function StockAnalyzerTab() {
       )}
 
       {analysisError && !loadingAnalysis && (
-        <Alert severity="error" sx={{ borderRadius: '16px', mb: 4, maxWidth: 850, mx: 'auto' }}>
+        <Alert
+          severity="error"
+          sx={{ borderRadius: '16px', mb: 4, maxWidth: 850, mx: 'auto' }}
+          action={
+            // Was a bare alert with no way back: re-running meant reopening the
+            // dropdown and picking the same stock again.
+            selectedStock ? (
+              <Button size="small" color="inherit" onClick={() => handleSelect(selectedStock)}>
+                Retry
+              </Button>
+            ) : undefined
+          }
+        >
           {analysisError}
         </Alert>
       )}
@@ -954,6 +1004,57 @@ export default function StockAnalyzerTab() {
                     </Box>
                   )}
 
+                  {/*
+                    Corporate actions, from NSE rather than Yahoo. Bonus and split are
+                    shown as distinct types because they are distinct events with
+                    different cost-basis consequences — yfinance conflates them, and
+                    reports compound actions at the wrong factor entirely.
+                  */}
+                  {(stock.corporate_actions?.length || stock.upcoming_events?.length) ? (
+                    <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 2 }}>
+                        Corporate actions &amp; events
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {stock.upcoming_events?.slice(0, 3).map((e, i) => (
+                          <Grid item xs={12} sm={6} md={4} key={`ev-${i}`}>
+                            <Box sx={{ p: 1.6, borderRadius: '12px', background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.16)' }}>
+                              <Typography sx={{ color: '#38BDF8', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                {e.date || 'Date TBC'}
+                              </Typography>
+                              <Typography sx={{ color: '#F8FAFC', fontSize: '0.85rem', fontWeight: 600, mt: 0.4 }}>
+                                {e.purpose || 'Board meeting'}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        ))}
+                        {stock.corporate_actions?.slice(0, 6).map((a, i) => (
+                          <Grid item xs={12} sm={6} md={4} key={`ca-${i}`}>
+                            <Box sx={{ p: 1.6, borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                              <Box sx={{ display: 'flex', gap: 0.8, alignItems: 'center', mb: 0.4, flexWrap: 'wrap' }}>
+                                <Chip
+                                  size="small"
+                                  label={a.ratio ? `${a.type} ${a.ratio}` : a.type}
+                                  sx={{
+                                    height: 20, fontSize: '0.68rem', fontWeight: 800, textTransform: 'capitalize',
+                                    bgcolor: ACTION_TONE[a.type] ?? 'rgba(148,163,184,0.14)',
+                                    color: ACTION_INK[a.type] ?? '#94A3B8',
+                                  }}
+                                />
+                                <Typography sx={{ color: '#64748B', fontSize: '0.72rem' }}>
+                                  {a.ex_date ? `ex ${a.ex_date}` : 'ex-date TBC'}
+                                </Typography>
+                              </Box>
+                              <Typography sx={{ color: '#CBD5E1', fontSize: '0.82rem' }}>
+                                {a.subject}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </Box>
+                  ) : null}
+
                   {/* Company Description */}
                   {stock.description && (
                     <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
@@ -1023,6 +1124,22 @@ export default function StockAnalyzerTab() {
                         <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
                           <CircularProgress size={26} sx={{ color: '#8B5CF6' }} />
                         </Box>
+                      ) : impactError ? (
+                        <Alert
+                          severity="error"
+                          sx={{ borderRadius: '12px' }}
+                          action={
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={() => handleImpact(stock.symbol, parseFloat(impactAmount))}
+                            >
+                              Retry
+                            </Button>
+                          }
+                        >
+                          {impactError}
+                        </Alert>
                       ) : impact ? (
                         <Box>
                           {impact.already_owned && (

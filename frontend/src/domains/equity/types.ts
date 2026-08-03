@@ -216,6 +216,29 @@ export interface EarningsSummary {
   history?: EarningsHistoryItem[]
 }
 
+export type CorporateActionType =
+  | 'dividend' | 'bonus' | 'split' | 'rights' | 'buyback' | 'demerger' | 'other'
+
+export interface CorporateAction {
+  symbol: string
+  type: CorporateActionType
+  subject: string
+  /** "4:1" for a bonus, "2:1" for a face-value split. Null for dividends. */
+  ratio?: string | null
+  ex_date?: string | null
+  record_date?: string | null
+  isin?: string | null
+  face_value?: string | number | null
+}
+
+export interface CorporateEvent {
+  symbol: string
+  company: string
+  purpose: string
+  date?: string | null
+  details?: string | null
+}
+
 /** Forward analyst consensus. Absent entirely when no broker covers the name. */
 export interface ConsensusEstimate {
   avg?: number | null
@@ -337,6 +360,15 @@ export interface StockAnalysis {
   earnings?: QuarterlyEarnings[]
   earnings_summary?: EarningsSummary
   consensus?: Consensus
+  /**
+   * From NSE, which is authoritative here where Yahoo is not: yfinance reports Indian
+   * bonus issues as splits indistinguishably and mis-scales compound actions. Empty
+   * when NSE is unreachable (it blocks datacenter IPs).
+   */
+  corporate_actions?: CorporateAction[]
+  upcoming_events?: CorporateEvent[]
+  /** True when served past its freshness window while a refresh runs in background. */
+  stale?: boolean
   description?: string
   chart?: {
     dates: string[]

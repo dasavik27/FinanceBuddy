@@ -16,12 +16,48 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from domains.equity.quotes import resolve_symbol, to_yahoo_ticker
+from domains.equity.sector_map import get_sector
 from domains.equity.stock_analyzer import (
     _dividend_yield_pct,
     _fetch_consensus,
     _fx_to_inr,
     _peer_symbols,
 )
+
+
+# ── renamed symbols ──────────────────────────────────────────────────────────
+
+class TestRenamedSymbols:
+    """
+    A rename is silent, not loud: the old ticker returns *zero rows* rather than an
+    error, so a saved watchlist entry produced an empty chart with nothing to explain
+    it. Verified against live data - ZOMATO.NS returns nothing while ETERNAL.NS returns
+    1,246 rows over five years.
+    """
+
+    def test_zomato_resolves_to_eternal(self):
+        assert resolve_symbol("ZOMATO") == "ETERNAL"
+        assert to_yahoo_ticker("ZOMATO") == "ETERNAL.NS"
+
+    def test_tatamotors_resolves_to_its_demerged_successor(self):
+        assert to_yahoo_ticker("TATAMOTORS") == "TMPV.NS"
+
+    def test_current_symbols_are_untouched(self):
+        assert to_yahoo_ticker("RELIANCE") == "RELIANCE.NS"
+        assert resolve_symbol("RELIANCE") == "RELIANCE"
+
+    def test_rename_applies_after_the_eq_suffix_is_stripped(self):
+        assert to_yahoo_ticker("ZOMATO-EQ") == "ETERNAL.NS"
+
+    def test_explicit_yahoo_suffix_still_passes_through(self):
+        assert to_yahoo_ticker("ETERNAL.NS") == "ETERNAL.NS"
+
+    def test_both_old_and_new_names_classify(self):
+        # A holding recorded under either name must still land in a sector, or it falls
+        # into "Others" and drags the allocation chart with it.
+        assert get_sector("ZOMATO")[0] == "Consumer Discretionary"
+        assert get_sector("ETERNAL")[0] == "Consumer Discretionary"
 
 
 # ── dividend yield ───────────────────────────────────────────────────────────

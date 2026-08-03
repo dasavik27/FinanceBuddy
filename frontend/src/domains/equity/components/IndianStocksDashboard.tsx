@@ -15,12 +15,15 @@ export default function IndianStocksDashboard() {
 
   return (
     <Box>
+      {/*
+        The dashboard renders with or without a portfolio. It used to be gated entirely
+        behind `sessionId`, which put the Stock Analyzer — the one feature here that
+        needs no holdings at all — behind uploading a broker statement. A new user had
+        nothing to look at until they had a file to hand. The portfolio *tabs* still
+        need a session and show the upload panel themselves.
+      */}
       <ErrorBoundary fallbackMessage="Equity Dashboard encountered an error.">
-        {sessionId ? (
-          <EquityDashboard />
-        ) : (
-          <EquityUploadPanel />
-        )}
+        <EquityDashboard hasSession={Boolean(sessionId)} />
       </ErrorBoundary>
     </Box>
   )

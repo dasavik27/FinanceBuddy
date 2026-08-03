@@ -1,7 +1,7 @@
 import { Suspense, lazy, useState } from 'react'
 import { Box, Typography, Tabs, Tab } from '@mui/material'
 import { motion, AnimatePresence } from 'framer-motion'
-import { SwitchEquityStatementButton } from './EquityUploadPanel'
+import EquityUploadPanel, { SwitchEquityStatementButton } from './EquityUploadPanel'
 import { ErrorBoundary } from '../../../shared/components/ui/ErrorBoundary'
 import { useEquitySessionId } from '../../../shared/store/appStore'
 import { EquityTabSkeleton } from './tabs/shared'
@@ -27,8 +27,9 @@ const TABS = [
   { id: 'insights', label: 'Insights' },
 ]
 
-export default function EquityDashboard() {
-  const [activeTabId, setActiveTabId] = useState('overview')
+export default function EquityDashboard({ hasSession = true }: { hasSession?: boolean }) {
+  // Without a portfolio the analyzer is the only thing worth landing on.
+  const [activeTabId, setActiveTabId] = useState(hasSession ? 'overview' : 'analyzer')
   const sessionId = useEquitySessionId()
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
@@ -94,13 +95,26 @@ export default function EquityDashboard() {
                 entire dashboard including the tab bar, leaving no way to navigate out. */}
             <ErrorBoundary key={activeTabId}>
               <Suspense fallback={<EquityTabSkeleton rows={6} />}>
-                {activeTabId === 'overview' && <OverviewTab />}
-                {activeTabId === 'holdings' && <HoldingsTab />}
-                {activeTabId === 'pnl' && <PLTab />}
-                {activeTabId === 'sectors' && <SectorTab />}
-                {activeTabId === 'performance' && <PerformanceTab />}
-                {activeTabId === 'analyzer' && <StockAnalyzerTab />}
-                {activeTabId === 'insights' && <InsightsTab />}
+                {/*
+                  The analyzer is portfolio-independent, so it renders either way. Every
+                  other tab reads the uploaded holdings and shows the upload panel until
+                  there are some — previously the whole module was gated, which hid the
+                  analyzer behind a file upload it never needed.
+                */}
+                {activeTabId === 'analyzer' ? (
+                  <StockAnalyzerTab />
+                ) : !hasSession ? (
+                  <EquityUploadPanel />
+                ) : (
+                  <>
+                    {activeTabId === 'overview' && <OverviewTab />}
+                    {activeTabId === 'holdings' && <HoldingsTab />}
+                    {activeTabId === 'pnl' && <PLTab />}
+                    {activeTabId === 'sectors' && <SectorTab />}
+                    {activeTabId === 'performance' && <PerformanceTab />}
+                    {activeTabId === 'insights' && <InsightsTab />}
+                  </>
+                )}
               </Suspense>
             </ErrorBoundary>
           </motion.div>
