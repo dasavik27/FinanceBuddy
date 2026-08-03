@@ -134,6 +134,7 @@ export default function BudgetDashboard() {
   const [searchQuery, setSearchQuery] = useState<string>('')
 
   // Card-Specific Interactive Filters
+  const [cardCategoryDrilldown, setCardCategoryDrilldown] = useState<string>('all')
   const [merchantFlowTab, setMerchantFlowTab] = useState<'debit' | 'credit'>('debit')
   const [categoryFlowTab, setCategoryFlowTab] = useState<'debit' | 'credit'>('debit')
   const [categoryNatureFilter, setCategoryNatureFilter] = useState<string>('all') // 'all', 'needs', 'wants', 'investments', 'transfers'
@@ -174,6 +175,7 @@ export default function BudgetDashboard() {
     setAmountBracketFilter('all')
     setPaymentModeFilter('all')
     setCategoryFilter('all')
+    setCardCategoryDrilldown('all')
     setSearchQuery('')
     setCategoryNatureFilter('all')
     setCategorySearch('')
@@ -203,17 +205,19 @@ export default function BudgetDashboard() {
     amountBracketFilter, paymentModeFilter, categoryFilter, debouncedSearch,
   ])
 
+  const effectiveCategory = cardCategoryDrilldown !== 'all' ? cardCategoryDrilldown : categoryFilter
+
   /**
-   * The category card's own Debits/Credits toggle is a *sub*-filter.
+   * The category card's own Debits/Credits toggle and local drilldown are card-scoped filters.
    *
-   * It used to overwrite `txnType` unconditionally, so with the global flow filter set
-   * to "Credits (In)" the donut quietly showed debits - contradicting the filter chip
-   * displayed directly above it. It now only applies when the global filter is "all".
+   * Card-local category drilldown does NOT alter `currentFilters`, preserving the overall
+   * dashboard KPIs, Cash Flow charts, and Top Payees overview without triggering full dashboard re-fetch.
    */
   const categoryFilters: BudgetFilters = useMemo(() => ({
     ...currentFilters,
+    category: effectiveCategory,
     txnType: flowFilter === 'all' ? categoryFlowTab : flowFilter,
-  }), [currentFilters, flowFilter, categoryFlowTab])
+  }), [currentFilters, effectiveCategory, flowFilter, categoryFlowTab])
 
   const sessionsQuery = useBudgetSessions()
   const overviewQuery = useBudgetOverview(sessionId, currentFilters)
@@ -428,7 +432,7 @@ export default function BudgetDashboard() {
     return map
   }, [categoryData.categories])
 
-  const isCategoryDrilldown = categoryData?.is_drilldown && categoryFilter !== 'all'
+  const isCategoryDrilldown = Boolean(categoryData?.is_drilldown && effectiveCategory !== 'all')
   const drilldownStats = categoryData?.category_stats
 
   // Only a first load blanks the screen. A refetch keeps the previous data on screen
@@ -1488,7 +1492,17 @@ export default function BudgetDashboard() {
                 
                 {/* 1. TOP PAYEES & MERCHANTS CARD WITH CARD-SPECIFIC TOGGLE */}
                 <Grid item xs={12} lg={5}>
-                  <Card sx={{ p: 3, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 3, height: 490, display: 'flex', flexDirection: 'column' }}>
+                  <Card sx={{ 
+                    p: 2.5, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255,255,255,0.08)', 
+                    borderRadius: 3, 
+                    height: 520, 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(12px)'
+                  }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5, flexWrap: 'wrap', gap: 1 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <StorefrontIcon sx={{ color: merchantFlowTab === 'debit' ? '#f59e0b' : '#34d399', fontSize: 20 }} />
@@ -1577,39 +1591,93 @@ export default function BudgetDashboard() {
 
                 {/* 2. ADVANCED CATEGORY SPEND ANALYTICS (MULTI-CATEGORY VS DRILLDOWN) */}
                 <Grid item xs={12} lg={7}>
-                  <Card sx={{ p: 3, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 3, height: 490, display: 'flex', flexDirection: 'column' }}>
+                  <Card sx={{ 
+                    p: 2.5, 
+                    background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.3) 100%)', 
+                    border: '1px solid rgba(255,255,255,0.08)', 
+                    borderRadius: 3, 
+                    height: 520, 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)',
+                    backdropFilter: 'blur(12px)'
+                  }}>
                     
-                    {/* Header Row 1: Title, Category Selector Dropdown & Flow Tabs */}
+                    {/* Header Row: Title, Back Button, Category Dropdown & Flow Switch */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                        <PieChartIcon sx={{ color: '#818cf8', fontSize: 20 }} />
-                        <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          {isCategoryDrilldown ? `${categoryFilter} Drilldown` : 'Category Spend Analytics'}
+                        {isCategoryDrilldown ? (
+                          <Button
+                            size="small"
+                            startIcon={<ArrowBackIcon style={{ fontSize: 14 }} />}
+                            onClick={() => {
+                              setCardCategoryDrilldown('all')
+                              if (categoryFilter !== 'all') setCategoryFilter('all')
+                            }}
+                            sx={{
+                              height: 28,
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              color: '#a5b4fc',
+                              backgroundColor: 'rgba(99, 102, 241, 0.18)',
+                              border: '1px solid rgba(99, 102, 241, 0.35)',
+                              borderRadius: 1.8,
+                              textTransform: 'none',
+                              px: 1.2,
+                              '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.3)', borderColor: '#818cf8' }
+                            }}
+                          >
+                            All Categories
+                          </Button>
+                        ) : (
+                          <PieChartIcon sx={{ color: '#818cf8', fontSize: 20 }} />
+                        )}
+                        
+                        <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
+                          {isCategoryDrilldown ? `${effectiveCategory} Drilldown` : 'Category Spend Analytics'}
                         </Typography>
 
-                        {/* In-Card Direct Category Selector Dropdown */}
+                        {!isCategoryDrilldown && (
+                          <Chip 
+                            label={`${(categoryData.categories || []).length} Categories`} 
+                            size="small" 
+                            sx={{ 
+                              height: 20, 
+                              fontSize: '0.65rem', 
+                              fontWeight: 700, 
+                              backgroundColor: 'rgba(99, 102, 241, 0.12)', 
+                              color: '#a5b4fc', 
+                              border: '1px solid rgba(99, 102, 241, 0.25)' 
+                            }} 
+                          />
+                        )}
+                      </Box>
+
+                      {/* Header Right Controls: Category Picker + Flow Tabs (Debits/Credits) */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {/* Quick Category Select Dropdown */}
                         <FormControl size="small">
                           <Select
-                            value={categoryFilter}
-                            onChange={(e) => setCategoryFilter(e.target.value)}
+                            value={effectiveCategory}
+                            onChange={(e) => setCardCategoryDrilldown(e.target.value)}
                             sx={{
-                              height: 30,
-                              fontSize: '0.78rem',
+                              height: 28,
+                              fontSize: '0.75rem',
                               fontWeight: 600,
-                              color: categoryFilter === 'all' ? '#cbd5e1' : '#f472b6',
-                              backgroundColor: categoryFilter === 'all' ? 'rgba(255,255,255,0.04)' : 'rgba(236, 72, 153, 0.15)',
+                              color: effectiveCategory === 'all' ? '#cbd5e1' : '#f472b6',
+                              backgroundColor: effectiveCategory === 'all' ? 'rgba(255,255,255,0.04)' : 'rgba(236, 72, 153, 0.15)',
                               borderRadius: 1.8,
                               border: '1px solid',
-                              borderColor: categoryFilter === 'all' ? 'rgba(255,255,255,0.1)' : 'rgba(236, 72, 153, 0.4)',
-                              '& .MuiSelect-select': { py: 0.4, pr: 2.5 },
+                              borderColor: effectiveCategory === 'all' ? 'rgba(255,255,255,0.1)' : 'rgba(236, 72, 153, 0.4)',
+                              '& .MuiSelect-select': { py: 0.3, pr: 2.5 },
                               '& fieldset': { border: 'none' }
                             }}
                           >
-                            <MenuItem value="all" sx={{ fontSize: '0.8rem' }}>🏷️ All Categories ({(categoryData.categories || []).length})</MenuItem>
+                            <MenuItem value="all" sx={{ fontSize: '0.78rem' }}>🏷️ All Categories ({(categoryData.categories || []).length})</MenuItem>
                             {uniqueCategories.map((c: string) => {
                               const match = categoryByName.get(c.toLowerCase())
                               return (
-                                <MenuItem key={c} value={c} sx={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+                                <MenuItem key={c} value={c} sx={{ fontSize: '0.78rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', gap: 2 }}>
                                   <span>{c}</span>
                                   {match && (
                                     <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
@@ -1622,91 +1690,148 @@ export default function BudgetDashboard() {
                           </Select>
                         </FormControl>
 
-                        {/* Back to All Categories button if drilldown */}
-                        {isCategoryDrilldown && (
+                        {/* Flow Selector (Debits vs Credits) */}
+                        <Box sx={{ display: 'flex', background: 'rgba(255,255,255,0.04)', borderRadius: 2, p: 0.3, border: '1px solid rgba(255,255,255,0.08)' }}>
                           <Button
                             size="small"
-                            startIcon={<ArrowBackIcon style={{ fontSize: 13 }} />}
-                            onClick={() => setCategoryFilter('all')}
+                            onClick={() => { setCategoryFlowTab('debit'); setCategoryNatureFilter('all') }}
                             sx={{
-                              height: 30,
-                              fontSize: '0.72rem',
-                              fontWeight: 600,
-                              color: '#a5b4fc',
-                              backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                              borderRadius: 1.8,
-                              textTransform: 'none',
-                              px: 1.2,
-                              '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.25)' }
+                              px: 1.2, py: 0.3, fontSize: '0.7rem', fontWeight: 600, textTransform: 'none', borderRadius: 1.5,
+                              color: categoryFlowTab === 'debit' ? '#fff' : '#94a3b8',
+                              backgroundColor: categoryFlowTab === 'debit' ? 'rgba(239, 68, 68, 0.25)' : 'transparent',
+                              '&:hover': { backgroundColor: 'rgba(239, 68, 68, 0.35)' }
                             }}
                           >
-                            All Categories
+                            Debits
                           </Button>
-                        )}
-                      </Box>
-
-                      {/* Flow Selector (Debits vs Credits) */}
-                      <Box sx={{ display: 'flex', background: 'rgba(255,255,255,0.04)', borderRadius: 2, p: 0.3, border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <Button
-                          size="small"
-                          onClick={() => { setCategoryFlowTab('debit'); setCategoryNatureFilter('all') }}
-                          sx={{
-                            px: 1.2, py: 0.3, fontSize: '0.7rem', fontWeight: 600, textTransform: 'none', borderRadius: 1.5,
-                            color: categoryFlowTab === 'debit' ? '#fff' : '#94a3b8',
-                            backgroundColor: categoryFlowTab === 'debit' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
-                            '&:hover': { backgroundColor: 'rgba(99, 102, 241, 0.45)' }
-                          }}
-                        >
-                          Debits
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => { setCategoryFlowTab('credit'); setCategoryNatureFilter('all') }}
-                          sx={{
-                            px: 1.2, py: 0.3, fontSize: '0.7rem', fontWeight: 600, textTransform: 'none', borderRadius: 1.5,
-                            color: categoryFlowTab === 'credit' ? '#fff' : '#94a3b8',
-                            backgroundColor: categoryFlowTab === 'credit' ? 'rgba(16, 185, 129, 0.35)' : 'transparent',
-                            '&:hover': { backgroundColor: 'rgba(16, 185, 129, 0.45)' }
-                          }}
-                        >
-                          Credits
-                        </Button>
+                          <Button
+                            size="small"
+                            onClick={() => { setCategoryFlowTab('credit'); setCategoryNatureFilter('all') }}
+                            sx={{
+                              px: 1.2, py: 0.3, fontSize: '0.7rem', fontWeight: 600, textTransform: 'none', borderRadius: 1.5,
+                              color: categoryFlowTab === 'credit' ? '#fff' : '#94a3b8',
+                              backgroundColor: categoryFlowTab === 'credit' ? 'rgba(16, 185, 129, 0.25)' : 'transparent',
+                              '&:hover': { backgroundColor: 'rgba(16, 185, 129, 0.35)' }
+                            }}
+                          >
+                            Credits
+                          </Button>
+                        </Box>
                       </Box>
                     </Box>
+
+                    {/* Subheader Toolbar: Nature Filter Segmented Pills + Search & Sort */}
+                    {!isCategoryDrilldown && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5, flexWrap: 'nowrap', gap: 1 }}>
+                        {/* Nature Filter Compact Segmented Strip */}
+                        <Box sx={{ display: 'flex', gap: 0.6, alignItems: 'center', overflowX: 'auto', py: 0.2 }}>
+                          {[
+                            { id: 'all', label: 'All', icon: null },
+                            { id: 'needs', label: 'Needs', icon: '🛡️' },
+                            { id: 'wants', label: 'Wants', icon: '🎯' },
+                            { id: 'investments', label: 'Investments', icon: '📈' },
+                          ].map((item) => {
+                            const isSel = categoryNatureFilter === item.id
+                            return (
+                              <Chip
+                                key={item.id}
+                                size="small"
+                                label={`${item.icon ? item.icon + ' ' : ''}${item.label}`}
+                                clickable
+                                onClick={() => setCategoryNatureFilter(item.id)}
+                                sx={{
+                                  height: 24,
+                                  fontSize: '0.7rem',
+                                  fontWeight: isSel ? 700 : 500,
+                                  backgroundColor: isSel ? '#6366f1' : 'rgba(255,255,255,0.03)',
+                                  color: isSel ? '#fff' : '#94a3b8',
+                                  border: '1px solid',
+                                  borderColor: isSel ? '#818cf8' : 'rgba(255,255,255,0.07)',
+                                  transition: 'all 0.15s ease',
+                                  '&:hover': { backgroundColor: isSel ? '#4f46e5' : 'rgba(255,255,255,0.06)' }
+                                }}
+                              />
+                            )
+                          })}
+                        </Box>
+
+                        {/* Search + Sort Bar */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, flexShrink: 0 }}>
+                          <TextField
+                            size="small"
+                            placeholder="Search categories..."
+                            value={categorySearch}
+                            onChange={(e) => setCategorySearch(e.target.value)}
+                            sx={{
+                              width: 140,
+                              '& .MuiOutlinedInput-root': {
+                                backgroundColor: 'rgba(255,255,255,0.03)',
+                                borderRadius: 1.5,
+                                color: '#fff',
+                                fontSize: '0.72rem',
+                                height: 26,
+                                '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
+                                '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.2)' },
+                                '&.Mui-focused fieldset': { borderColor: '#818cf8' }
+                              }
+                            }}
+                          />
+
+                          <FormControl size="small">
+                            <Select
+                              value={categorySortBy}
+                              onChange={(e) => setCategorySortBy(e.target.value as any)}
+                              sx={{
+                                height: 26,
+                                fontSize: '0.7rem',
+                                color: '#cbd5e1',
+                                backgroundColor: 'rgba(255,255,255,0.03)',
+                                borderRadius: 1.5,
+                                '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }
+                              }}
+                            >
+                              <MenuItem value="amount" sx={{ fontSize: '0.72rem' }}>Amount (₹)</MenuItem>
+                              <MenuItem value="count" sx={{ fontSize: '0.72rem' }}>Txn Count</MenuItem>
+                              <MenuItem value="name" sx={{ fontSize: '0.72rem' }}>Name (A-Z)</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Box>
+                      </Box>
+                    )}
 
                     {/* VIEW A: SPECIFIC CATEGORY DRILLDOWN MODE */}
                     {isCategoryDrilldown && drilldownStats ? (
                       <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-                        {/* Category KPI Metric Pills */}
-                        <Grid container spacing={1.5} sx={{ mb: 2 }}>
+                        {/* Category KPI Metric Cards */}
+                        <Grid container spacing={1} sx={{ mb: 1.5 }}>
                           <Grid item xs={6} sm={3}>
-                            <Box sx={{ p: 1.2, background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.2)', borderRadius: 2 }}>
-                              <Typography variant="caption" sx={{ color: '#f472b6', display: 'block' }}>Total Spent</Typography>
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                            <Box sx={{ p: 1, background: 'rgba(236, 72, 153, 0.08)', border: '1px solid rgba(236, 72, 153, 0.2)', borderRadius: 2 }}>
+                              <Typography variant="caption" sx={{ color: '#f472b6', display: 'block', fontSize: '0.68rem', fontWeight: 600 }}>Total Spent</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#fff', fontSize: '0.92rem' }}>
                                 ₹{drilldownStats.amount.toLocaleString('en-IN')}
                               </Typography>
                             </Box>
                           </Grid>
                           <Grid item xs={6} sm={3}>
-                            <Box sx={{ p: 1.2, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 2 }}>
-                              <Typography variant="caption" sx={{ color: '#a5b4fc', display: 'block' }}>% of Total Spend</Typography>
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                            <Box sx={{ p: 1, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 2 }}>
+                              <Typography variant="caption" sx={{ color: '#a5b4fc', display: 'block', fontSize: '0.68rem', fontWeight: 600 }}>% of Spend</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#fff', fontSize: '0.92rem' }}>
                                 {drilldownStats.percentage_of_total.toFixed(1)}%
                               </Typography>
                             </Box>
                           </Grid>
                           <Grid item xs={6} sm={3}>
-                            <Box sx={{ p: 1.2, background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: 2 }}>
-                              <Typography variant="caption" sx={{ color: '#38bdf8', display: 'block' }}>Txn Count</Typography>
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                            <Box sx={{ p: 1, background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: 2 }}>
+                              <Typography variant="caption" sx={{ color: '#38bdf8', display: 'block', fontSize: '0.68rem', fontWeight: 600 }}>Txn Count</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#fff', fontSize: '0.92rem' }}>
                                 {drilldownStats.count} txns
                               </Typography>
                             </Box>
                           </Grid>
                           <Grid item xs={6} sm={3}>
-                            <Box sx={{ p: 1.2, background: 'rgba(52, 211, 153, 0.08)', border: '1px solid rgba(52, 211, 153, 0.2)', borderRadius: 2 }}>
-                              <Typography variant="caption" sx={{ color: '#34d399', display: 'block' }}>Avg Ticket Size</Typography>
-                              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#fff' }}>
+                            <Box sx={{ p: 1, background: 'rgba(52, 211, 153, 0.08)', border: '1px solid rgba(52, 211, 153, 0.2)', borderRadius: 2 }}>
+                              <Typography variant="caption" sx={{ color: '#34d399', display: 'block', fontSize: '0.68rem', fontWeight: 600 }}>Avg Ticket</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#fff', fontSize: '0.92rem' }}>
                                 ₹{drilldownStats.avg_ticket.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                               </Typography>
                             </Box>
@@ -1716,8 +1841,8 @@ export default function BudgetDashboard() {
                         {/* Drilldown Merchants Breakdown (Donut + Ranked List) */}
                         {drilldownStats.merchants && drilldownStats.merchants.length > 0 ? (
                           <Box sx={{ display: 'flex', flex: 1, flexDirection: { xs: 'column', sm: 'row' }, alignItems: 'center', gap: 2, overflow: 'hidden' }}>
-                            {/* Merchant Donut Chart */}
-                            <Box sx={{ width: { xs: '100%', sm: '42%' }, height: 210 }}>
+                            {/* Merchant Donut Chart with Center Metric */}
+                            <Box sx={{ position: 'relative', width: { xs: '100%', sm: '42%' }, height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                   <Pie
@@ -1726,31 +1851,39 @@ export default function BudgetDashboard() {
                                     nameKey="merchant"
                                     cx="50%"
                                     cy="50%"
-                                    innerRadius={48}
-                                    outerRadius={78}
+                                    innerRadius={55}
+                                    outerRadius={85}
                                     paddingAngle={3}
                                   >
                                     {drilldownStats.merchants.map((_: any, index: number) => (
-                                      <Cell key={`mcell-${index}`} fill={MERCHANT_COLORS[index % MERCHANT_COLORS.length]} stroke="rgba(0,0,0,0.5)" />
+                                      <Cell key={`mcell-${index}`} fill={MERCHANT_COLORS[index % MERCHANT_COLORS.length]} stroke="rgba(15, 23, 42, 0.8)" strokeWidth={2} />
                                     ))}
                                   </Pie>
                                   <RechartsTooltip 
                                     formatter={(value: number, name: string) => [`₹${value.toLocaleString('en-IN')}`, name]}
-                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff' }} 
+                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff' }} 
                                   />
                                 </PieChart>
                               </ResponsiveContainer>
+                              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
+                                <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 800, color: '#94a3b8', letterSpacing: '0.08em', display: 'block', textTransform: 'uppercase' }}>
+                                  Category Spend
+                                </Typography>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#fff', fontSize: '0.9rem', lineHeight: 1.2 }}>
+                                  ₹{drilldownStats.amount >= 100000 ? `${(drilldownStats.amount / 100000).toFixed(1)}L` : drilldownStats.amount >= 1000 ? `${(drilldownStats.amount / 1000).toFixed(0)}k` : drilldownStats.amount}
+                                </Typography>
+                              </Box>
                             </Box>
 
                             {/* Merchant List */}
-                            <Box sx={{ width: { xs: '100%', sm: '58%' }, height: '100%', maxHeight: 220, overflowY: 'auto', pr: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', mb: 0.5 }}>
-                                Payees / Merchants for {categoryFilter}
+                            <Box sx={{ width: { xs: '100%', sm: '58%' }, height: '100%', maxHeight: 270, overflowY: 'auto', pr: 1, display: 'flex', flexDirection: 'column', gap: 0.8 }}>
+                              <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', mb: 0.2 }}>
+                                Payees / Merchants for {effectiveCategory}
                               </Typography>
                               {drilldownStats.merchants.map((m: any, idx: number) => {
                                 const mColor = MERCHANT_COLORS[idx % MERCHANT_COLORS.length]
                                 return (
-                                  <Box key={m.merchant} sx={{ p: 1, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                                  <Box key={m.merchant} sx={{ p: 0.9, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', transition: 'all 0.15s ease', '&:hover': { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: mColor } }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.4 }}>
                                       <Typography variant="caption" sx={{ fontWeight: 700, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
                                         {m.merchant}
@@ -1788,106 +1921,10 @@ export default function BudgetDashboard() {
                     ) : (
                       /* VIEW B: OVERALL MULTI-CATEGORY MODE */
                       <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-                        {/* Direct Dynamic Category Filter Pills + Mini Search & Sort */}
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1.2 }}>
-                          {/* Quick Clickable Category Pills */}
-                          <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 240 }}>
-                            {/* "All" Button */}
-                            <Chip
-                              size="small"
-                              label={`All (${(categoryData.categories || []).length})`}
-                              clickable
-                              onClick={() => setCategoryFilter('all')}
-                              sx={{
-                                height: 26,
-                                fontSize: '0.72rem',
-                                fontWeight: categoryFilter === 'all' ? 700 : 500,
-                                backgroundColor: categoryFilter === 'all' ? '#6366f1' : 'rgba(255,255,255,0.03)',
-                                color: categoryFilter === 'all' ? '#fff' : '#94a3b8',
-                                border: '1px solid',
-                                borderColor: categoryFilter === 'all' ? '#818cf8' : 'rgba(255,255,255,0.08)'
-                              }}
-                            />
-
-                            {/* Direct Category Badges with Live Amount & Color Dot */}
-                            {(categoryData.categories || []).map((cat: any, idx: number) => {
-                              const isSel = categoryFilter.toLowerCase() === cat.category.toLowerCase()
-                              const catColor = CATEGORY_COLORS[idx % CATEGORY_COLORS.length]
-                              const formattedAmt = cat.amount >= 100000 
-                                ? `₹${(cat.amount / 100000).toFixed(1)}L` 
-                                : cat.amount >= 1000 
-                                  ? `₹${(cat.amount / 1000).toFixed(0)}k` 
-                                  : `₹${cat.amount.toLocaleString('en-IN')}`
-
-                              return (
-                                <Chip
-                                  key={cat.category}
-                                  size="small"
-                                  icon={<span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: catColor, marginLeft: 6, marginRight: -4, display: 'inline-block' }} />}
-                                  label={`${cat.category} • ${formattedAmt}`}
-                                  clickable
-                                  onClick={() => setCategoryFilter(isSel ? 'all' : cat.category)}
-                                  sx={{
-                                    height: 26,
-                                    fontSize: '0.72rem',
-                                    fontWeight: isSel ? 700 : 500,
-                                    backgroundColor: isSel ? `${catColor}25` : 'rgba(255,255,255,0.03)',
-                                    color: isSel ? '#fff' : '#cbd5e1',
-                                    border: '1px solid',
-                                    borderColor: isSel ? catColor : 'rgba(255,255,255,0.08)',
-                                    '&:hover': { backgroundColor: 'rgba(255,255,255,0.08)' }
-                                  }}
-                                />
-                              )
-                            })}
-                          </Box>
-
-                          {/* Mini Category Filter Search + Sort Control */}
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto' }}>
-                            <TextField
-                              size="small"
-                              placeholder="Search category..."
-                              value={categorySearch}
-                              onChange={(e) => setCategorySearch(e.target.value)}
-                              sx={{
-                                width: 135,
-                                '& .MuiOutlinedInput-root': {
-                                  backgroundColor: 'rgba(255,255,255,0.03)',
-                                  borderRadius: 1.5,
-                                  color: '#fff',
-                                  fontSize: '0.75rem',
-                                  height: 26,
-                                  '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }
-                                }
-                              }}
-                            />
-
-                            <FormControl size="small">
-                              <Select
-                                value={categorySortBy}
-                                onChange={(e) => setCategorySortBy(e.target.value as any)}
-                                sx={{
-                                  height: 26,
-                                  fontSize: '0.7rem',
-                                  color: '#cbd5e1',
-                                  backgroundColor: 'rgba(255,255,255,0.03)',
-                                  borderRadius: 1.5,
-                                  '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }
-                                }}
-                              >
-                                <MenuItem value="amount" sx={{ fontSize: '0.75rem' }}>Amount (₹)</MenuItem>
-                                <MenuItem value="count" sx={{ fontSize: '0.75rem' }}>Txn Count</MenuItem>
-                                <MenuItem value="name" sx={{ fontSize: '0.75rem' }}>Name (A-Z)</MenuItem>
-                              </Select>
-                            </FormControl>
-                          </Box>
-                        </Box>
-
-                        {/* Donut & Interactive Ranked List */}
                         {processedCategories.length > 0 ? (
                           <Box sx={{ display: 'flex', flex: 1, flexDirection: { xs: 'column', sm: 'row' }, alignItems: 'center', gap: 2, overflow: 'hidden' }}>
-                            {/* Donut Chart */}
-                            <Box sx={{ width: { xs: '100%', sm: '42%' }, height: 210 }}>
+                            {/* Donut Chart with Center Metric Callout */}
+                            <Box sx={{ position: 'relative', width: { xs: '100%', sm: '42%' }, height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                   <Pie
@@ -1896,62 +1933,81 @@ export default function BudgetDashboard() {
                                     nameKey="category"
                                     cx="50%"
                                     cy="50%"
-                                    innerRadius={48}
-                                    outerRadius={78}
-                                    /* Scaled to the slice count: a fixed 3 degrees is
-                                       fine for 4 slices and eats a quarter of the
-                                       circle at 10. */
-                                    paddingAngle={donutData.length > 6 ? 1 : 3}
-                                    minAngle={2}
+                                    innerRadius={55}
+                                    outerRadius={85}
+                                    paddingAngle={donutData.length > 6 ? 1.5 : 3}
+                                    minAngle={3}
                                   >
                                     {donutData.map((entry: any, index: number) => (
                                       <Cell
                                         key={`cell-${entry.category}`}
                                         fill={entry.isOther ? OTHER_COLOR : CATEGORY_COLORS[index % CATEGORY_COLORS.length]}
-                                        stroke="rgba(0,0,0,0.5)"
+                                        stroke="rgba(15, 23, 42, 0.8)"
+                                        strokeWidth={2}
                                       />
                                     ))}
                                   </Pie>
                                   <RechartsTooltip 
                                     formatter={(value: number, name: string) => [`₹${value.toLocaleString('en-IN')}`, name]}
-                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff' }} 
+                                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} 
                                   />
                                 </PieChart>
                               </ResponsiveContainer>
+                              {/* Central Outflow Metric Badge */}
+                              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
+                                <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 800, color: '#94a3b8', letterSpacing: '0.08em', display: 'block', textTransform: 'uppercase' }}>
+                                  {categoryFlowTab === 'debit' ? 'Total Spent' : 'Total Inflow'}
+                                </Typography>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#fff', fontSize: '0.92rem', lineHeight: 1.2 }}>
+                                  {totalFilteredCategoryAmount >= 100000 
+                                    ? `₹${(totalFilteredCategoryAmount / 100000).toFixed(1)}L` 
+                                    : totalFilteredCategoryAmount >= 1000 
+                                      ? `₹${(totalFilteredCategoryAmount / 1000).toFixed(0)}k` 
+                                      : `₹${totalFilteredCategoryAmount.toLocaleString('en-IN')}`}
+                                </Typography>
+                              </Box>
                             </Box>
 
                             {/* Interactive Ranked Category Breakdown */}
-                            <Box sx={{ width: { xs: '100%', sm: '58%' }, height: '100%', maxHeight: 220, overflowY: 'auto', pr: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <Box sx={{ 
+                              width: { xs: '100%', sm: '58%' }, 
+                              height: '100%', 
+                              maxHeight: 330, 
+                              overflowY: 'auto', 
+                              pr: 0.8, 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              gap: 0.8,
+                              '&::-webkit-scrollbar': { width: '5px' },
+                              '&::-webkit-scrollbar-track': { background: 'rgba(255, 255, 255, 0.02)', borderRadius: '3px' },
+                              '&::-webkit-scrollbar-thumb': { background: 'rgba(255, 255, 255, 0.12)', borderRadius: '3px', '&:hover': { background: 'rgba(255, 255, 255, 0.25)' } }
+                            }}>
                               {processedCategories.map((cat: any, idx: number) => {
                                 const pct = totalFilteredCategoryAmount > 0 ? (cat.amount / totalFilteredCategoryAmount) * 100 : 0
-                                // Matches the donut: rows inside the top N carry their
-                                // slice colour, the tail carries the "Other" grey it was
-                                // merged into. Previously this wrapped the palette every
-                                // 10 rows, so row 11 was the same colour as row 1 and the
-                                // list stopped being a legend for the chart beside it.
                                 const inDonut = processedCategories.length <= DONUT_SLICES || idx < DONUT_SLICES - 1
                                 const color = inDonut ? CATEGORY_COLORS[idx % CATEGORY_COLORS.length] : OTHER_COLOR
-                                const isCatSelected = categoryFilter.toLowerCase() === cat.category.toLowerCase()
+                                const isCatSelected = effectiveCategory.toLowerCase() === cat.category.toLowerCase()
                                 const natureEmoji = cat.nature === 'needs' ? '🛡️' : cat.nature === 'wants' ? '🎯' : cat.nature === 'investments' ? '📈' : '🏷️'
                                 
                                 return (
                                   <Box 
                                     key={cat.category}
-                                    onClick={() => setCategoryFilter(isCatSelected ? 'all' : cat.category)}
+                                    onClick={() => setCardCategoryDrilldown(isCatSelected ? 'all' : cat.category)}
                                     sx={{ 
                                       cursor: 'pointer', 
                                       p: 0.9, 
                                       borderRadius: 2, 
-                                      backgroundColor: isCatSelected ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255,255,255,0.02)',
+                                      backgroundColor: isCatSelected ? 'rgba(99, 102, 241, 0.18)' : 'rgba(255,255,255,0.025)',
                                       border: '1px solid',
-                                      borderColor: isCatSelected ? '#818cf8' : 'rgba(255,255,255,0.04)',
+                                      borderColor: isCatSelected ? '#818cf8' : 'rgba(255,255,255,0.05)',
                                       transition: 'all 0.15s ease',
-                                      '&:hover': { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: color } 
+                                      '&:hover': { backgroundColor: 'rgba(255,255,255,0.06)', borderColor: color, transform: 'translateY(-1px)' } 
                                     }}
                                   >
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.3 }}>
                                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, overflow: 'hidden' }}>
-                                        <span style={{ fontSize: '0.8rem' }}>{natureEmoji}</span>
+                                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
+                                        <span style={{ fontSize: '0.78rem' }}>{natureEmoji}</span>
                                         <Typography variant="caption" sx={{ fontWeight: 700, color: isCatSelected ? color : '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
                                           {cat.category}
                                         </Typography>

@@ -9,8 +9,25 @@ interface Props { children: ReactNode }
 
 export default function Layout({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const stored = localStorage.getItem('finance_buddy_sidebar_collapsed')
+      return stored !== null ? stored === 'true' : true
+    } catch {
+      return true
+    }
+  })
   const isPartial = useIsPartial()
+
+  const handleToggle = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('finance_buddy_sidebar_collapsed', String(next))
+      } catch {}
+      return next
+    })
+  }
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', background: (theme) => theme.palette.background.default }}>
@@ -18,8 +35,13 @@ export default function Layout({ children }: Props) {
         open={sidebarOpen} 
         onClose={() => setSidebarOpen(false)} 
         collapsed={collapsed}
-        onToggle={() => setCollapsed(!collapsed)}
-        onExpand={() => setCollapsed(false)}
+        onToggle={handleToggle}
+        onExpand={() => {
+          setCollapsed(false)
+          try {
+            localStorage.setItem('finance_buddy_sidebar_collapsed', 'false')
+          } catch {}
+        }}
         isPartial={isPartial} 
       />
 
@@ -28,8 +50,8 @@ export default function Layout({ children }: Props) {
         display: 'flex', 
         flexDirection: 'column', 
         minWidth: 0,
-        ml: { md: collapsed ? '80px' : '280px' }, // Match new theme width
-        transition: 'margin 300ms cubic-bezier(0.4, 0, 0.2, 1)'
+        ml: { md: collapsed ? '72px' : '280px' },
+        transition: 'margin 240ms cubic-bezier(0.4, 0, 0.2, 1)'
       }}>
         <Topbar 
           onMenuClick={() => setSidebarOpen(true)} 

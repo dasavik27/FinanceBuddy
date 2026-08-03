@@ -3,6 +3,7 @@ import {
   ListItemIcon, ListItemText, Divider, Tooltip, IconButton, alpha 
 } from '@mui/material'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useEffect } from 'react'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ShowChartIcon from '@mui/icons-material/ShowChart'
 import TableChartIcon from '@mui/icons-material/TableChart'
@@ -12,12 +13,13 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HomeIcon from '@mui/icons-material/GridView'
-import PersonIcon from '@mui/icons-material/Person'
-import TimelineIcon from '@mui/icons-material/Timeline'
-import SecurityIcon from '@mui/icons-material/Security'
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
+import ChevronRightIcon from '@mui/icons-material/ChevronRight'
+import AccountCircleIcon from '@mui/icons-material/AccountCircle'
 import { useAppStore } from '../../store/appStore'
 
 const DRAWER_W = 280
+const COLLAPSED_W = 72
 
 // The hub is separated from the domains below it: it is the way back out, not a
 // fifth domain. Without an entry for it there was no route to the hub from inside a
@@ -43,12 +45,20 @@ interface SidebarProps {
 export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpand }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  // Always select. `useAppStore()` with no selector compares the whole state object
-  // with Object.is, and every set() produces a new object — so this component
-  // re-rendered on any unrelated store write (setActiveModule on every navigation,
-  // triggerRefresh, setFilters).
   const clearSession = useAppStore((s) => s.clearSession)
   const activeModule = useAppStore((s) => s.activeModule)
+
+  // Keyboard shortcut: Cmd+B (Mac) or Ctrl+B (Windows/Linux) to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        onToggle()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onToggle])
 
   return (
     <>
@@ -57,13 +67,13 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
         sx={{
           display: { xs: 'none', md: 'block' },
           '& .MuiDrawer-paper': { 
-            width: collapsed ? 80 : DRAWER_W, 
+            width: collapsed ? COLLAPSED_W : DRAWER_W, 
             boxSizing: 'border-box', 
             background: (theme) => alpha(theme.palette.background.paper, 0.95), 
             backdropFilter: 'blur(20px)',
             color: '#E2E8F0',
-            borderRight: '1px solid rgba(255,255,255,0.05)',
-            transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+            borderRight: '1px solid rgba(255,255,255,0.06)',
+            transition: 'width 240ms cubic-bezier(0.4, 0, 0.2, 1)',
             overflowX: 'hidden'
           }
         }}
@@ -92,7 +102,7 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
             boxSizing: 'border-box', 
             background: '#0B1326', 
             color: '#E2E8F0',
-            borderRight: '1px solid rgba(255,255,255,0.05)'
+            borderRight: '1px solid rgba(255,255,255,0.06)'
           }
         }}
       >
@@ -114,72 +124,186 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
 
 function SidebarContent({ location, navigate, isPartial, clearSession, activeModule, onClose, collapsed, onToggle, onExpand }: any) {
   const pan = useAppStore((s) => s.pan)
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2.5 }}>
-      {/* Branding */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', mb: 6, px: 0.5, mt: 1 }}>
-        {/* The brand doubles as the way home, which is the convention everywhere
-            else on the web and costs nothing here. */}
+    <Box sx={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: '100%', 
+      p: collapsed ? 1.5 : 2.5,
+      alignItems: collapsed ? 'center' : 'stretch',
+      transition: 'padding 240ms cubic-bezier(0.4, 0, 0.2, 1)'
+    }}>
+      {/* Branding & Toggle Header */}
+      <Box sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: collapsed ? 'center' : 'space-between', 
+        mb: collapsed ? 3 : 4.5, 
+        px: collapsed ? 0 : 0.5, 
+        mt: 0.5,
+        width: '100%'
+      }}>
+        {/* Brand Link */}
         <Box
           onClick={() => { navigate(HOME.path); onClose() }}
           role="link"
           aria-label="Go to dashboard"
-          sx={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer' }}
+          sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 1.8, 
+            cursor: 'pointer',
+            overflow: 'hidden',
+            flex: collapsed ? '0 0 auto' : '1 1 auto'
+          }}
         >
           <Box sx={{
-            width: 44, height: 44, borderRadius: '14px',
+            width: 42, 
+            height: 42, 
+            borderRadius: '13px',
             background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.main} 0%, #4F46E5 100%)`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: (theme) => `0 8px 24px ${alpha(theme.palette.primary.main, 0.3)}`, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            boxShadow: (theme) => `0 6px 20px ${alpha(theme.palette.primary.main, 0.35)}`, 
             flexShrink: 0,
+            transition: 'transform 0.2s ease',
+            '&:hover': { transform: 'scale(1.05)' }
           }}>
-            <TrendingUpIcon sx={{ fontSize: 24, color: '#fff' }} />
+            <TrendingUpIcon sx={{ fontSize: 22, color: '#fff' }} />
           </Box>
           {!collapsed && (
-            <Box sx={{ whiteSpace: 'nowrap' }}>
-              <Typography sx={{ fontSize: 18, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px', lineHeight: 1 }}>
+            <Box sx={{ whiteSpace: 'nowrap', overflow: 'hidden' }}>
+              <Typography sx={{ fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px', lineHeight: 1 }}>
                 Finance <span style={{ color: '#38BDF8' }}>Buddy</span>
               </Typography>
-              <Typography sx={{ fontSize: 10, color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.15em', mt: 0.5 }}>
+              <Typography sx={{ fontSize: 9.5, color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', mt: 0.5 }}>
                 Smart Wealth Dashboard
               </Typography>
             </Box>
           )}
         </Box>
+
+        {/* Expand / Collapse Header Toggle Button */}
+        {!collapsed && (
+          <Tooltip title="Collapse sidebar (⌘B)" placement="right" arrow>
+            <IconButton 
+              size="small" 
+              onClick={onToggle}
+              sx={{ 
+                color: '#94a3b8', 
+                p: 0.6,
+                borderRadius: '10px',
+                border: '1px solid rgba(255,255,255,0.06)',
+                backgroundColor: 'rgba(255,255,255,0.03)',
+                '&:hover': { 
+                  color: '#fff', 
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderColor: 'rgba(255,255,255,0.15)'
+                } 
+              }}
+            >
+              <ChevronLeftIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
 
-      {/* Nav List. HOME first and exact-matched - it is the hub, not a prefix of the
-          domains below it. */}
-      <List dense disablePadding>
+      {/* When collapsed, display the expand button directly below logo */}
+      {collapsed && (
+        <Tooltip title="Expand sidebar (⌘B)" placement="right" arrow>
+          <IconButton 
+            size="small" 
+            onClick={onToggle}
+            sx={{ 
+              mb: 3,
+              color: '#94a3b8', 
+              p: 0.6,
+              borderRadius: '10px',
+              border: '1px solid rgba(255,255,255,0.06)',
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              '&:hover': { 
+                color: '#38BDF8', 
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                borderColor: 'rgba(56, 189, 248, 0.3)'
+              } 
+            }}
+          >
+            <ChevronRightIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      )}
+
+      {/* Nav List */}
+      <List dense disablePadding sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 0.8 }}>
         {[HOME, ...NAV].map((item) => {
           const active = item.path === HOME.path
             ? location.pathname === HOME.path
             : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
+
           return (
-            <ListItem key={item.path} disablePadding sx={{ mb: 1 }}>
-              <Tooltip title={collapsed ? item.label : ""} placement="right">
+            <ListItem key={item.path} disablePadding sx={{ display: 'flex', justifyContent: 'center' }}>
+              <Tooltip 
+                title={collapsed ? item.label : ''} 
+                placement="right" 
+                arrow 
+                slotProps={{
+                  popper: {
+                    sx: {
+                      '& .MuiTooltip-tooltip': {
+                        backgroundColor: '#0f172a',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                        borderRadius: '8px',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        color: '#f8fafc',
+                        px: 1.5,
+                        py: 0.8
+                      },
+                      '& .MuiTooltip-arrow': {
+                        color: '#0f172a',
+                        '&::before': {
+                          border: '1px solid rgba(255,255,255,0.15)'
+                        }
+                      }
+                    }
+                  }
+                }}
+              >
                 <ListItemButton
                   onClick={() => { 
                     navigate(item.path)
                     onClose() 
-                    if (collapsed) onExpand()
                   }}
                   sx={{
-                    borderRadius: '16px',
-                    px: collapsed ? 0 : 2.5,
+                    width: collapsed ? 44 : '100%',
+                    height: collapsed ? 44 : 46,
+                    borderRadius: '14px',
+                    px: collapsed ? 0 : 2,
                     justifyContent: collapsed ? 'center' : 'flex-start',
-                    py: 1.5,
-                    background: active ? (theme) => alpha(theme.palette.primary.main, 0.1) : 'transparent',
-                    border: active ? (theme) => `1px solid ${alpha(theme.palette.primary.main, 0.2)}` : '1px solid transparent',
-                    '&:hover': { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.1)' },
-                    transition: 'all 250ms cubic-bezier(0.4, 0, 0.2, 1)',
+                    background: active 
+                      ? (theme) => alpha(theme.palette.primary.main, collapsed ? 0.18 : 0.12) 
+                      : 'transparent',
+                    border: active 
+                      ? (theme) => `1px solid ${alpha(theme.palette.primary.main, 0.3)}` 
+                      : '1px solid transparent',
+                    boxShadow: active && collapsed ? (theme) => `0 0 16px ${alpha(theme.palette.primary.main, 0.25)}` : 'none',
+                    '&:hover': { 
+                      background: 'rgba(255,255,255,0.06)', 
+                      borderColor: active ? (theme) => alpha(theme.palette.primary.main, 0.4) : 'rgba(255,255,255,0.12)',
+                      transform: collapsed ? 'scale(1.06)' : 'none'
+                    },
+                    transition: 'all 200ms cubic-bezier(0.4, 0, 0.2, 1)',
                   }}
                 >
                   <ListItemIcon sx={{ 
-                    minWidth: collapsed ? 0 : 36, 
-                    color: active ? 'primary.main' : 'text.secondary', 
-                    '& svg': { fontSize: 22 },
-                    justifyContent: 'center'
+                    minWidth: collapsed ? 0 : 34, 
+                    color: active ? '#38BDF8' : '#94a3b8', 
+                    '& svg': { fontSize: 21 },
+                    justifyContent: 'center',
+                    alignItems: 'center'
                   }}>
                     {item.icon}
                   </ListItemIcon>
@@ -187,15 +311,15 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
                     <ListItemText
                       primary={item.label}
                       primaryTypographyProps={{
-                        fontSize: 14, 
+                        fontSize: 13.5, 
                         fontWeight: active ? 700 : 500,
-                        color: active ? '#fff' : 'text.secondary',
+                        color: active ? '#fff' : '#cbd5e1',
                         whiteSpace: 'nowrap'
                       }}
                     />
                   )}
                   {active && !collapsed && (
-                    <Box sx={{ width: 6, height: 6, borderRadius: 'full', bgcolor: 'primary.main', ml: 1, boxShadow: (theme) => `0 0 10px ${theme.palette.primary.main}` }} />
+                    <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#38BDF8', ml: 1, boxShadow: '0 0 8px #38BDF8' }} />
                   )}
                 </ListItemButton>
               </Tooltip>
@@ -209,32 +333,49 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
       {/* Session Footer */}
       {!collapsed ? (
         <Box sx={{ 
-          mt: 'auto', p: 2.5, borderRadius: '20px', 
-          background: 'rgba(255,255,255,0.03)', 
-          border: '1px solid rgba(255,255,255,0.05)',
+          mt: 'auto', 
+          p: 2, 
+          borderRadius: '16px', 
+          background: 'rgba(255,255,255,0.025)', 
+          border: '1px solid rgba(255,255,255,0.06)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 1.5
+          gap: 1.2
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: 'text.secondary', letterSpacing: '0.1em' }}>ACCOUNT STATUS</Typography>
-            {/* clearSession(type) expects a module name. Passing it straight to
-                onClick handed it a MouseEvent, so both `type === 'mutual_funds'` and
-                `type === 'tax_expert'` were false and NEITHER session id was cleared —
-                the button silently did nothing but wipe parseData. */}
-            <IconButton size="small" onClick={() => clearSession(activeModule)} sx={{ color: 'tertiary', '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
-              <LogoutIcon sx={{ fontSize: 18, color: '#FF516A' }} />
-            </IconButton>
+            <Typography sx={{ fontSize: 10, fontWeight: 800, color: '#94a3b8', letterSpacing: '0.1em' }}>ACCOUNT STATUS</Typography>
+            <Tooltip title="Sign Out" arrow>
+              <IconButton size="small" onClick={() => clearSession(activeModule)} sx={{ color: '#FF516A', p: 0.5, '&:hover': { bgcolor: alpha('#FF516A', 0.12) } }}>
+                <LogoutIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
-          <Typography sx={{ fontSize: 10, color: 'text.secondary', lineHeight: 1.6, fontWeight: 500 }}>
+          <Typography sx={{ fontSize: 10, color: '#94a3b8', lineHeight: 1.5, fontWeight: 500 }}>
             Signed in as<br />
-            <span style={{ color: '#4EDE93' }}>{pan}</span>
+            <span style={{ color: '#4EDE93', fontWeight: 700 }}>{pan || 'Guest'}</span>
           </Typography>
         </Box>
       ) : (
-        <IconButton onClick={() => clearSession(activeModule)} sx={{ color: '#FF516A', mb: 1, '&:hover': { bgcolor: alpha('#FF516A', 0.1) } }}>
-          <LogoutIcon sx={{ fontSize: 24 }} />
-        </IconButton>
+        <Tooltip title={`Account: ${pan || 'Guest'} (Click to sign out)`} placement="right" arrow>
+          <IconButton 
+            onClick={() => clearSession(activeModule)} 
+            sx={{ 
+              color: '#FF516A', 
+              width: 42,
+              height: 42,
+              borderRadius: '12px',
+              border: '1px solid rgba(255, 81, 106, 0.2)',
+              backgroundColor: 'rgba(255, 81, 106, 0.08)',
+              mb: 1, 
+              '&:hover': { 
+                bgcolor: 'rgba(255, 81, 106, 0.2)',
+                borderColor: '#FF516A'
+              } 
+            }}
+          >
+            <LogoutIcon sx={{ fontSize: 20 }} />
+          </IconButton>
+        </Tooltip>
       )}
     </Box>
   )
