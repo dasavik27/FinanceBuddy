@@ -1,249 +1,95 @@
-# How to Know All Documentation Is Complete
+# How to Verify Documentation
 
-**Quick Answer:** Run the verification checklist below. Everything is documented if all checks pass.
+Use this checklist after doc changes or when onboarding a new developer.
 
 ---
 
-## Visual Verification (30 seconds)
+## 1. Files exist (30 seconds)
 
 ```bash
-# 1. Check all docs exist
-ls -1 README.md ARCHITECTURE.md ONBOARDING.md VERIFICATION.md DOCS_UPDATE_SUMMARY.md
-
-# 2. Check script exists
-ls -1 backend/scripts/verify_setup.py
-
-# Expected: 6 files all exist ✓
+ls README.md ARCHITECTURE.md ONBOARDING.md VERIFICATION.md DOCS_UPDATE_SUMMARY.md
+ls backend/scripts/verify_setup.py
 ```
 
 ---
 
-## Content Verification (2 minutes)
+## 2. Content spot-checks (2 minutes)
 
 ```bash
-# All domains mentioned
-echo "Budget domain mentions:"
-grep -c "Budget" README.md ARCHITECTURE.md ONBOARDING.md
+# All four domains
+grep -c "Budget\|Mutual Funds\|Equity\|Tax Expert" README.md ARCHITECTURE.md
 
-# Migrations documented
-echo "Migrations documented:"
-grep -c "0001\|0002\|0003\|0004\|0005\|0006\|0007" ARCHITECTURE.md
+# Migrations 0001–0009
+grep -c "0008\|0009\|access_requests\|users.status" ARCHITECTURE.md ONBOARDING.md
 
-# Environment variables documented
-echo "Env vars documented:"
-grep -c "DATABASE_URL\|ENCRYPTION_KEYS\|SUPABASE_URL" ONBOARDING.md
+# Auth / admin-gated access
+grep -c "access control\|Admin Console\|/auth/users" ARCHITECTURE.md ONBOARDING.md
 
-# All should show non-zero counts ✓
+# Environment variables
+grep -c "FINANCEBUDDY_ADMIN_EMAILS\|SUPABASE_SERVICE_ROLE_KEY" ONBOARDING.md
 ```
+
+Non-zero counts on each line indicate the major topics are still present.
 
 ---
 
-## Automated Verification (5 minutes)
+## 3. Automated setup verification (5 minutes)
 
 ```bash
-# Run the verification script
 cd backend
 python scripts/verify_setup.py
-
-# All checks should show ✓ ✓ ✓
+python -m migrations.migrate --status   # expect 0001–0009 applied
 ```
 
 ---
 
-## What's Documented (Checklist)
+## 4. Auth documentation checklist
 
-### Domains ✓
-- [x] Budget Analyzer (mentioned in: README, ARCHITECTURE, ONBOARDING, VERIFICATION)
-- [x] Mutual Funds (mentioned in: README, ARCHITECTURE, ONBOARDING, VERIFICATION)
-- [x] Equity (mentioned in: README, ARCHITECTURE, ONBOARDING, VERIFICATION)
-- [x] Tax Expert (mentioned in: README, ARCHITECTURE, ONBOARDING, VERIFICATION)
-
-### Database ✓
-- [x] Migration 0001 (mentioned in: ONBOARDING)
-- [x] Migration 0002 (mentioned in: ONBOARDING)
-- [x] Migration 0003 (mentioned in: ONBOARDING)
-- [x] Migration 0004 - Budget (mentioned in: ONBOARDING, VERIFICATION)
-- [x] Migration 0005 - Budget Rules (mentioned in: ONBOARDING, VERIFICATION)
-
-### Setup Steps ✓
-- [x] Prerequisites (in: ONBOARDING)
-- [x] OAuth configuration (in: ONBOARDING)
-- [x] Local development (in: ONBOARDING)
-- [x] Deployment (in: ONBOARDING)
-
-### Environment Variables ✓
-- [x] Backend vars (in: ONBOARDING)
-- [x] Frontend vars (in: ONBOARDING)
-
-### Verification ✓
-- [x] Quick checks (in: README, VERIFICATION)
-- [x] Database validation (in: VERIFICATION)
-- [x] Code quality tests (in: README, VERIFICATION)
-- [x] Verification script (in: README, VERIFICATION, backend/scripts/)
-
-### Architecture & Security ✓
-- [x] System design (in: ARCHITECTURE)
-- [x] Domain isolation (in: ARCHITECTURE)
-- [x] API endpoints (in: ARCHITECTURE)
-- [x] Security & encryption model (in: ARCHITECTURE)
+- [ ] ONBOARDING.md explains Supabase public sign-up lockdown
+- [ ] ONBOARDING.md explains when `users` rows are created (first sign-in, not approval)
+- [ ] ARCHITECTURE.md lists all `/auth` endpoints with public vs admin access
+- [ ] ARCHITECTURE.md documents `pending` / `active` / `suspended` middleware behavior
+- [ ] VERIFICATION.md includes auth/admin pre-deploy checks
+- [ ] `tests/test_user_status_role.py` mentioned for DB-backed auth tests
 
 ---
 
-## Document Purpose Reference
+## 5. Document map
 
-| Document | Purpose | Read When |
-|---|---|---|
-| README.md | Overview, quick start | First thing |
-| ONBOARDING.md | Setup instructions | Setting up |
-| ARCHITECTURE.md | System design, domain architecture, security & privacy | Understanding design & security |
-| VERIFICATION.md | Setup validation | After setup complete |
-| DOCS_UPDATE_SUMMARY.md | What changed | Understanding updates |
+| Document | Purpose |
+|---|---|
+| README.md | Overview, quick start, links |
+| ONBOARDING.md | Setup — Supabase, OAuth, env, deploy |
+| ARCHITECTURE.md | Design, domains, **auth & access control**, security |
+| VERIFICATION.md | Post-setup validation checklist |
+| DOCS_UPDATE_SUMMARY.md | Changelog of doc updates |
 
----
-
-## Document Cross-References
-
-**All docs properly link to each other:**
-- README.md → points to ONBOARDING, ARCHITECTURE, VERIFICATION
-- ONBOARDING.md → points to ARCHITECTURE, VERIFICATION
-- ARCHITECTURE.md → points to ONBOARDING, VERIFICATION
-- VERIFICATION.md → points to ONBOARDING, ARCHITECTURE
+Cross-links: README → ONBOARDING, ARCHITECTURE, VERIFICATION. Each companion doc points back.
 
 ---
 
-## Command Reference
+## 6. Test commands
 
 ```bash
-# Verify setup locally
 cd backend
-python scripts/verify_setup.py
-
-# Run migrations
-python -m migrations.migrate
-
-# Check migration status
-python -m migrations.migrate --status
-
-# Run tests
 python -m pytest tests/test_sql_is_valid_postgres.py -v
 python -m pytest tests/test_only_shared_db_opens_connections.py -v
 
-# Full test suite
-export TEST_DATABASE_URL=postgresql://...
-python -m pytest tests/ -q
+export TEST_DATABASE_URL=postgresql://postgres:pwd@localhost:5432/financebuddy_test
+python -m pytest tests/test_user_status_role.py -v
+python -m pytest tests/ -q   # ~861 tests with DB
 ```
 
 ---
 
-## File Statistics
+## 7. New developer path (~1 hour)
 
-```
-Total documentation: 660 lines
-- README.md: 84 lines
-- ARCHITECTURE.md: 84 lines
-- ONBOARDING.md: 147 lines
-- VERIFICATION.md: 254 lines
-- DOCS_UPDATE_SUMMARY.md: 91 lines
-
-Scripts:
-- backend/scripts/verify_setup.py: 80 lines
-
-All 4 domains: ✓ Documented
-All 7 migrations: ✓ Documented (ARCHITECTURE.md)
-All env vars: ✓ Documented
-All setup steps: ✓ Documented
-```
+1. **README.md** (5 min) — what the product does
+2. **ONBOARDING.md** (40 min) — Supabase, env, run locally
+3. **verify_setup.py** (2 min) — confirm config
+4. **ARCHITECTURE.md** (15 min) — domains + auth model
+5. **VERIFICATION.md** (5 min) — pre-deploy checklist
 
 ---
 
-## How New Developers Use Documentation
-
-**Timeline: ~1 hour**
-
-1. **Read README.md** (5 min)
-   - Understand what Finance Buddy does
-   - See all 4 domains
-
-2. **Follow ONBOARDING.md** (40 min)
-   - Prerequisites
-   - Supabase/Google OAuth
-   - Local setup
-   - Deployment setup
-
-3. **Run verify_setup.py** (2 min)
-   - Validate everything is configured
-   - See ✓ on all checks
-
-4. **Read ARCHITECTURE.md** (10 min)
-   - Understand system design
-   - Learn about domains
-   - Understand constraints
-
-5. **Skim VERIFICATION.md** (3 min)
-   - Know how to validate later
-   - Know how to troubleshoot
-
----
-
-## Self-Check: Is Everything Documented?
-
-Answer these questions. If all are "YES", documentation is complete:
-
-- [ ] Can I find where to set up the app? → ONBOARDING.md
-- [ ] Can I see all 4 domains explained? → README.md + ARCHITECTURE.md
-- [ ] Can I verify my setup is correct? → VERIFICATION.md + backend/scripts/verify_setup.py
-- [ ] Do I know what each domain does? → README.md + ARCHITECTURE.md + domain-specific docs
-- [ ] Can I find all environment variables? → ONBOARDING.md
-- [ ] Can I see the database schema? → ARCHITECTURE.md + VERIFICATION.md
-- [ ] Are all migrations documented? → ONBOARDING.md
-- [ ] Can I deploy this? → ONBOARDING.md Part 3 + VERIFICATION.md
-- [ ] Can I find troubleshooting help? → ONBOARDING.md + VERIFICATION.md
-- [ ] Is the Budget domain explained? → ARCHITECTURE.md
-- [ ] Can I understand the architecture? → ARCHITECTURE.md
-- [ ] Can I understand the security model? → ARCHITECTURE.md
-
-If all answers are "YES" → **Documentation is complete ✓**
-
----
-
-## Updated Files Summary
-
-```
-✓ README.md (Updated)
-✓ ARCHITECTURE.md (Updated - Includes merged Budget domain & Security model)  
-✓ ONBOARDING.md (Updated)
-✓ VERIFICATION.md (Updated)
-✓ DOCS_UPDATE_SUMMARY.md (Updated)
-✓ backend/scripts/verify_setup.py
-```
-
-**Total: ~42 KB of documentation**
-
----
-
-## Next Steps
-
-1. **Commit these changes**
-   ```bash
-   git add README.md ARCHITECTURE.md ONBOARDING.md VERIFICATION.md *.md backend/scripts/verify_setup.py
-   git commit -m "docs: comprehensive update with Budget domain, verification checklist, and new scripts"
-   git push
-   ```
-
-2. **Test the documentation**
-   - Follow ONBOARDING.md completely
-   - Run verify_setup.py
-   - Verify all checks pass
-
-3. **Share with new developers**
-   - Direct them to README.md
-   - They'll naturally flow through to ONBOARDING.md
-   - They can use VERIFICATION.md as a checklist
-
----
-
-**Status: ALL DOCUMENTATION COMPLETE ✓**
-
-**Date: August 2, 2026**
-
-See README.md to get started.
+Last updated: 2026-08-04

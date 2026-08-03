@@ -9,7 +9,9 @@
 - **Tax Expert** — AIS parsing, capital-gains computation with grandfathering and Section 50AA relief, old-vs-new regime comparison, broker reconciliation, filed-ITR matching, and detailed income breakdown
 - **Equity** — CSV/XLSX uploads (Zerodha/Groww formats natively detected), direct live sync via Zerodha Kite API, portfolio allocation, sector analysis, P&L tracking with STCG/LTCG, and individual stock analysis
 
-Upload a statement, get analytics. Sign-in is Google; your data persists to your own Postgres and is encrypted before it gets there.
+Upload a statement, get analytics. Sign-in is Google or email/password via Supabase;
+access is **invite/approve-only** — admins provision users through the Admin Console.
+Your data persists to your own Postgres and is encrypted before it gets there.
 
 ---
 
@@ -18,8 +20,9 @@ Upload a statement, get analytics. Sign-in is Google; your data persists to your
 | Document | What it covers |
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, domain architecture (including Budget Analyzer), security & privacy model, and design constraints. |
-| **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, and deployment verification scripts. |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, domain architecture (including Budget Analyzer), **authentication & access control**, security & privacy model, and design constraints. |
+| **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, auth/admin deploy checks, and deployment verification scripts. |
+| **[HOW_TO_VERIFY_DOCUMENTATION.md](HOW_TO_VERIFY_DOCUMENTATION.md)** | Quick checklist to confirm documentation is complete and up to date. |
 
 ---
 
@@ -55,18 +58,18 @@ App on http://localhost:5173, API docs on http://localhost:8000/docs.
 ## Tests
 
 ```bash
-# Backend — 687 tests
+# Backend — 861 tests
 cd backend
 TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/financebuddy_test \
   python -m pytest tests/ -q
 
-# Frontend — 354 tests
+# Frontend — vitest
 cd frontend && npm test
 ```
 
-Without `TEST_DATABASE_URL` the 111 database-backed tests skip rather than fail — fine
-for a quick check, not a full pass. Some paths are only reachable with a live database,
-so a green run without it is weaker than it looks.
+Without `TEST_DATABASE_URL` the database-backed tests skip rather than fail — fine
+for a quick check, not a full pass. Auth/access-control coverage lives in
+`tests/test_user_status_role.py` (requires `TEST_DATABASE_URL`).
 
 ## Verification
 

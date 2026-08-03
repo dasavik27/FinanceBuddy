@@ -267,10 +267,8 @@ class IdentityMiddleware:
             import json
             body = json.dumps({
                 "detail": "not_authorized",
-                "message": str(exc) or (
-                    "Your account is not authorized. Request access or ask an "
-                    "administrator to invite you."
-                ),
+                "message": str(exc) or users.message_for_access_status(None),
+                "access_request_status": exc.access_request_status,
             }).encode()
             await send({
                 "type": "http.response.start",

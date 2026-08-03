@@ -12,7 +12,7 @@ Companion documents: **ONBOARDING.md** (setup instructions) and **VERIFICATION.m
 
 | Domain | Prefix | Routers | API Example |
 |---|---|---|---|
-| Infrastructure | `/auth` `/market` `/accounts` `/history` | 4 routers | `GET /accounts/summary` |
+| Infrastructure | `/auth` `/market` `/accounts` `/history` | 4 routers | `GET /auth/me`, `GET /auth/users` (admin) |
 | **Budget Analyzer** | `/budget/{portfolio,analytics,rules,accounts,insights}` | 5 routers | `POST /budget/portfolio/upload` |
 | **Mutual Funds** | `/mutual-funds/*` | 9 routers | `GET /mutual-funds/overview/{sid}/summary` |
 | **Tax Expert** | `/tax-expert` | 6 routers | `GET /tax-expert/{sid}/tax/summary` |
@@ -34,6 +34,7 @@ domains, and the way back out from inside one.
 | `/tax-expert/*` | Tax Expert |
 | `/budget/*` | Budget Analyzer |
 | `/accounts` | Account settings, export, purge |
+| `/admin` | Admin Console (access requests, invites, user accounts) — shown in Topbar when `role=admin` |
 
 Domains previously sat under `/dashboard/<domain>`. Those URLs still resolve —
 `Dashboard.tsx` rewrites `/dashboard/<rest>` to `/<rest>`, preserving query and hash —
@@ -49,7 +50,7 @@ OAuth redirect URLs point at `/dashboard` and are unaffected.
 ```
 backend/
 ├── main.py                     # middleware, router mounting, lifespan
-├── migrations/                 # 0001-0007 numbered SQL migrations
+├── migrations/                 # 0001-0009 numbered SQL migrations
 ├── shared/
 │   ├── db.py                   # single psycopg 3 connection pool
 │   ├── crypto.py               # AES-256-GCM encryption
@@ -114,6 +115,8 @@ cd backend && python -m migrations.migrate
 | 0005 | Budget rule versioning |
 | 0006 | Budget hardening — brings the budget tables up to the schema conventions the rest already follow |
 | 0007 | Budget accounts: `budget_account_meta`, `budget_envelopes`, `budget_merchant_aliases`, `budget_txn_flags` |
+| 0008 | `access_requests` — public early-access form + admin allowlist |
+| 0009 | `users.status`, `users.role` — pending / active / suspended; user / admin |
 
 All are Postgres-validated by `test_sql_is_valid_postgres`.
 
@@ -129,8 +132,9 @@ frontend/src/
 │   ├── tax-expert/             # Tax computation, ITR comparison
 │   └── equity/                 # Stock holdings, sector allocation
 └── shared/
-    ├── auth/authClient.ts      # Supabase OAuth gateway
+    ├── auth/authClient.ts      # Supabase OAuth + access-status helpers
     ├── api/client.ts           # Axios + Bearer interceptor
+    ├── components/admin/       # AdminConsole (access control UI)
     └── store/appStore.ts       # Zustand session store
 ```
 
@@ -347,12 +351,95 @@ To add support for a new bank or custom statement schema:
 
 ---
 
+## Authentication & access control
+
+Finance Buddy uses **admin-gated provisioning**: a Supabase Auth session alone is
+not enough. The backend creates an app account only when the email is allowlisted.
+
+### Two layers
+
+| Layer | Store | Purpose |
+|---|---|---|
+| Auth | Supabase Auth | Sign-in (Google OAuth, email/password) |
+| App account | `users` + `identities` + optional `profiles` | Authorization, PAN, domain data ownership |
+
+The `users` row is inserted on **first authenticated request** (`users.resolve()`
+in `IdentityMiddleware`), not when an admin clicks approve. Approval updates
+`access_requests` and Supabase; sign-in creates or updates the app account.
+
+### Account status & role (`users` table, migration 0009)
+
+| Field | Values | Effect |
+|---|---|---|
+| `status` | `pending` | Signed in but blocked from app APIs except `/auth/me`, `/auth/logout`; frontend shows `PendingAccess` |
+| `status` | `active` | Full access (after PAN gate) |
+| `status` | `suspended` | Blocked like pending; frontend shows `SuspendedAccess` |
+| `role` | `user` | Normal user |
+| `role` | `admin` | Admin Console + admin-only `/auth/*` routes |
+
+Bootstrap admins: email in `FINANCEBUDDY_ADMIN_EMAILS` → `active` + `admin` on
+first provision. `_assert_admin()` denies all admin routes when the env list is
+empty and the caller is not already `role=admin`.
+
+### Allowlist rules (`users._may_provision`)
+
+Provisioning is permitted when the email matches any of:
+
+- `FINANCEBUDDY_ADMIN_EMAILS`
+- `access_requests` row with `status = approved`
+- `access_requests` row with `status = pending` (creates a pending app account so
+  the user sees the wait screen instead of “raise request” after OAuth)
+
+Otherwise `NotAuthorizedError` → `403 not_authorized` (no `users` row inserted).
+
+### Auth API (`/auth`)
+
+| Access | Method | Path | Purpose |
+|---|---|---|---|
+| Public | `POST` | `/auth/access-status` | Email lookup for landing-page messaging |
+| Public | `POST` | `/auth/request-access` | Submit early-access form |
+| Signed-in | `GET` | `/auth/me` | Current user id, PAN, status, role |
+| Signed-in | `POST` | `/auth/logout` | Evict resident sessions |
+| Signed-in, active | `PUT` | `/auth/profile/pan` | Attach PAN (blocked when pending/suspended) |
+| Admin | `GET` | `/auth/access-requests` | List access requests |
+| Admin | `POST` | `/auth/access-requests/{id}/approve` | Approve + Supabase provision |
+| Admin | `POST` | `/auth/access-requests/{id}/reject` | Reject and delete request |
+| Admin | `POST` | `/auth/invites` | Direct invite / password provision |
+| Admin | `POST` | `/auth/users/suspend` | Suspend by email (+ Supabase ban when configured) |
+| Admin | `GET` | `/auth/users` | List app accounts (status, role, email) |
+| Admin | `PATCH` | `/auth/users/{user_id}` | Set status and/or role |
+
+### Middleware gates (`main.py` → `IdentityMiddleware`)
+
+After identity resolution:
+
+1. **`not_authorized`** — email not allowlisted; no app account created
+2. **`pending`** — all paths blocked except `/auth/me`, `/auth/logout`
+3. **`suspended`** — same as pending
+4. **`active`** — normal routing; frontend may still gate on missing PAN
+
+`PendingAccess` polls `/auth/me` every 15s so users enter the app shortly after
+admin approval without a full page reload.
+
+### Frontend auth screens
+
+| Component | When |
+|---|---|
+| `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
+| `PendingAccess.tsx` | Signed in, `status=pending` |
+| `SuspendedAccess.tsx` | Signed in, `status=suspended` |
+| `MandatoryPanPrompt` | Signed in, active, no PAN |
+| `AdminConsole.tsx` | Route `/admin`; admin-only actions |
+
+---
+
 ## Security, Data Encryption & Privacy
 
 ### 1. Authentication & Identity
 - **Bearer Token Verification**: `Authorization: Bearer <OIDC id token>` verified against the provider's cached JWKS in `shared/oidc.py` with pinned asymmetric algorithms and mandatory `exp`, `iss`, and `aud` claim checks.
+- **Admin-gated provisioning**: First-time app accounts require an allowlisted email (see *Authentication & access control* above). Supabase public sign-up must be disabled in production.
 - **PAN is Not Identity**: User identity is strictly keyed on UUID `users.id`. PAN is stored encrypted (`profiles.pan_encrypted`) solely for CAS/AIS matching; two users sharing a PAN cannot access each other's data.
-- **Fail-Closed Authorization**: Handled at data retrieval layers (`sessions.py`, `identity.owns_record`). Unowned or unauthorized requests respond with `404 Not Found` (never 403) to prevent resource enumeration.
+- **Fail-Closed Authorization**: Handled at data retrieval layers (`sessions.py`, `identity.owns_record`). Unowned or unauthorized requests respond with `404 Not Found` (never 403) to prevent resource enumeration. Admin routes and unprovisioned sign-ins use explicit `403` responses where appropriate.
 
 ### 2. Encryption at Rest (AES-256-GCM)
 - **Application-Level Envelope Encryption**: Sensitive columns (`profiles.pan_encrypted`, `sessions.metrics`, `session_payloads`, `tax_payloads.data`, `budget_payloads`) are encrypted via `shared/crypto.py` before hitting Postgres.

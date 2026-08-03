@@ -1,7 +1,8 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
-import authClient, { REQUEST_ACCESS_MESSAGE } from './shared/auth/authClient'
+import authClient, { type AccessRequestStatus } from './shared/auth/authClient'
+import { readAuthNotice, writeAuthNotice } from './shared/auth/authNotice'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
@@ -9,13 +10,26 @@ import PendingAccess from './shared/components/PendingAccess'
 import SuspendedAccess from './shared/components/SuspendedAccess'
 import { TabFallback } from './shared/components/ui'
 
-const AUTH_NOTICE_KEY = 'fb_auth_notice'
-
-function isNotAuthorizedError(e: unknown): { message: string } | null {
-  const err = e as { response?: { status?: number; data?: { detail?: string; message?: string } } }
+function parseNotAuthorizedError(e: unknown): {
+  message: string
+  access_request_status: AccessRequestStatus
+} | null {
+  const err = e as {
+    response?: {
+      status?: number
+      data?: {
+        detail?: string
+        message?: string
+        access_request_status?: AccessRequestStatus
+      }
+    }
+  }
   if (err?.response?.status !== 403) return null
   if (err.response.data?.detail !== 'not_authorized') return null
-  return { message: REQUEST_ACCESS_MESSAGE }
+  return {
+    message: err.response.data?.message || 'You do not have access yet.',
+    access_request_status: err.response.data?.access_request_status || 'none',
+  }
 }
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
@@ -56,9 +70,13 @@ export default function App() {
             role: me.role,
           })
         } catch (e: unknown) {
-          const unauthorized = isNotAuthorizedError(e)
+          const unauthorized = parseNotAuthorizedError(e)
           if (unauthorized) {
-            sessionStorage.setItem(AUTH_NOTICE_KEY, unauthorized.message)
+            writeAuthNotice({
+              message: unauthorized.message,
+              access_request_status: unauthorized.access_request_status,
+              email: user.email,
+            })
             await authClient.signOut()
             clearIdentity()
           } else {

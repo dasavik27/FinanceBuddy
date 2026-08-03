@@ -46,6 +46,16 @@ def test_assert_admin_allows_role_admin(monkeypatch):
     auth_router._assert_admin(Caller(user_id="u1", status="active", role="admin"))
 
 
+def test_message_for_access_status_pending():
+    msg = users.message_for_access_status("pending")
+    assert "already submitted" in msg.lower()
+
+
+def test_message_for_access_status_none():
+    msg = users.message_for_access_status(None)
+    assert "submit an access request" in msg.lower()
+
+
 @requires_db
 def test_unapproved_signup_is_denied(truncate_access_requests, deny_open_provision):
     with pytest.raises(users.NotAuthorizedError):
@@ -57,6 +67,22 @@ def test_unapproved_signup_is_denied(truncate_access_requests, deny_open_provisi
             ("pending-user",),
         ).fetchone()
     assert row[0] == 0
+
+
+@requires_db
+def test_pending_access_request_shows_pending_status(truncate_access_requests, deny_open_provision):
+    """Google/email after requesting access should land as pending, not denied."""
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO access_requests (email, name, status)
+            VALUES ('waiting@example.test', 'Waiting User', 'pending')
+            """
+        )
+
+    caller = users.resolve(TEST_ISSUER, "waiting-user", email="waiting@example.test")
+    assert caller.status == "pending"
+    assert caller.role == "user"
 
 
 @requires_db
@@ -144,6 +170,88 @@ def test_invite_endpoint_allowlists_email(
 
     invitee = users.resolve(TEST_ISSUER, "invitee-sub", email="invitee@example.test")
     assert invitee.status == "active"
+
+
+@requires_db
+def test_access_status_endpoint(truncate_access_requests, client):
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO access_requests (email, name, status)
+            VALUES ('pending@example.test', 'Pending User', 'pending')
+            """
+        )
+
+    res = client.post("/auth/access-status", json={"email": "pending@example.test"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["access_request_status"] == "pending"
+    assert "already submitted" in body["message"].lower()
+
+    res2 = client.post("/auth/access-status", json={"email": "unknown@example.test"})
+    assert res2.status_code == 200
+    assert res2.json()["access_request_status"] == "none"
+
+
+@requires_db
+def test_list_and_update_app_users(
+    truncate_access_requests, deny_open_provision, monkeypatch, fake_bearer_auth
+):
+    monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
+
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO access_requests (email, name, status)
+            VALUES ('target@example.test', 'Target User', 'pending')
+            """
+        )
+
+    users.resolve(TEST_ISSUER, "admin-manager", email="admin@example.test")
+    target = users.resolve(TEST_ISSUER, "target-user", email="target@example.test")
+    assert target.status == "pending"
+
+    client = TestClient(app)
+    headers = fake_bearer_auth("admin-manager", email="admin@example.test")
+
+    list_res = client.get("/auth/users", headers=headers)
+    assert list_res.status_code == 200, list_res.text
+    listed = {u["user_id"]: u for u in list_res.json()["users"]}
+    assert target.user_id in listed
+    assert listed[target.user_id]["email"] == "target@example.test"
+    assert listed[target.user_id]["status"] == "pending"
+
+    patch_res = client.patch(
+        f"/auth/users/{target.user_id}",
+        headers=headers,
+        json={"status": "active", "role": "admin"},
+    )
+    assert patch_res.status_code == 200, patch_res.text
+    body = patch_res.json()
+    assert body["user"]["status"] == "active"
+    assert body["user"]["role"] == "admin"
+
+    users.invalidate(target.user_id)
+    again = users.resolve(TEST_ISSUER, "target-user", email="target@example.test")
+    assert again.status == "active"
+    assert again.role == "admin"
+
+
+@requires_db
+def test_update_app_user_blocks_self_demotion(
+    truncate_access_requests, deny_open_provision, monkeypatch, fake_bearer_auth
+):
+    monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
+    admin = users.resolve(TEST_ISSUER, "self-admin", email="admin@example.test")
+
+    client = TestClient(app)
+    headers = fake_bearer_auth("self-admin", email="admin@example.test")
+    res = client.patch(
+        f"/auth/users/{admin.user_id}",
+        headers=headers,
+        json={"role": "user"},
+    )
+    assert res.status_code == 400
 
 
 @requires_db

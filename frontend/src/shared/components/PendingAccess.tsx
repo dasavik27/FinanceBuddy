@@ -82,12 +82,12 @@ export default function PendingAccess() {
         </Typography>
 
         <Typography sx={{ color: '#94A3B8', mb: 3, lineHeight: 1.6 }}>
-          Your account has been created, but an administrator still needs to approve your
-          access request. We will notify you at{' '}
+          Your access request is already on file and waiting for an administrator to approve
+          it. Please wait — we will notify you at{' '}
           <Box component="span" sx={{ color: '#38BDF8', fontWeight: 600 }}>
             {email || 'your email'}
           </Box>{' '}
-          once you are approved.
+          once you are approved. You can sign out and come back later.
         </Typography>
 
         <Button

@@ -69,7 +69,8 @@ python << 'PYEOF'
 from shared import db
 
 tables = ["users", "identities", "profiles", "sessions", 
-          "session_payloads", "tax_payloads", "budget_payloads", "budget_rules"]
+          "session_payloads", "tax_payloads", "budget_payloads", "budget_rules",
+          "access_requests"]
 
 try:
     with db.get_pool().connection() as conn:
@@ -97,12 +98,13 @@ PYEOF
 cd backend
 python -m migrations.migrate --status
 
-# Expected: all 5 migrations applied
+# Expected: all 9 migrations applied
 # 0001: Core schema
-# 0002: Tax payloads
-# 0003: Equity support
-# 0004: Budget payloads (Aug 2, 2026)
-# 0005: Budget rules (Aug 2, 2026)
+# 0002: Row-level security
+# 0003: Column encryption
+# 0004–0007: Budget module
+# 0008: access_requests
+# 0009: users.status, users.role
 ```
 
 ---
@@ -118,8 +120,8 @@ python -m pytest tests/test_sql_is_valid_postgres.py -v
 # Connection pool validation
 python -m pytest tests/test_only_shared_db_opens_connections.py -v
 
-# Budget domain tests
-python -m pytest tests/ -k budget -v
+# Auth & access-control tests (requires TEST_DATABASE_URL)
+python -m pytest tests/test_user_status_role.py -v
 ```
 
 ---
@@ -194,8 +196,8 @@ cd backend
 export TEST_DATABASE_URL=postgresql://postgres:pwd@localhost:5432/financebuddy_test
 python -m pytest tests/ -q
 
-# Expected: 687 tests, all passing.
-# Without TEST_DATABASE_URL, 111 of them skip instead.
+# Expected: 861 tests collected; all passing with TEST_DATABASE_URL set.
+# Without TEST_DATABASE_URL, database-backed tests skip instead.
 ```
 
 ---
@@ -215,8 +217,18 @@ python -m pytest tests/ -q
 
 ### Supabase
 - [ ] URL Configuration has production Vercel URL
-- [ ] Redirect URLs include `/dashboard`
+- [ ] Redirect URLs include `/` and `/dashboard`
 - [ ] Google OAuth still configured
+- [ ] Public email sign-up disabled (invite/approve-only)
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` set on backend (Render) for Admin Console provisioning
+
+### Auth & Admin Console
+- [ ] `FINANCEBUDDY_ADMIN_EMAILS` set on backend with at least one bootstrap admin
+- [ ] Bootstrap admin can sign in and open `/admin`
+- [ ] Approve flow creates Supabase user and sets `access_requests.status = approved`
+- [ ] Approved user sign-in creates `users` row with `status = active`
+- [ ] Unapproved email receives `403 not_authorized` on sign-in
+- [ ] `GET /auth/users` lists accounts after first sign-in (admin only)
 
 ---
 
@@ -250,6 +262,6 @@ PYEOF
 
 ---
 
-See ONBOARDING.md for setup, ARCHITECTURE.md for design, domain architecture, and security.
+See ONBOARDING.md for setup, ARCHITECTURE.md for design, domain architecture, auth, and security.
 
-Last updated: 2026-08-02
+Last updated: 2026-08-04

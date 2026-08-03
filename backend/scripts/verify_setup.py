@@ -23,6 +23,8 @@ def main():
     all_ok &= check("DATABASE_URL", bool(os.getenv("DATABASE_URL")))
     all_ok &= check("FINANCEBUDDY_ENCRYPTION_KEYS", bool(os.getenv("FINANCEBUDDY_ENCRYPTION_KEYS")))
     all_ok &= check("SUPABASE_URL", bool(os.getenv("SUPABASE_URL")))
+    check("FINANCEBUDDY_ADMIN_EMAILS (recommended)", bool(os.getenv("FINANCEBUDDY_ADMIN_EMAILS")))
+    check("SUPABASE_SERVICE_ROLE_KEY (recommended for invites)", bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")))
     
     print("\n=== Database Connection ===")
     try:
@@ -34,7 +36,8 @@ def main():
             
             # Check all required tables
             tables = ["users", "identities", "profiles", "sessions", 
-                     "session_payloads", "tax_payloads", "budget_payloads", "budget_rules"]
+                     "session_payloads", "tax_payloads", "budget_payloads", "budget_rules",
+                     "access_requests"]
             result = conn.execute("""
                 SELECT table_name FROM information_schema.tables 
                 WHERE table_schema = 'public' AND table_type = 'BASE TABLE'

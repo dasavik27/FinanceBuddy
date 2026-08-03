@@ -37,9 +37,27 @@ export interface AuthUser {
   email: string | null
 }
 
-/** Shown when Google/email works at the IdP but the app has not allowlisted them. */
+/** Shown when the email has no row in access_requests. */
 export const REQUEST_ACCESS_MESSAGE =
-  'You do not have access yet. Please raise an access request and wait for an admin to approve you.'
+  'You do not have access yet. Please submit an access request and wait for an administrator to approve you.'
+
+export type AccessRequestStatus = 'none' | 'pending' | 'approved'
+
+export function messageForAccessStatus(status: AccessRequestStatus | string | null | undefined): string {
+  if (status === 'pending') {
+    return (
+      'Your access request is already submitted and pending admin approval. ' +
+      'Please wait for an administrator to approve and invite you.'
+    )
+  }
+  if (status === 'approved') {
+    return (
+      'Your access has been approved. Check your email for an invite, ' +
+      'or try signing in again once your account is provisioned.'
+    )
+  }
+  return REQUEST_ACCESS_MESSAGE
+}
 
 /**
  * Map provider / OAuth error text into a clear "request access" message when the
@@ -126,13 +144,22 @@ export const authClient = {
     return user
   },
 
-  /** Fast 1-click login for local development if dev credentials exist in .env.local */
-  signInWithDevAccount: async (): Promise<AuthUser> => {
-    if (!supabase) throw new Error('Sign-in is not configured.')
-    const email = import.meta.env.VITE_DEV_EMAIL
-    const password = import.meta.env.VITE_DEV_PASSWORD
-    if (!email || !password) throw new Error('Dev credentials (VITE_DEV_EMAIL, VITE_DEV_PASSWORD) are not set in .env.local')
-    return authClient.signInWithEmail(email, password)
+  /** Look up access_requests status for an email (public). */
+  checkAccessStatus: async (email: string): Promise<{
+    email: string
+    access_request_status: AccessRequestStatus
+    message: string
+  }> => {
+    const res = await fetch('/api/auth/access-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim() }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Could not check access status.')
+    }
+    return res.json()
   },
 
   /** Submit an early access request for prospective users */

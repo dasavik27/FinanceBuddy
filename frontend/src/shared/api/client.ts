@@ -658,16 +658,6 @@ export const apiClient = {
   },
 
   // ── Access Control Admin ──────────────────────────────────────────────────
-  getProvisioningStatus: async (): Promise<{
-    supabase_url_configured: boolean
-    service_role_key_configured: boolean
-    can_auto_provision: boolean
-    note?: string
-  }> => {
-    const { data } = await api.get('/auth/provisioning-status')
-    return data
-  },
-
   getAccessRequests: async (): Promise<{
     requests: Array<{
       id: string
@@ -723,6 +713,36 @@ export const apiClient = {
     supabase_banned: boolean
   }> => {
     const { data } = await api.post('/auth/users/suspend', { email })
+    return data
+  },
+
+  getAppUsers: async (): Promise<{
+    users: Array<{
+      user_id: string
+      email: string | null
+      status: 'pending' | 'active' | 'suspended'
+      role: 'user' | 'admin'
+      created_at: string | null
+      last_seen_at: string | null
+    }>
+  }> => {
+    const { data } = await api.get('/auth/users')
+    return data
+  },
+
+  updateAppUser: async (
+    userId: string,
+    payload: { status?: 'pending' | 'active' | 'suspended'; role?: 'user' | 'admin' },
+  ): Promise<{
+    status: string
+    user: {
+      user_id: string
+      email: string | null
+      status: string
+      role: string
+    }
+  }> => {
+    const { data } = await api.patch(`/auth/users/${userId}`, payload)
     return data
   },
 }

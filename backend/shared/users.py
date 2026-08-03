@@ -26,9 +26,14 @@ logger = logging.getLogger(__name__)
 class NotAuthorizedError(Exception):
     """Raised when a valid IdP token belongs to an email that is not allowlisted."""
 
-    def __init__(self, message: str = "not_authorized"):
+    def __init__(
+        self,
+        message: str = "not_authorized",
+        access_request_status: Optional[str] = None,
+    ):
         super().__init__(message)
         self.code = "not_authorized"
+        self.access_request_status = access_request_status or "none"
 
 
 # ── Resolution cache ──────────────────────────────────────────────────────────
@@ -111,6 +116,48 @@ def _has_approved_access(conn, email: str) -> bool:
     return row is not None
 
 
+def _has_pending_access(conn, email: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM access_requests WHERE LOWER(email) = %s AND status = 'pending' LIMIT 1",
+        (email.strip().lower(),),
+    ).fetchone()
+    return row is not None
+
+
+def lookup_access_request_status(conn, email: Optional[str]) -> Optional[str]:
+    """Latest access_requests.status for this email, or None if no row."""
+    if not email:
+        return None
+    row = conn.execute(
+        """
+        SELECT status FROM access_requests
+        WHERE LOWER(email) = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (email.strip().lower(),),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def message_for_access_status(status: Optional[str]) -> str:
+    """User-facing copy keyed off access_requests.status."""
+    if status == "pending":
+        return (
+            "Your access request is already submitted and pending admin approval. "
+            "Please wait for an administrator to approve and invite you."
+        )
+    if status == "approved":
+        return (
+            "Your access has been approved. Check your email for an invite, "
+            "or try signing in again once your account is provisioned."
+        )
+    return (
+        "You do not have access yet. Please submit an access request and wait "
+        "for an administrator to approve you."
+    )
+
+
 def _may_provision(conn, email: Optional[str]) -> bool:
     """True when a brand-new identity is allowed to create an app account."""
     if _open_provision():
@@ -120,7 +167,9 @@ def _may_provision(conn, email: Optional[str]) -> bool:
     email_lower = email.strip().lower()
     if email_lower in _admin_emails():
         return True
-    return _has_approved_access(conn, email_lower)
+    # Approved → full access; pending request → create a pending account so they
+    # see the wait screen after Google / email verification instead of "raise request".
+    return _has_approved_access(conn, email_lower) or _has_pending_access(conn, email_lower)
 
 
 def _initial_account_flags(conn, email: Optional[str]) -> tuple:
@@ -134,6 +183,8 @@ def _initial_account_flags(conn, email: Optional[str]) -> tuple:
         return "active", "admin"
     if _has_approved_access(conn, email_lower):
         return "active", role
+    if _has_pending_access(conn, email_lower):
+        return "pending", role
     # Open-provision / legacy test path: create as pending until approved.
     return status, role
 
@@ -220,6 +271,83 @@ def suspend_by_email(email: str) -> Optional[str]:
     return suspended_id
 
 
+def list_accounts(limit: int = 100) -> list:
+    """Admin roster: app users with primary email, status, and role."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.id, u.status, u.role, u.created_at, u.last_seen_at,
+                   (
+                     SELECT i.email FROM identities i
+                     WHERE i.user_id = u.id AND i.email IS NOT NULL
+                     ORDER BY i.created_at ASC
+                     LIMIT 1
+                   ) AS email
+            FROM users u
+            ORDER BY u.created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "user_id": str(r[0]),
+            "status": r[1],
+            "role": r[2],
+            "created_at": r[3].isoformat() if r[3] else None,
+            "last_seen_at": r[4].isoformat() if r[4] else None,
+            "email": r[5],
+        }
+        for r in rows
+    ]
+
+
+def update_account(
+    user_id: str,
+    status: Optional[str] = None,
+    role: Optional[str] = None,
+) -> Optional[dict]:
+    """Update account status and/or role. Returns updated row summary or None."""
+    allowed_status = {"pending", "active", "suspended"}
+    allowed_role = {"user", "admin"}
+    if status is not None and status not in allowed_status:
+        return None
+    if role is not None and role not in allowed_role:
+        return None
+    if status is None and role is None:
+        return None
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT id, status, role FROM users WHERE id = %s", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        new_status = status if status is not None else row[1]
+        new_role = role if role is not None else row[2]
+        conn.execute(
+            "UPDATE users SET status = %s, role = %s WHERE id = %s",
+            (new_status, new_role, user_id),
+        )
+        email_row = conn.execute(
+            """
+            SELECT email FROM identities
+            WHERE user_id = %s AND email IS NOT NULL
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+
+    invalidate(user_id)
+    return {
+        "user_id": str(user_id),
+        "status": new_status,
+        "role": new_role,
+        "email": email_row[0] if email_row else None,
+    }
+
+
 def resolve(issuer: str, subject: str, email: Optional[str] = None,
             pan: Optional[str] = None,
             name: Optional[str] = None) -> Optional[Caller]:
@@ -255,8 +383,10 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                         "[AUTH] denied provisioning for issuer=%s email=%s",
                         issuer, email,
                     )
+                    req_status = lookup_access_request_status(conn, email)
                     raise NotAuthorizedError(
-                        "Your account is not authorized. Request access or ask an administrator to invite you."
+                        message_for_access_status(req_status),
+                        access_request_status=req_status or "none",
                     )
                 status, role = _initial_account_flags(conn, email)
                 user_id = conn.execute(

@@ -12,13 +12,13 @@ import VisibilityOff from '@mui/icons-material/VisibilityOff'
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import CloseIcon from '@mui/icons-material/Close'
-import BoltIcon from '@mui/icons-material/Bolt'
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
 import authClient, {
-  REQUEST_ACCESS_MESSAGE,
+  type AccessRequestStatus,
   consumeOAuthErrorFromUrl,
-  toAccessRequestMessage,
+  REQUEST_ACCESS_MESSAGE,
 } from '../auth/authClient'
+import { readAuthNotice } from '../auth/authNotice'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
 const GoogleMark = () => (
@@ -46,8 +46,6 @@ const landingAnimations = (
   }} />
 )
 
-const AUTH_NOTICE_KEY = 'fb_auth_notice'
-
 export default function Landing() {
   // Sign-in state
   const [email, setEmail] = useState('')
@@ -55,6 +53,7 @@ export default function Landing() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [accessRequestStatus, setAccessRequestStatus] = useState<AccessRequestStatus | null>(null)
 
   // Request Access modal state
   const [requestModalOpen, setRequestModalOpen] = useState(false)
@@ -66,37 +65,57 @@ export default function Landing() {
   const [reqError, setReqError] = useState<string | null>(null)
   const [reqSuccess, setReqSuccess] = useState<string | null>(null)
 
-  // Local Dev convenience check
-  const isLocalDev = Boolean(
-    import.meta.env.DEV &&
-    import.meta.env.VITE_DEV_EMAIL &&
-    import.meta.env.VITE_DEV_PASSWORD
-  )
-
-  const needsAccessRequest = Boolean(
-    error && (
-      error === REQUEST_ACCESS_MESSAGE ||
-      error.toLowerCase().includes('request access') ||
-      error.toLowerCase().includes('not authorized') ||
-      error.toLowerCase().includes('do not have access')
-    ),
-  )
+  const showRaiseRequest = accessRequestStatus === 'none'
+  const isPendingNotice = accessRequestStatus === 'pending'
+  const showAccessInfo = showRaiseRequest || isPendingNotice || accessRequestStatus === 'approved'
 
   const openRequestAccess = () => {
     if (email.trim()) setReqEmail(email.trim())
     setRequestModalOpen(true)
   }
 
-  // Shown after App.tsx signs the user out for 403 not_authorized, or after a
-  // Google OAuth bounce when Supabase rejects an unregistered user.
+  const applyAccessStatus = async (emailTrim: string) => {
+    const st = await authClient.checkAccessStatus(emailTrim)
+    setAccessRequestStatus(st.access_request_status)
+    setError(st.message)
+  }
+
+  // After sign-out (403) or OAuth bounce: show message from access_requests lookup.
   useEffect(() => {
-    const oauthMessage = consumeOAuthErrorFromUrl()
-    const notice = sessionStorage.getItem(AUTH_NOTICE_KEY)
-    if (notice) sessionStorage.removeItem(AUTH_NOTICE_KEY)
-    const message = notice || oauthMessage
-    if (!message) return
-    setError(message)
-    setLoading(false)
+    let cancelled = false
+
+    const run = async () => {
+      const notice = readAuthNotice()
+      const hadOAuthError = consumeOAuthErrorFromUrl() !== null
+      const emailHint = (notice?.email || email.trim()).trim()
+
+      if (notice) {
+        if (cancelled) return
+        setAccessRequestStatus(notice.access_request_status)
+        setError(notice.message)
+        if (notice.email) setEmail(notice.email)
+        setLoading(false)
+        return
+      }
+
+      if (hadOAuthError && emailHint) {
+        try {
+          await applyAccessStatus(emailHint)
+        } catch {
+          if (!cancelled) {
+            setAccessRequestStatus('none')
+            setError(REQUEST_ACCESS_MESSAGE)
+          }
+        } finally {
+          if (!cancelled) setLoading(false)
+        }
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -107,12 +126,17 @@ export default function Landing() {
     }
     setLoading(true)
     setError(null)
+    setAccessRequestStatus(null)
     try {
       await authClient.signInWithEmail(email.trim(), password)
       // App.tsx auth listener handles redirect to /dashboard
-    } catch (err: any) {
-      const raw = err?.message || 'Invalid email or password.'
-      setError(toAccessRequestMessage(raw) || raw)
+    } catch {
+      try {
+        await applyAccessStatus(email.trim())
+      } catch {
+        setError('Invalid email or password.')
+        setAccessRequestStatus(null)
+      }
       setLoading(false)
     }
   }
@@ -120,22 +144,21 @@ export default function Landing() {
   const handleGoogleSignIn = async () => {
     setLoading(true)
     setError(null)
+    setAccessRequestStatus(null)
     try {
       await authClient.signInWithGoogle()
-    } catch (e: any) {
-      const raw = e?.message ?? 'Could not start Google sign-in.'
-      setError(toAccessRequestMessage(raw) || raw)
-      setLoading(false)
-    }
-  }
-
-  const handleDevSignIn = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      await authClient.signInWithDevAccount()
-    } catch (e: any) {
-      setError(e?.message || 'Local dev sign-in failed.')
+    } catch {
+      const emailTrim = email.trim()
+      if (emailTrim) {
+        try {
+          await applyAccessStatus(emailTrim)
+        } catch {
+          setError('Could not start Google sign-in.')
+          setAccessRequestStatus(null)
+        }
+      } else {
+        setError('Could not start Google sign-in.')
+      }
       setLoading(false)
     }
   }
@@ -155,7 +178,14 @@ export default function Landing() {
         investor_type: reqType,
         notes: reqNotes.trim(),
       })
-      setReqSuccess(res.message || 'Access request submitted successfully.')
+      if (res.status === 'already_submitted') {
+        setReqSuccess(
+          res.message ||
+            'Your access request is already pending. Please wait for an administrator to approve it.',
+        )
+      } else {
+        setReqSuccess(res.message || 'Access request submitted successfully.')
+      }
     } catch (err: any) {
       setReqError(err?.message || 'Failed to submit request. Please try again.')
     } finally {
@@ -363,12 +393,12 @@ export default function Landing() {
               }}
             />
 
-            {/* Error / request-access Message */}
+            {/* Access status / error message */}
             <Collapse in={!!error} unmountOnExit>
               <Alert
-                severity={needsAccessRequest ? 'info' : 'error'}
+                severity={showAccessInfo ? 'info' : 'error'}
                 action={
-                  needsAccessRequest ? (
+                  showRaiseRequest ? (
                     <Button
                       color="inherit"
                       size="small"
@@ -381,15 +411,15 @@ export default function Landing() {
                 }
                 sx={{
                   borderRadius: '12px',
-                  bgcolor: needsAccessRequest ? 'rgba(56, 189, 248, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  color: needsAccessRequest ? '#7DD3FC' : '#EF4444',
-                  border: needsAccessRequest
+                  bgcolor: showAccessInfo ? 'rgba(56, 189, 248, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                  color: showAccessInfo ? '#7DD3FC' : '#EF4444',
+                  border: showAccessInfo
                     ? '1px solid rgba(56, 189, 248, 0.25)'
                     : '1px solid rgba(239, 68, 68, 0.2)',
                   fontSize: '0.85rem',
                   py: 0.5,
                   alignItems: 'center',
-                  '& .MuiAlert-icon': { color: needsAccessRequest ? '#38BDF8' : '#EF4444' },
+                  '& .MuiAlert-icon': { color: showAccessInfo ? '#38BDF8' : '#EF4444' },
                 }}
               >
                 {error}
@@ -449,62 +479,37 @@ export default function Landing() {
               Continue with Google
             </Button>
 
-            {/* Local Dev Auto-Login (Isolated strictly to local dev) */}
-            {isLocalDev && (
-              <Button
-                fullWidth
-                variant="outlined"
-                onClick={handleDevSignIn}
-                disabled={loading}
-                startIcon={<BoltIcon sx={{ color: '#38BDF8' }} />}
-                sx={{
-                  py: 1.2,
-                  borderRadius: '14px',
-                  borderColor: 'rgba(56, 189, 248, 0.35)',
-                  color: '#38BDF8',
-                  backgroundColor: 'rgba(56, 189, 248, 0.05)',
-                  fontSize: '0.86rem',
-                  fontWeight: 700,
-                  textTransform: 'none',
-                  '&:hover': {
-                    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-                    borderColor: '#38BDF8',
-                  }
-                }}
-              >
-                ⚡ 1-Click Dev Sign-In
-              </Button>
-            )}
-
             {/* Invite-Only Notice & Request Access CTA */}
+            {!isPendingNotice && (
             <Box sx={{ mt: 1.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
               <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 0.8 }}>
-                {needsAccessRequest
+                {showRaiseRequest
                   ? 'Need access? Submit a request and an admin will approve you.'
                   : "Don't have an authorized account?"}
               </Typography>
               <Button
-                variant={needsAccessRequest ? 'contained' : 'text'}
+                variant={showRaiseRequest ? 'contained' : 'text'}
                 onClick={openRequestAccess}
                 endIcon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
                 sx={{
-                  color: needsAccessRequest ? '#0F172A' : '#38BDF8',
-                  bgcolor: needsAccessRequest ? '#38BDF8' : 'transparent',
+                  color: showRaiseRequest ? '#0F172A' : '#38BDF8',
+                  bgcolor: showRaiseRequest ? '#38BDF8' : 'transparent',
                   fontSize: '0.86rem',
                   fontWeight: 700,
                   textTransform: 'none',
-                  px: needsAccessRequest ? 2 : 0,
-                  py: needsAccessRequest ? 0.8 : 0,
-                  borderRadius: needsAccessRequest ? '12px' : 0,
+                  px: showRaiseRequest ? 2 : 0,
+                  py: showRaiseRequest ? 0.8 : 0,
+                  borderRadius: showRaiseRequest ? '12px' : 0,
                   '&:hover': {
-                    color: needsAccessRequest ? '#0F172A' : '#7dd3fc',
-                    bgcolor: needsAccessRequest ? '#7DD3FC' : 'transparent',
+                    color: showRaiseRequest ? '#0F172A' : '#7dd3fc',
+                    bgcolor: showRaiseRequest ? '#7DD3FC' : 'transparent',
                   },
                 }}
               >
                 Request Early Access
               </Button>
             </Box>
+            )}
           </Box>
         </Paper>
       </Box>

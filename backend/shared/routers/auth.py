@@ -22,6 +22,31 @@ class AccessRequestPayload(BaseModel):
     notes: Optional[str] = ""
 
 
+class AccessStatusPayload(BaseModel):
+    email: str
+
+
+@router.post("/access-status")
+def check_access_status(req: AccessStatusPayload):
+    """
+    Public lookup: does this email have an access_requests row, and what status?
+    Used on failed email/Google sign-in to show pending vs raise-request messaging.
+    """
+    email = req.email.strip().lower()
+    if not email or "@" not in email or "." not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+
+    with db.connect() as conn:
+        status = users.lookup_access_request_status(conn, email)
+
+    access_status = status or "none"
+    return {
+        "email": email,
+        "access_request_status": access_status,
+        "message": users.message_for_access_status(status),
+    }
+
+
 @router.get("/me")
 def whoami():
     """The current account. The frontend uses this to decide if a session is live."""
@@ -193,30 +218,6 @@ def _provision_in_supabase(email: str, name: str, method: str = "invite", passwo
     except Exception as e:
         logger.exception("[AUTH] Supabase provision exception: %s", e)
         return False, f"Failed to connect to Supabase: {str(e)}"
-
-
-@router.get("/provisioning-status")
-def get_provisioning_status():
-    """
-    Check if the server has the necessary credentials configured to provision Supabase users.
-    """
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv(override=True)
-    has_url = bool(os.getenv("SUPABASE_URL", "").strip())
-    has_service_key = bool(
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or os.getenv("SUPABASE_SERVICE_KEY", "").strip()
-    )
-    return {
-        "supabase_url_configured": has_url,
-        "service_role_key_configured": has_service_key,
-        "can_auto_provision": has_url and has_service_key,
-        "note": (
-            "Disable public sign-up in the Supabase dashboard so only "
-            "admin-approved / invited users can authenticate."
-        ),
-    }
 
 
 def _assert_admin(caller) -> None:
@@ -517,5 +518,45 @@ def suspend_user(req: SuspendUserPayload):
         "email": email,
         "supabase_banned": banned,
     }
+
+
+class UpdateUserPayload(BaseModel):
+    status: Optional[str] = None  # pending | active | suspended
+    role: Optional[str] = None    # user | admin
+
+
+@router.get("/users")
+def list_app_users():
+    """Admin: list provisioned app accounts with status and role."""
+    caller = identity.current_caller()
+    _assert_admin(caller)
+    return {"users": users.list_accounts()}
+
+
+@router.patch("/users/{user_id}")
+def update_app_user(user_id: str, req: UpdateUserPayload):
+    """Admin: activate, suspend, or change role for an app account."""
+    caller = identity.current_caller()
+    _assert_admin(caller)
+
+    if req.status is None and req.role is None:
+        raise HTTPException(status_code=400, detail="Provide status and/or role to update.")
+
+    if str(caller.user_id) == user_id:
+        if req.role == "user" or req.status == "suspended":
+            raise HTTPException(
+                status_code=400,
+                detail="You cannot remove your own admin role or suspend your own account.",
+            )
+
+    updated = users.update_account(user_id, status=req.status, role=req.role)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found or invalid status/role.")
+
+    logger.info(
+        "[AUTH] user %s updated by admin %s (status=%s role=%s)",
+        user_id, caller.user_id, updated["status"], updated["role"],
+    )
+    return {"status": "success", "user": updated}
 
 

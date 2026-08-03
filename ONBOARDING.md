@@ -40,7 +40,7 @@ Providers → Google → paste credentials → Enable
 URL Configuration:
 - Site URL: http://localhost:5173
 - Redirect URLs: `http://localhost:5173/` and `http://localhost:5173/dashboard`
-  (Google OAuth returns to `/` so unregistered users see a “raise access request” message)
+  (Google OAuth returns to `/` so unregistered users see access-request messaging)
 
 ### 1.6 Lock down sign-up (required for admin-controlled access)
 
@@ -64,14 +64,53 @@ of bootstrap admin emails. Those accounts get `role=admin` on first sign-in, and
 admin API routes deny everyone else when this list is empty and the caller is
 not already `role=admin`.
 
-Access flow:
+### 1.7 Access & onboarding flow
 
-1. Prospect submits **Request access** on the landing page (or an admin uses
-   **Invite user** in the Admin Console).
-2. Admin approves / invites → Supabase Auth user is provisioned and the email is
-   allowlisted (`access_requests.status = approved`).
-3. User signs in with Google or email/password → app account is created as
-   `active`. Unapproved sign-ins are rejected (`403 not_authorized`).
+There are two layers: **Supabase Auth** (can this person sign in?) and the **app
+account** (`users` + `identities` in Postgres — can they use Finance Buddy?).
+
+```mermaid
+flowchart LR
+  A[Prospect] -->|Request access| B[access_requests pending]
+  A -->|Admin invite| C[access_requests approved]
+  B -->|Admin approve| C
+  C -->|Supabase invite or password| D[Supabase Auth user]
+  D -->|First sign-in| E[users row created]
+  E -->|status active| F[PAN prompt then dashboard]
+  E -->|status pending| G[PendingAccess screen]
+  G -->|Admin activates| F
+```
+
+**Step by step:**
+
+1. **Request or invite** — Prospect submits **Request access** on the landing page,
+   or an admin uses **Invite user** in the Admin Console (`/admin`).
+2. **Admin approve / invite** — Backend provisions Supabase Auth (invite email or
+   direct password), sets `access_requests.status = 'approved'`, and promotes any
+   existing `users` row from `pending` → `active` for that email.
+3. **First sign-in** — The `users` table row is **not** created at approval time.
+   It is inserted on the user's **first authenticated API request** when
+   `users.resolve()` runs in middleware, but only if the email is allowlisted
+   (approved access request, pending access request, or admin email).
+   - Approved at first sign-in → `users.status = active`
+   - Pending request at first sign-in → `users.status = pending` (wait screen)
+4. **Unapproved sign-in** — No `users` row is created; middleware returns
+   `403 not_authorized`. The landing page calls `POST /auth/access-status` to
+   show “already submitted” vs “raise request”.
+5. **After active** — User completes mandatory PAN if missing, then reaches the
+   dashboard. Admins see **Admin Console** in the profile menu (`role=admin`).
+
+**Admin Console** (`/admin`, visible when `GET /auth/me` returns `role: admin`):
+
+| Section | Purpose |
+|---|---|
+| Access requests | Review leads, approve (invite / set password), reject |
+| Invite user | Direct allowlist + Supabase provision without a prior request |
+| Suspend user | Set `users.status = suspended` and ban in Supabase when configured |
+| User accounts | List provisioned app accounts; set status and role (activate, make admin) |
+
+See ARCHITECTURE.md → *Authentication & access control* for API details and
+middleware rules.
 
 ---
 
@@ -130,11 +169,17 @@ frontend-only, and there is no package.json at the repo root.
 
 | Migration | What |
 |---|---|
-| 0001 | Core (users, sessions, payloads) |
-| 0002 | Tax payloads |
-| 0003 | Equity support |
-| 0004 | Budget payloads (Aug 2, 2026) |
-| 0005 | Budget rules (Aug 2, 2026) |
+| 0001 | Core (`users`, `identities`, `profiles`, `sessions`, payloads) |
+| 0002 | Row-level security (deny-all backstop) |
+| 0003 | Application-level encryption for sensitive columns |
+| 0004 | Budget payloads |
+| 0005 | Budget rules |
+| 0006 | Budget hardening |
+| 0007 | Budget accounts metadata |
+| 0008 | `access_requests` (invite-only early access) |
+| 0009 | `users.status`, `users.role` (pending / active / suspended; user / admin) |
+
+Full migration descriptions are in ARCHITECTURE.md.
 
 ---
 
@@ -171,6 +216,8 @@ Backend — strongly recommended for invite/approve provisioning:
 - SUPABASE_SERVICE_ROLE_KEY: Supabase service_role secret (never expose to the frontend)
 
 Backend — optional, defaults tuned for a single worker on ~512 MB:
+- FINANCEBUDDY_OPEN_PROVISION: set to `1` only in local/test to allow provisioning
+  without an approved access request (production should omit or set `0`)
 - FINANCEBUDDY_ENCRYPTION_ACTIVE_KEY: which key id to encrypt *new* data with, when
   rotating. Decryption always tries every key in FINANCEBUDDY_ENCRYPTION_KEYS
 - FINANCEBUDDY_SLOW_REQUEST_MS: slow-request log threshold (1500)

@@ -126,3 +126,27 @@ here: several things the previous pass recorded as documented were documented
   going stale; worth deleting rather than maintaining.
 - Response-body examples are not reproduced in ARCHITECTURE.md. `GET /docs` is the
   source of truth — hand-copied payloads are what drifted last time.
+
+---
+
+# Update — August 4, 2026
+
+Admin-gated login, Admin Console user management, and documentation sync.
+
+## Additions
+
+| Document | What changed |
+|---|---|
+| **ARCHITECTURE.md** | New *Authentication & access control* section: two-layer auth, status/role, allowlist rules, full `/auth` API table, middleware gates, frontend auth screens; migrations 0008–0009; `/admin` route |
+| **ONBOARDING.md** | Expanded access flow (mermaid + step-by-step); when `users` rows are created; Admin Console sections; migrations 0001–0009; `FINANCEBUDDY_OPEN_PROVISION` |
+| **README.md** | Invite/approve-only sign-in; auth test pointer; backend test count (861) |
+| **VERIFICATION.md** | Migrations 0008–0009; `access_requests` in schema checks; auth/admin pre-deploy checklist; `test_user_status_role.py` |
+| **backend/scripts/verify_setup.py** | Checks `access_requests` table; warns on missing admin/service-role env vars |
+
+## Key concepts now documented
+
+- **`access_requests`** (0008) — public form + admin allowlist; approval does **not** insert into `users`
+- **`users.status` / `users.role`** (0009) — pending / active / suspended; user / admin
+- **First sign-in** — `users.resolve()` creates the app account when email is allowlisted
+- **Admin APIs** — list/update users (`GET/PATCH /auth/users`), suspend, invites, approve/reject
+- **Removed from product** — local dev one-click sign-in; `GET /auth/provisioning-status`
