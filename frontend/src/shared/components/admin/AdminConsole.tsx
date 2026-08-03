@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, type FormEvent } from 'react'
 import {
   Box, Typography, Paper, Grid, TextField, InputAdornment, Button,
   Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -17,6 +17,7 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import PersonIcon from '@mui/icons-material/Person'
+import PersonAddAlt1Icon from '@mui/icons-material/PersonAddAlt1'
 import { apiClient } from '../../api/client'
 
 interface AccessRequest {
@@ -44,6 +45,20 @@ const normalizeStatus = (status: string | null | undefined): 'pending' | 'approv
   return 'pending'
 }
 
+const adminFieldSx = {
+  '& .MuiOutlinedInput-root': {
+    borderRadius: '12px',
+    bgcolor: 'rgba(2, 6, 23, 0.5)',
+    color: '#fff',
+    '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
+    '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.15)' },
+    '&.Mui-focused fieldset': { borderColor: '#38BDF8' },
+  },
+  '& .MuiInputLabel-root': { color: '#94A3B8' },
+  '& .MuiInputLabel-root.Mui-focused': { color: '#38BDF8' },
+  '& select': { color: '#fff' },
+}
+
 export default function AdminConsole() {
   const theme = useTheme()
   const [requests, setRequests] = useState<AccessRequest[]>([])
@@ -64,6 +79,17 @@ export default function AdminConsole() {
   const [activeRequest, setActiveRequest] = useState<AccessRequest | null>(null)
   const [customPassword, setCustomPassword] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+
+  // Direct invite form
+  const [inviteName, setInviteName] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteMethod, setInviteMethod] = useState<'invite' | 'create'>('invite')
+  const [invitePassword, setInvitePassword] = useState('Welcome@2026')
+  const [inviteLoading, setInviteLoading] = useState(false)
+
+  // Suspend form
+  const [suspendEmail, setSuspendEmail] = useState('')
+  const [suspendLoading, setSuspendLoading] = useState(false)
 
   // Notification snackbar
   const [snackbarMsg, setSnackbarMsg] = useState<{ text: string; severity: 'success' | 'error' | 'warning' | 'info' } | null>(null)
@@ -165,6 +191,85 @@ export default function AdminConsole() {
     }
   }
 
+  const handleInviteUser = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!inviteName.trim() || !inviteEmail.trim()) {
+      setSnackbarMsg({ text: 'Name and email are required to invite a user.', severity: 'error' })
+      return
+    }
+    if (inviteMethod === 'create' && !invitePassword.trim()) {
+      setSnackbarMsg({ text: 'Password is required when creating credentials directly.', severity: 'error' })
+      return
+    }
+    setInviteLoading(true)
+    try {
+      const res = await apiClient.inviteUser({
+        name: inviteName.trim(),
+        email: inviteEmail.trim(),
+        method: inviteMethod,
+        password: inviteMethod === 'create' ? invitePassword.trim() : undefined,
+        notes: 'Admin invite',
+      })
+      setSnackbarMsg({
+        text: res.message || `Invite processed for ${inviteEmail.trim()}`,
+        severity: res.supabase_provisioned ? 'success' : 'warning',
+      })
+      setInviteName('')
+      setInviteEmail('')
+      setInviteMethod('invite')
+      await fetchRequests(true)
+    } catch (err: any) {
+      setSnackbarMsg({
+        text: err?.response?.data?.detail || err?.message || 'Failed to invite user.',
+        severity: 'error',
+      })
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
+  const handleSuspendUser = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!suspendEmail.trim()) {
+      setSnackbarMsg({ text: 'Enter an email to suspend.', severity: 'error' })
+      return
+    }
+    setSuspendLoading(true)
+    try {
+      const res = await apiClient.suspendUser(suspendEmail.trim())
+      setSnackbarMsg({
+        text: res.message || `Suspended ${suspendEmail.trim()}`,
+        severity: res.supabase_banned ? 'success' : 'warning',
+      })
+      setSuspendEmail('')
+    } catch (err: any) {
+      setSnackbarMsg({
+        text: err?.response?.data?.detail || err?.message || 'Failed to suspend user.',
+        severity: 'error',
+      })
+    } finally {
+      setSuspendLoading(false)
+    }
+  }
+
+  const handleSuspendFromRow = async (email: string) => {
+    setActionLoading(true)
+    try {
+      const res = await apiClient.suspendUser(email)
+      setSnackbarMsg({
+        text: res.message || `Suspended ${email}`,
+        severity: res.supabase_banned ? 'success' : 'warning',
+      })
+    } catch (err: any) {
+      setSnackbarMsg({
+        text: err?.response?.data?.detail || err?.message || 'Failed to suspend user.',
+        severity: 'error',
+      })
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   // Derived Stats
   const stats = useMemo(() => {
     const total = requests.length
@@ -238,9 +343,117 @@ export default function AdminConsole() {
           </Typography>
           <Typography sx={{ fontSize: '0.82rem', color: '#CBD5E1' }}>
             To automatically invite users or create accounts via 1-click in Supabase, add <code>SUPABASE_SERVICE_ROLE_KEY=your_secret_key</code> to <code>backend/.env</code> (from <strong>Supabase Dashboard → Project Settings → API → service_role</strong>).
+            Also disable public sign-up in Supabase (Authentication → Providers) so only admin-provisioned users can authenticate.
           </Typography>
         </Alert>
       )}
+
+      {/* Direct invite + suspend */}
+      <Grid container spacing={2.5} sx={{ mb: 4 }}>
+        <Grid item xs={12} md={8}>
+          <Paper
+            component="form"
+            onSubmit={handleInviteUser}
+            sx={{ p: 2.5, borderRadius: '18px', bgcolor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <PersonAddAlt1Icon sx={{ color: '#38BDF8', fontSize: 20 }} />
+              <Typography sx={{ fontWeight: 700, color: '#F8FAFC' }}>Invite user</Typography>
+            </Box>
+            <Grid container spacing={1.5}>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="Name"
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  sx={adminFieldSx}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="Email"
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  sx={adminFieldSx}
+                />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  select
+                  label="Method"
+                  value={inviteMethod}
+                  onChange={(e) => setInviteMethod(e.target.value as 'invite' | 'create')}
+                  SelectProps={{ native: true }}
+                  sx={adminFieldSx}
+                >
+                  <option value="invite">Send invite email</option>
+                  <option value="create">Set password</option>
+                </TextField>
+              </Grid>
+              {inviteMethod === 'create' && (
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="Initial password"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    sx={adminFieldSx}
+                  />
+                </Grid>
+              )}
+              <Grid item xs={12} sm={inviteMethod === 'create' ? 6 : 12} sx={{ display: 'flex', alignItems: 'center' }}>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={inviteLoading}
+                  startIcon={inviteLoading ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+                  sx={{ borderRadius: '12px', textTransform: 'none', fontWeight: 700, bgcolor: '#38BDF8', color: '#0F172A', '&:hover': { bgcolor: '#7DD3FC' } }}
+                >
+                  Invite & allowlist
+                </Button>
+              </Grid>
+            </Grid>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Paper
+            component="form"
+            onSubmit={handleSuspendUser}
+            sx={{ p: 2.5, borderRadius: '18px', bgcolor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(239,68,68,0.2)', height: '100%' }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <BlockIcon sx={{ color: '#F87171', fontSize: 20 }} />
+              <Typography sx={{ fontWeight: 700, color: '#F8FAFC' }}>Suspend user</Typography>
+            </Box>
+            <TextField
+              size="small"
+              fullWidth
+              label="Email"
+              type="email"
+              value={suspendEmail}
+              onChange={(e) => setSuspendEmail(e.target.value)}
+              sx={{ ...adminFieldSx, mb: 1.5 }}
+            />
+            <Button
+              type="submit"
+              variant="outlined"
+              disabled={suspendLoading}
+              startIcon={suspendLoading ? <CircularProgress size={16} color="inherit" /> : <BlockIcon />}
+              sx={{ borderRadius: '12px', textTransform: 'none', fontWeight: 700, borderColor: 'rgba(239,68,68,0.4)', color: '#FCA5A5', '&:hover': { borderColor: '#EF4444', bgcolor: 'rgba(239,68,68,0.08)' } }}
+            >
+              Suspend access
+            </Button>
+          </Paper>
+        </Grid>
+      </Grid>
 
       {/* KPI Stats Cards */}
       <Grid container spacing={2.5} sx={{ mb: 4 }}>
@@ -493,6 +706,16 @@ export default function AdminConsole() {
                               >
                                 Re-invite
                               </Button>
+                            </Tooltip>
+                            <Tooltip title="Suspend app access" arrow>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleSuspendFromRow(req.email)}
+                                disabled={actionLoading}
+                                sx={{ color: '#64748B', '&:hover': { color: '#F87171' } }}
+                              >
+                                <BlockIcon sx={{ fontSize: 18 }} />
+                              </IconButton>
                             </Tooltip>
                             <Tooltip title="Delete record" arrow>
                               <IconButton size="small" onClick={() => handleReject(req)} disabled={actionLoading} sx={{ color: '#64748B', '&:hover': { color: '#EF4444' } }}>

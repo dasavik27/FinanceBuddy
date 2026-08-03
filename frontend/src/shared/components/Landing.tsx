@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box, Typography, Button, Alert, CircularProgress, Collapse, GlobalStyles, Paper,
   TextField, InputAdornment, IconButton, Divider, Chip, Dialog, DialogTitle,
@@ -42,6 +42,8 @@ const landingAnimations = (
   }} />
 )
 
+const AUTH_NOTICE_KEY = 'fb_auth_notice'
+
 export default function Landing() {
   // Sign-in state
   const [email, setEmail] = useState('')
@@ -66,6 +68,15 @@ export default function Landing() {
     import.meta.env.VITE_DEV_EMAIL &&
     import.meta.env.VITE_DEV_PASSWORD
   )
+
+  // Shown after App.tsx signs the user out for a 403 not_authorized response.
+  useEffect(() => {
+    const notice = sessionStorage.getItem(AUTH_NOTICE_KEY)
+    if (!notice) return
+    sessionStorage.removeItem(AUTH_NOTICE_KEY)
+    setError(notice)
+    setLoading(false)
+  }, [])
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -430,11 +441,16 @@ export default function Landing() {
             {/* Invite-Only Notice & Request Access CTA */}
             <Box sx={{ mt: 1.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
               <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 0.8 }}>
-                Don't have an authorized account?
+                {error?.toLowerCase().includes('not authorized') || error?.toLowerCase().includes('request access')
+                  ? 'Need access? Submit a request and an admin will approve you.'
+                  : "Don't have an authorized account?"}
               </Typography>
               <Button
                 variant="text"
-                onClick={() => setRequestModalOpen(true)}
+                onClick={() => {
+                  if (email.trim()) setReqEmail(email.trim())
+                  setRequestModalOpen(true)
+                }}
                 endIcon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
                 sx={{
                   color: '#38BDF8',

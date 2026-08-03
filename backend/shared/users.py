@@ -22,6 +22,15 @@ from shared.identity import Caller
 
 logger = logging.getLogger(__name__)
 
+
+class NotAuthorizedError(Exception):
+    """Raised when a valid IdP token belongs to an email that is not allowlisted."""
+
+    def __init__(self, message: str = "not_authorized"):
+        super().__init__(message)
+        self.code = "not_authorized"
+
+
 # ── Resolution cache ──────────────────────────────────────────────────────────
 #
 # Identity resolution runs on *every* authenticated request. Against a local file
@@ -83,6 +92,17 @@ def _admin_emails() -> set:
     return {e.strip().lower() for e in admin_env.split(",") if e.strip()}
 
 
+def _open_provision() -> bool:
+    """Test-only escape hatch so DB fixtures can create accounts without access_requests."""
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+    return (os.getenv("FINANCEBUDDY_OPEN_PROVISION") or "").strip().lower() in (
+        "1", "true", "yes",
+    )
+
+
 def _has_approved_access(conn, email: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM access_requests WHERE LOWER(email) = %s AND status = 'approved' LIMIT 1",
@@ -91,8 +111,20 @@ def _has_approved_access(conn, email: str) -> bool:
     return row is not None
 
 
+def _may_provision(conn, email: Optional[str]) -> bool:
+    """True when a brand-new identity is allowed to create an app account."""
+    if _open_provision():
+        return True
+    if not email:
+        return False
+    email_lower = email.strip().lower()
+    if email_lower in _admin_emails():
+        return True
+    return _has_approved_access(conn, email_lower)
+
+
 def _initial_account_flags(conn, email: Optional[str]) -> tuple:
-    """(status, role) for a newly provisioned account."""
+    """(status, role) for a newly provisioned account. Call only after _may_provision."""
     role = "user"
     status = "pending"
     if not email:
@@ -102,6 +134,7 @@ def _initial_account_flags(conn, email: Optional[str]) -> tuple:
         return "active", "admin"
     if _has_approved_access(conn, email_lower):
         return "active", role
+    # Open-provision / legacy test path: create as pending until approved.
     return status, role
 
 
@@ -117,7 +150,8 @@ def _sync_account_flags(conn, user_id, email: Optional[str]) -> tuple:
     if not row:
         return "pending", "user"
     status, role = row[0], row[1]
-    if not email:
+    # Suspended is sticky until an admin explicitly reactivates (not implemented here).
+    if status == "suspended" or not email:
         return status, role
 
     email_lower = email.strip().lower()
@@ -158,15 +192,43 @@ def activate_by_email(email: str) -> None:
             invalidate(str(user_id))
 
 
+def suspend_by_email(email: str) -> Optional[str]:
+    """
+    Set status=suspended for every account linked to this email.
+    Returns the first user_id suspended, or None if none matched.
+    """
+    email_lower = (email or "").strip().lower()
+    if not email_lower:
+        return None
+    suspended_id = None
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT u.id FROM users u
+            JOIN identities i ON i.user_id = u.id
+            WHERE LOWER(i.email) = %s
+            """,
+            (email_lower,),
+        ).fetchall()
+        for (user_id,) in rows:
+            conn.execute(
+                "UPDATE users SET status = 'suspended' WHERE id = %s", (user_id,)
+            )
+            invalidate(str(user_id))
+            if suspended_id is None:
+                suspended_id = str(user_id)
+    return suspended_id
+
+
 def resolve(issuer: str, subject: str, email: Optional[str] = None,
             pan: Optional[str] = None,
             name: Optional[str] = None) -> Optional[Caller]:
     """
-    The account for (issuer, subject), creating it on first sight.
+    The account for (issuer, subject), creating it on first sight only when the
+    email is allowlisted (admin list or approved access request).
 
-    Provisioning on first login rather than requiring a separate signup keeps the
-    flow to one round trip and means a provider-side account that already exists
-    does not need a second registration step here.
+    Unapproved first-time sign-ins raise NotAuthorizedError so the middleware can
+    return 403 without inserting a pending account.
 
     Idempotent under concurrency: two simultaneous first requests for the same
     subject would both see no row, so the insert uses ON CONFLICT and re-reads the
@@ -188,6 +250,14 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
             ).fetchone()
 
             if row is None:
+                if not _may_provision(conn, email):
+                    logger.info(
+                        "[AUTH] denied provisioning for issuer=%s email=%s",
+                        issuer, email,
+                    )
+                    raise NotAuthorizedError(
+                        "Your account is not authorized. Request access or ask an administrator to invite you."
+                    )
                 status, role = _initial_account_flags(conn, email)
                 user_id = conn.execute(
                     "INSERT INTO users (status, role) VALUES (%s, %s) RETURNING id",
@@ -266,6 +336,8 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
         caller = Caller(user_id=str(user_id), pan=stored_pan, status=status, role=role)
         _cache_put(key, caller)
         return caller
+    except NotAuthorizedError:
+        raise
     except Exception as e:
         # Fail closed. Returning None makes the request anonymous, which owns_record
         # denies against any owned row - never accidentally authorized.

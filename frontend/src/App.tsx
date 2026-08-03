@@ -6,7 +6,21 @@ import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
 import PendingAccess from './shared/components/PendingAccess'
+import SuspendedAccess from './shared/components/SuspendedAccess'
 import { TabFallback } from './shared/components/ui'
+
+const AUTH_NOTICE_KEY = 'fb_auth_notice'
+
+function isNotAuthorizedError(e: unknown): { message: string } | null {
+  const err = e as { response?: { status?: number; data?: { detail?: string; message?: string } } }
+  if (err?.response?.status !== 403) return null
+  if (err.response.data?.detail !== 'not_authorized') return null
+  return {
+    message:
+      err.response.data?.message ||
+      'Your account is not authorized. Request access or ask an administrator to invite you.',
+  }
+}
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
 // it. Landing is one text field and one button, but these static imports pulled in
@@ -46,7 +60,17 @@ export default function App() {
             role: me.role,
           })
         } catch (e: unknown) {
-          console.error('Failed to fetch profile', e)
+          const unauthorized = isNotAuthorizedError(e)
+          if (unauthorized) {
+            sessionStorage.setItem(AUTH_NOTICE_KEY, unauthorized.message)
+            await authClient.signOut()
+            clearIdentity()
+          } else {
+            console.error('Failed to fetch profile', e)
+            // Avoid an infinite loading shell if /auth/me blips; PAN gate still applies
+            // from persisted pan when present.
+            setIdentity({ userId: user.id, email: user.email, status: 'active' })
+          }
         }
       } else {
         clearIdentity()
@@ -57,6 +81,16 @@ export default function App() {
   }, [setIdentity, clearIdentity])
 
   if (resolvingSession) return <TabFallback />
+
+  // Profile (status/role) is loaded after the Supabase session; wait so we do not
+  // flash the dashboard before pending / not_authorized / PAN gates apply.
+  if (isAuthenticated && !status) {
+    return <TabFallback />
+  }
+
+  if (isAuthenticated && status === 'suspended') {
+    return <SuspendedAccess />
+  }
 
   if (isAuthenticated && status === 'pending') {
     return <PendingAccess />

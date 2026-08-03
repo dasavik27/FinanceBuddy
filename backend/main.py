@@ -263,16 +263,48 @@ class IdentityMiddleware:
 
         try:
             caller = self._caller(scope)
+        except users.NotAuthorizedError as exc:
+            import json
+            body = json.dumps({
+                "detail": "not_authorized",
+                "message": str(exc) or (
+                    "Your account is not authorized. Request access or ask an "
+                    "administrator to invite you."
+                ),
+            }).encode()
+            await send({
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
         except Exception:
             # Identity resolution must never 500 a request into an authorized state.
             logger.exception("[AUTH] identity resolution failed; treating as anonymous")
             caller = None
 
         with identity_scope(caller):
+            path = scope.get("path", "")
             if caller is not None and caller.status == "pending":
-                path = scope.get("path", "")
                 if path not in ("/auth/me", "/auth/logout"):
                     body = b'{"detail":"Your account is pending approval."}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 403,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    })
+                    await send({"type": "http.response.body", "body": body})
+                    return
+            if caller is not None and caller.status == "suspended":
+                if path not in ("/auth/me", "/auth/logout"):
+                    body = b'{"detail":"Your account has been suspended."}'
                     await send({
                         "type": "http.response.start",
                         "status": 403,

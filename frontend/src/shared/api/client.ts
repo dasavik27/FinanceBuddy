@@ -662,6 +662,7 @@ export const apiClient = {
     supabase_url_configured: boolean
     service_role_key_configured: boolean
     can_auto_provision: boolean
+    note?: string
   }> => {
     const { data } = await api.get('/auth/provisioning-status')
     return data
@@ -693,6 +694,35 @@ export const apiClient = {
 
   rejectAccessRequest: async (requestId: string): Promise<{ status: string; message: string }> => {
     const { data } = await api.post(`/auth/access-requests/${requestId}/reject`)
+    return data
+  },
+
+  inviteUser: async (payload: {
+    email: string
+    name: string
+    method?: 'invite' | 'create'
+    password?: string
+    investor_type?: string
+    notes?: string
+  }): Promise<{
+    status: string
+    message: string
+    supabase_provisioned: boolean
+    request_id: string
+    email: string
+  }> => {
+    const { data } = await api.post('/auth/invites', payload)
+    return data
+  },
+
+  suspendUser: async (email: string): Promise<{
+    status: string
+    message: string
+    user_id: string
+    email: string
+    supabase_banned: boolean
+  }> => {
+    const { data } = await api.post('/auth/users/suspend', { email })
     return data
   },
 }

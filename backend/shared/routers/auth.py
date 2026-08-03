@@ -212,10 +212,15 @@ def get_provisioning_status():
         "supabase_url_configured": has_url,
         "service_role_key_configured": has_service_key,
         "can_auto_provision": has_url and has_service_key,
+        "note": (
+            "Disable public sign-up in the Supabase dashboard so only "
+            "admin-approved / invited users can authenticate."
+        ),
     }
 
 
 def _assert_admin(caller) -> None:
+    """Require role=admin or an email on FINANCEBUDDY_ADMIN_EMAILS. Deny by default."""
     if caller is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
 
@@ -227,10 +232,13 @@ def _assert_admin(caller) -> None:
     load_dotenv(override=True)
 
     admin_env = (os.getenv("FINANCEBUDDY_ADMIN_EMAILS") or os.getenv("ADMIN_EMAILS") or "").strip()
-    if not admin_env:
-        return  # Default open to all authenticated users if whitelist not configured
-
     admin_emails = {e.strip().lower() for e in admin_env.split(",") if e.strip()}
+    if not admin_emails:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden. Configure FINANCEBUDDY_ADMIN_EMAILS or sign in with an admin account.",
+        )
+
     with db.connect() as conn:
         row = conn.execute(
             "SELECT email FROM identities WHERE user_id = %s",
@@ -238,7 +246,10 @@ def _assert_admin(caller) -> None:
         ).fetchone()
         user_email = (row[0] or "").strip().lower() if row else ""
         if user_email not in admin_emails:
-            raise HTTPException(status_code=403, detail="Forbidden. Only authorized administrators can access this console.")
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden. Only authorized administrators can access this console.",
+            )
 
 
 @router.get("/access-requests")
@@ -347,5 +358,164 @@ def reject_access_request(request_id: str):
     logger.info("[AUTH] access request %s (%s) rejected and deleted by admin %s", req_id, email, caller.user_id)
     return {"status": "success", "message": f"Access request for {email} rejected and removed from database."}
 
+
+class InviteUserPayload(BaseModel):
+    email: str
+    name: str
+    method: str = "invite"  # "invite" or "create"
+    password: Optional[str] = None
+    investor_type: Optional[str] = "individual"
+    notes: Optional[str] = ""
+
+
+@router.post("/invites")
+def invite_user(req: InviteUserPayload):
+    """
+    Admin-direct invite: allowlist the email, mark/create an approved access_requests
+    row, and provision the Supabase Auth user without a prior public request.
+    """
+    caller = identity.current_caller()
+    _assert_admin(caller)
+
+    email = req.email.strip().lower()
+    name = req.name.strip()
+    if not email or "@" not in email or "." not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required.")
+    if req.method == "create" and not (req.password or "").strip():
+        raise HTTPException(status_code=400, detail="Password is required when method is 'create'.")
+
+    investor_type = (req.investor_type or "individual").strip()
+    notes = (req.notes or "Admin invite").strip()
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT id, status FROM access_requests WHERE LOWER(email) = %s ORDER BY created_at DESC LIMIT 1",
+            (email,),
+        ).fetchone()
+        if row:
+            request_id = row[0]
+            conn.execute(
+                """
+                UPDATE access_requests
+                SET status = 'approved', name = %s, investor_type = %s, notes = %s, reviewed_at = now()
+                WHERE id = %s
+                """,
+                (name, investor_type, notes, request_id),
+            )
+        else:
+            request_id = conn.execute(
+                """
+                INSERT INTO access_requests (email, name, investor_type, notes, status, reviewed_at)
+                VALUES (%s, %s, %s, %s, 'approved', now())
+                RETURNING id
+                """,
+                (email, name, investor_type, notes),
+            ).fetchone()[0]
+
+    provisioned, prov_msg = _provision_in_supabase(
+        email=email,
+        name=name,
+        method=req.method,
+        password=req.password,
+    )
+    users.activate_by_email(email)
+
+    logger.info(
+        "[AUTH] invite for %s by admin %s (request_id=%s provisioned=%s)",
+        email, caller.user_id, request_id, provisioned,
+    )
+    return {
+        "status": "success" if provisioned else "warning",
+        "message": prov_msg,
+        "supabase_provisioned": provisioned,
+        "request_id": str(request_id),
+        "email": email,
+    }
+
+
+class SuspendUserPayload(BaseModel):
+    email: str
+
+
+def _ban_in_supabase(email: str) -> tuple:
+    """Best-effort ban of the Supabase Auth user. Returns (ok, message)."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
+    ).strip()
+    if not supabase_url or not service_role_key:
+        return False, "Supabase service role not configured; app account suspended only."
+
+    headers = {
+        "Authorization": f"Bearer {service_role_key}",
+        "apikey": service_role_key,
+        "Content-Type": "application/json",
+    }
+    try:
+        # Admin list has no reliable email filter across versions; page and match client-side.
+        list_url = f"{supabase_url}/auth/v1/admin/users?page=1&per_page=200"
+        req = urllib.request.Request(list_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        users_list = payload.get("users") if isinstance(payload, dict) else payload
+        if not isinstance(users_list, list):
+            users_list = []
+        match = next(
+            (u for u in users_list if (u.get("email") or "").strip().lower() == email),
+            None,
+        )
+        if not match:
+            return False, "No Supabase Auth user found for that email; app account suspended."
+        user_id = match.get("id")
+        ban_url = f"{supabase_url}/auth/v1/admin/users/{user_id}"
+        ban_body = json.dumps({"ban_duration": "876000h"}).encode("utf-8")
+        ban_req = urllib.request.Request(ban_url, data=ban_body, headers=headers, method="PUT")
+        with urllib.request.urlopen(ban_req, timeout=10) as resp:
+            resp.read()
+        return True, f"Suspended app account and banned Supabase user {email}."
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8", errors="replace")
+        logger.error("[AUTH] Supabase ban HTTP %d: %s", e.code, err_msg)
+        return False, f"App account suspended; Supabase ban failed ({e.code})."
+    except Exception as e:
+        logger.exception("[AUTH] Supabase ban exception: %s", e)
+        return False, f"App account suspended; Supabase ban failed: {e}"
+
+
+@router.post("/users/suspend")
+def suspend_user(req: SuspendUserPayload):
+    """Admin: revoke app access for an email (status=suspended) and ban in Supabase if possible."""
+    caller = identity.current_caller()
+    _assert_admin(caller)
+
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+
+    user_id = users.suspend_by_email(email)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="No app account found for that email.")
+
+    banned, ban_msg = _ban_in_supabase(email)
+    logger.info(
+        "[AUTH] suspended %s (user_id=%s) by admin %s (supabase_banned=%s)",
+        email, user_id, caller.user_id, banned,
+    )
+    return {
+        "status": "success",
+        "message": ban_msg,
+        "user_id": user_id,
+        "email": email,
+        "supabase_banned": banned,
+    }
 
 

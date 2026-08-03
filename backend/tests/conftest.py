@@ -16,6 +16,10 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AUTH_JWKS_URL", "https://example-test-issuer.invalid/jwks.json")
 os.environ.setdefault("AUTH_ISSUER", "https://example-test-issuer.invalid/auth/v1")
 os.environ.setdefault("AUTH_AUDIENCE", "authenticated")
+# Most DB tests create accounts via users.resolve() without an access_requests row.
+# Production denies that path; tests opt into open provisioning unless a case
+# explicitly turns it off (see test_user_status_role.py).
+os.environ.setdefault("FINANCEBUDDY_OPEN_PROVISION", "1")
 
 # A fixed, obviously-fake key so the storage tests can round-trip encrypted columns.
 # setdefault, not a plain assignment: test_crypto.py drives its own keyring through
