@@ -16,6 +16,7 @@ import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
 import authClient, {
   type AccessRequestStatus,
   consumeOAuthErrorFromUrl,
+  lookupAccessNoticeForEmails,
   REQUEST_ACCESS_MESSAGE,
 } from '../auth/authClient'
 import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
@@ -92,9 +93,17 @@ export default function Landing() {
         if (cancelled) return
         if (notice.email && notice.access_request_status === 'none') {
           try {
-            await applyAccessStatus(notice.email)
-            if (!cancelled) setLoading(false)
-            return
+            const refreshed = await lookupAccessNoticeForEmails([
+              notice.email,
+              readAccessRequestEmail(),
+            ])
+            if (refreshed.access_request_status !== 'none') {
+              setAccessRequestStatus(refreshed.access_request_status)
+              setError(refreshed.message)
+              if (refreshed.email) setEmail(refreshed.email)
+              setLoading(false)
+              return
+            }
           } catch {
             // Fall back to stored notice below.
           }
@@ -109,9 +118,7 @@ export default function Landing() {
       if (!oauthMessage) return
 
       let emailHint = email.trim()
-      if (!emailHint) {
-        emailHint = (readAccessRequestEmail() || '').trim()
-      }
+      if (!emailHint) emailHint = (readAccessRequestEmail() || '').trim()
       if (!emailHint) {
         try {
           const u = await authClient.getUser()
@@ -124,7 +131,12 @@ export default function Landing() {
 
       if (emailHint) {
         try {
-          await applyAccessStatus(emailHint)
+          const refreshed = await lookupAccessNoticeForEmails([emailHint, readAccessRequestEmail()])
+          if (!cancelled) {
+            setAccessRequestStatus(refreshed.access_request_status)
+            setError(refreshed.message)
+            setEmail(refreshed.email || emailHint)
+          }
         } catch {
           if (!cancelled) {
             setAccessRequestStatus('none')
@@ -172,10 +184,11 @@ export default function Landing() {
     setLoading(true)
     setError(null)
     setAccessRequestStatus(null)
+    const emailTrim = email.trim()
+    if (emailTrim) rememberAccessRequestEmail(emailTrim)
     try {
-      await authClient.signInWithGoogle()
+      await authClient.signInWithGoogle(emailTrim || undefined)
     } catch {
-      const emailTrim = email.trim()
       if (emailTrim) {
         try {
           await applyAccessStatus(emailTrim)

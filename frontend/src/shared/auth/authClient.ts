@@ -48,6 +48,11 @@ export interface AuthUser {
 export const REQUEST_ACCESS_MESSAGE =
   'You do not have access yet. Please submit an access request and wait for an administrator to approve you.'
 
+/** OAuth/sign-up disabled bounce — pending request may still exist. */
+export const OAUTH_NO_ACCOUNT_MESSAGE =
+  'Sign-in failed because no login account exists yet. If you already submitted an access request, ' +
+  'it is pending admin approval — enter that email below to check status, or wait for an invite.'
+
 export type AccessRequestStatus = 'none' | 'pending' | 'approved'
 
 export function messageForAccessStatus(status: AccessRequestStatus | string | null | undefined): string {
@@ -88,7 +93,7 @@ export function toAccessRequestMessage(raw: string | null | undefined): string |
     'not_authorized',
     'disabled',
   ]
-  if (hints.some((h) => text.includes(h))) return REQUEST_ACCESS_MESSAGE
+  if (hints.some((h) => text.includes(h))) return OAUTH_NO_ACCOUNT_MESSAGE
   return null
 }
 
@@ -112,7 +117,7 @@ export function consumeOAuthErrorFromUrl(): string | null {
   if (!code && !error && !description) return null
 
   const combined = [code, error, description].filter(Boolean).join(' ')
-  const message = toAccessRequestMessage(combined) || REQUEST_ACCESS_MESSAGE
+  const message = toAccessRequestMessage(combined) || OAUTH_NO_ACCOUNT_MESSAGE
 
   const url = new URL(window.location.href)
   ;['error', 'error_code', 'error_description'].forEach((k) => url.searchParams.delete(k))
@@ -122,21 +127,36 @@ export function consumeOAuthErrorFromUrl(): string | null {
   return message
 }
 
+function extractEmail(user: { email?: string | null; user_metadata?: Record<string, unknown>; identities?: Array<{ identity_data?: Record<string, unknown> }> } | null | undefined): string | null {
+  if (!user) return null
+  if (user.email && String(user.email).trim()) return String(user.email).trim()
+  const meta = user.user_metadata
+  if (meta && typeof meta.email === 'string' && meta.email.trim()) return meta.email.trim()
+  for (const identity of user.identities ?? []) {
+    const idEmail = identity?.identity_data?.email
+    if (typeof idEmail === 'string' && idEmail.trim()) return idEmail.trim()
+  }
+  return null
+}
+
 function toUser(session: Session | null): AuthUser | null {
   if (!session?.user) return null
-  return { id: session.user.id, email: session.user.email ?? null }
+  return { id: session.user.id, email: extractEmail(session.user) }
 }
 
 export const authClient = {
   isConfigured,
 
   /** Start the Google redirect flow. Resolves as the browser navigates away. */
-  signInWithGoogle: async (): Promise<void> => {
+  signInWithGoogle: async (hintEmail?: string): Promise<void> => {
     if (!supabase) throw new Error('Sign-in is not configured.')
-    // Land on "/" so OAuth failures (signup disabled, etc.) show on Landing.
+    const hint = (hintEmail || '').trim()
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/` },
+      options: {
+        redirectTo: `${window.location.origin}/`,
+        ...(hint ? { queryParams: { login_hint: hint } } : {}),
+      },
     })
     if (error) throw error
   },
@@ -208,8 +228,12 @@ export const authClient = {
 
   getUser: async (): Promise<AuthUser | null> => {
     if (!supabase) return null
-    const { data } = await supabase.auth.getSession()
-    return toUser(data.session)
+    const { data, error } = await supabase.auth.getUser()
+    if (error || !data.user) {
+      const { data: sessionData } = await supabase.auth.getSession()
+      return toUser(sessionData.session)
+    }
+    return { id: data.user.id, email: extractEmail(data.user) }
   },
 
   /** Fires on sign-in, sign-out and token refresh. Returns an unsubscribe function. */
@@ -242,6 +266,33 @@ export async function lookupAccessNotice(email: string | null | undefined): Prom
   } catch {
     return { message: REQUEST_ACCESS_MESSAGE, access_request_status: 'none', email: trimmed }
   }
+}
+
+/** Try several emails (Google vs form vs stored request email) for pending status. */
+export async function lookupAccessNoticeForEmails(
+  emails: Array<string | null | undefined>,
+): Promise<{
+  message: string
+  access_request_status: AccessRequestStatus
+  email: string | null
+}> {
+  const seen = new Set<string>()
+  let fallback: { message: string; access_request_status: AccessRequestStatus; email: string | null } = {
+    message: REQUEST_ACCESS_MESSAGE,
+    access_request_status: 'none',
+    email: null,
+  }
+  for (const raw of emails) {
+    const trimmed = (raw || '').trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const notice = await lookupAccessNotice(trimmed)
+    if (notice.access_request_status !== 'none') return notice
+    fallback = notice
+  }
+  return fallback
 }
 
 export default authClient

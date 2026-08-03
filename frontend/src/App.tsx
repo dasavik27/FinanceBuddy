@@ -3,9 +3,9 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
 import authClient, {
   type AccessRequestStatus,
-  lookupAccessNotice,
+  lookupAccessNoticeForEmails,
 } from './shared/auth/authClient'
-import { readAuthNotice, writeAuthNotice } from './shared/auth/authNotice'
+import { readAuthNotice, writeAuthNotice, readAccessRequestEmail } from './shared/auth/authNotice'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
@@ -62,23 +62,33 @@ export default function App() {
     // sign-in, sign-out and token refresh.
     const unsubscribe = authClient.onAuthStateChange(async (user) => {
       if (user) {
-        setIdentity({ userId: user.id, email: user.email })
+        const profile = (await authClient.getUser()) ?? user
+        setIdentity({ userId: profile.id, email: profile.email })
         try {
           const me = await apiClient.getMe()
           setIdentity({
-            userId: user.id,
-            email: user.email,
+            userId: profile.id,
+            email: profile.email,
             pan: me.pan,
             status: me.status,
             role: me.role,
           })
         } catch (e: unknown) {
-          const notice = await lookupAccessNotice(user.email)
-          if (notice.access_request_status === 'none') {
-            const unauthorized = parseNotAuthorizedError(e)
-            if (unauthorized) {
-              notice.message = unauthorized.message
-              notice.access_request_status = unauthorized.access_request_status
+          let notice = await lookupAccessNoticeForEmails([
+            profile.email,
+            user.email,
+            readAccessRequestEmail(),
+          ])
+          const unauthorized = parseNotAuthorizedError(e)
+          if (notice.access_request_status === 'none' && unauthorized) {
+            if (unauthorized.access_request_status !== 'none') {
+              notice = {
+                message: unauthorized.message,
+                access_request_status: unauthorized.access_request_status,
+                email: profile.email ?? user.email,
+              }
+            } else {
+              notice = { ...notice, message: unauthorized.message }
             }
           }
           writeAuthNotice(notice)

@@ -159,10 +159,21 @@ def _email_from_supabase(subject: str) -> Optional[str]:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
-        email = (data.get("email") or "").strip().lower()
-        return email or None
+        if isinstance(data, dict):
+            nested = data.get("user")
+            if isinstance(nested, dict):
+                email = (nested.get("email") or "").strip().lower()
+            else:
+                email = (data.get("email") or "").strip().lower()
+        else:
+            email = ""
+        if email:
+            logger.info("[AUTH] resolved email from Supabase admin for subject=%s", subject)
+            return email
+        logger.warning("[AUTH] Supabase admin user %s has no email in response", subject)
+        return None
     except Exception as exc:
-        logger.debug("[AUTH] supabase admin user lookup failed for %s: %s", subject, exc)
+        logger.warning("[AUTH] Supabase admin user lookup failed for %s: %s", subject, exc)
         return None
 
 
@@ -438,9 +449,12 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
 
             if row is None:
                 if not _may_provision(conn, effective_email):
-                    logger.info(
-                        "[AUTH] denied provisioning for issuer=%s email=%s",
-                        issuer, effective_email,
+                    has_pending = bool(
+                        effective_email and _has_pending_access(conn, effective_email)
+                    )
+                    logger.warning(
+                        "[AUTH] denied provisioning issuer=%s subject=%s email=%s pending_row=%s",
+                        issuer, subject, effective_email, has_pending,
                     )
                     req_status = lookup_access_request_status(conn, effective_email)
                     raise NotAuthorizedError(
