@@ -17,6 +17,7 @@ import pandas as pd
 
 from domains.equity import nse_corporate, nse_results
 from domains.equity.sector_map import SECTOR_MAP, get_sector
+from shared.cache import MarketCache as DiskCache
 from shared.services import market_hours, refresh
 from shared.services.cache import MARKET_CACHE, ttl_for
 from shared.services.refresh import WARM
@@ -180,8 +181,19 @@ def analyze_stock(symbol: str) -> dict[str, Any]:
         return _analyze_stock_uncached(clean)
 
     key = _ANALYSIS_KEY.format(clean)
+
     found, envelope = MARKET_CACHE.get(key)
-    if found and isinstance(envelope, dict) and "data" in envelope:
+    if not found:
+        # L1 is per-process and dies with it, so every restart - and `--reload` fires
+        # one on each edit - meant the next request paid a ~30s rebuild. The disk tier
+        # is already bounded (64 MB budget, LRU-evicted by the janitor sweep), so
+        # reusing it costs no new store and no new size discipline to get wrong.
+        envelope = DiskCache.get(key)
+        if isinstance(envelope, dict) and "data" in envelope:
+            # Re-seed L1 so the next read in this process does not touch disk again.
+            MARKET_CACHE.set(key, envelope, _ANALYSIS_STALE_TTL, copy_on_read=False)
+
+    if isinstance(envelope, dict) and "data" in envelope:
         if time.time() < envelope.get("fresh_until", 0):
             return envelope["data"]
         # Past the soft deadline: hand back what we have and let the sweep replace it.
@@ -200,15 +212,22 @@ def _refresh_analysis(symbol: str) -> dict[str, Any]:
     exactly one code path.
     """
     clean = _clean_symbol(symbol)
+    key = _ANALYSIS_KEY.format(clean)
     data = _analyze_stock_uncached(clean)
+    envelope = {
+        "data": data,
+        "fresh_until": time.time() + market_hours.fundamentals_ttl(),
+    }
     MARKET_CACHE.set(
-        _ANALYSIS_KEY.format(clean),
-        {"data": data, "fresh_until": time.time() + market_hours.fundamentals_ttl()},
-        _ANALYSIS_STALE_TTL,
+        key, envelope, _ANALYSIS_STALE_TTL,
         # The payload is serialised to JSON and discarded; nothing mutates it. Deep
-        # copying ~16 KB on every read would cost more than it protects.
+        # copying ~45 KB on every read would cost more than it protects.
         copy_on_read=False,
     )
+    # Write through to disk so the work survives a restart. Failures here are logged
+    # and swallowed inside DiskCache - a full or read-only disk must not fail a request
+    # whose data we already have in hand.
+    DiskCache.set(key, envelope)
     return data
 
 
@@ -724,7 +743,34 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     try:
         import yfinance as yf
         yf_ticker = yf.Ticker(ticker)
-        info = yf_ticker.info or {}
+        try:
+            info = yf_ticker.info or {}
+        except Exception as e:
+            # `.info` is one heavy call behind a rate limit, and it backs *every* tile
+            # in Key Statistics and Valuation. When it failed the whole block was
+            # skipped, so market cap, P/E, P/B, EPS, yield and beta all went blank
+            # together with nothing on screen to say why. `fast_info` is a different,
+            # much cheaper endpoint, so it usually survives when `.info` does not -
+            # enough to keep price, market cap and the 52-week range populated.
+            logger.warning("[analyzer] .info failed for %s, falling back: %s", ticker, e)
+            info = {}
+            try:
+                fi = yf_ticker.fast_info
+                for src, dst in (
+                    ("last_price", "currentPrice"),
+                    ("market_cap", "marketCap"),
+                    ("year_high", "fiftyTwoWeekHigh"),
+                    ("year_low", "fiftyTwoWeekLow"),
+                    ("open", "open"),
+                    ("day_high", "dayHigh"),
+                    ("day_low", "dayLow"),
+                    ("currency", "currency"),
+                ):
+                    val = getattr(fi, src, None)
+                    if val is not None:
+                        info[dst] = val
+            except Exception:
+                pass
 
         def _val(df, row_name, col):
             if df is None or df.empty or row_name not in df.index or col not in df.columns:
@@ -930,8 +976,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     price_values: list[float] = []
     sma_50_series: list[float | None] = []
     sma_200_series: list[float | None] = []
-    candlesticks: list[dict[str, Any]] = []
-    volume_series: list[dict[str, Any]] = []
+    volume_values: list[int] = []
     timeframe_charts: dict[str, Any] = {}
 
     try:
@@ -941,6 +986,19 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
             auto_adjust=True, progress=False, timeout=_YF_TIMEOUT,
         )
         if not hist.empty:
+            # yfinance returns MultiIndex columns ("Close", "RELIANCE.NS") for a single
+            # ticker on some paths and flat ones on others, and which you get is not
+            # stable across symbols. The `Close` reads below coped, but the per-row
+            # candlestick loop did not: `row.get("Open")` returned a Series and
+            # float() raised, which the blanket except caught and logged as
+            # "price history failed". The whole block was then skipped, so the chart,
+            # all seven timeframes, candlesticks, volume AND technicals came back
+            # empty while the rest of the payload looked fine. Flattened once here so
+            # every consumer below sees one shape.
+            if isinstance(hist.columns, pd.MultiIndex):
+                hist = hist.droplevel(-1, axis=1)
+                hist = hist.loc[:, ~hist.columns.duplicated()]
+
             close = hist["Close"]
             if isinstance(close, pd.DataFrame):
                 close = close.iloc[:, 0]
@@ -975,27 +1033,24 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
             # Multi-timeframe charts
             timeframe_charts = _build_timeframe_charts(hist, current_price)
 
-            # Candlesticks + Volume for last 90 trading days
-            hist_tail = hist.iloc[-90:]
-            for dt, row in hist_tail.iterrows():
-                d_str = dt.strftime("%Y-%m-%d")
-                o = float(row.get("Open", 0))
-                h = float(row.get("High", 0))
-                l = float(row.get("Low", 0))
-                c = float(row.get("Close", 0))
-                v = float(row.get("Volume", 0))
-                candlesticks.append({
-                    "date": d_str,
-                    "open": round(o, 2),
-                    "high": round(h, 2),
-                    "low": round(l, 2),
-                    "close": round(c, 2),
-                })
-                volume_series.append({
-                    "date": d_str,
-                    "volume": int(v) if not np.isnan(v) else 0,
-                    "is_up": c >= o,
-                })
+            # Daily volume for the same 90-day window as `chart`, as a parallel array.
+            #
+            # This used to ship two array-of-object series - `candlesticks` (date, open,
+            # high, low, close) and `volume_series` (date, volume, is_up) - totalling
+            # 13.1 KB of a 58 KB payload. Nothing rendered the candlesticks at all: the
+            # switcher only offers area and line, and Recharts has no candle primitive,
+            # so it was dead weight in every response and every cache entry. The volume
+            # series repeated a date string per row that `chart.dates` already carries,
+            # and `is_up` is derivable from the price series beside it.
+            #
+            # Columnar and aligned to `chart.dates` instead: ~0.6 KB for the same
+            # information. If a candlestick chart is built later, OHLC comes back the
+            # same way rather than as 90 dicts.
+            if "Volume" in hist.columns:
+                vol_tail = hist["Volume"].iloc[-90:]
+                volume_values = [
+                    0 if pd.isna(v) else int(v) for v in vol_tail.values
+                ]
     except Exception as e:
         logger.warning("[analyzer] price history failed for %s: %s", ticker, e)
 
@@ -1010,8 +1065,14 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     effective_price = (nse_quote.get("current_price") if (nse_quote and nse_quote.get("current_price")) else None) or current_price or _f("currentPrice", 0)
     effective_sector = (nse_quote.get("sector") if nse_quote else None) or sector
     effective_industry = (nse_quote.get("industry") if nse_quote else None) or industry
-    week52_high = (nse_quote.get("week52_high") if nse_quote else None) or _f("fiftyTwoWeekHigh")
-    week52_low = (nse_quote.get("week52_low") if nse_quote else None) or _f("fiftyTwoWeekLow")
+    # Rounded at the source. `fast_info` returns full float precision
+    # (1611.800048828125), which is noise in a rupee price and costs bytes in every
+    # response and cache entry.
+    def _r2(v):
+        return round(float(v), 2) if isinstance(v, (int, float)) else v
+
+    week52_high = _r2((nse_quote.get("week52_high") if nse_quote else None) or _f("fiftyTwoWeekHigh"))
+    week52_low = _r2((nse_quote.get("week52_low") if nse_quote else None) or _f("fiftyTwoWeekLow"))
     market_cap_cr = (nse_quote.get("market_cap_cr") if nse_quote else None) or (round(_f("marketCap", 0) / 1e7, 0) if _f("marketCap") else None)
     pe_ratio = (nse_quote.get("pe_ratio") if (nse_quote and nse_quote.get("pe_ratio") is not None) else None) or _f("trailingPE")
     sector_pe = nse_quote.get("sector_pe") if nse_quote else None
@@ -1021,9 +1082,9 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     series = (nse_quote.get("series") if nse_quote else None) or "EQ"
 
     # Day Open, High, Low
-    day_open = _f("open") or _f("regularMarketOpen")
-    day_high = _f("dayHigh") or _f("regularMarketDayHigh") or effective_price
-    day_low = _f("dayLow") or _f("regularMarketDayLow") or effective_price
+    day_open = _r2(_f("open") or _f("regularMarketOpen"))
+    day_high = _r2(_f("dayHigh") or _f("regularMarketDayHigh") or effective_price)
+    day_low = _r2(_f("dayLow") or _f("regularMarketDayLow") or effective_price)
 
     technicals = _compute_technicals(prices, effective_price, week52_high, week52_low)
     peers = get_sector_peers(clean, effective_sector, limit=5)
@@ -1142,14 +1203,13 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
             "prices": price_values,
             "sma_50": sma_50_series,
             "sma_200": sma_200_series,
+            "volume": volume_values,
             # Real index closes aligned to the same dates, so the Compare tab can plot
             # a benchmark instead of synthesising one. None on days the index has no
             # print for a date the stock does.
             "benchmark": [_nifty.get(d) for d in price_dates] if (_nifty := _nifty_close_series()) else [],
         },
         "timeframes": timeframe_charts,
-        "candlesticks": candlesticks,
-        "volume_series": volume_series,
     }
 
 

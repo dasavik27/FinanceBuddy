@@ -315,20 +315,6 @@ export interface TimeframeSlice {
   p_change: number
 }
 
-export interface CandlestickPoint {
-  date: string
-  open: number
-  high: number
-  low: number
-  close: number
-}
-
-export interface VolumePoint {
-  date: string
-  volume: number
-  is_up: boolean
-}
-
 export interface StockTechnicals {
   sma_50?: number | null
   sma_200?: number | null
@@ -419,10 +405,14 @@ export interface StockAnalysis {
     sma_200?: (number | null)[]
     /** Real NIFTY 50 closes aligned to `dates`; null on days the index has no print. */
     benchmark?: (number | null)[]
+    /**
+     * Daily traded volume aligned to `dates`. Columnar rather than an array of
+     * objects with a repeated date per row — that shape, plus an OHLC series nothing
+     * rendered, was 13.1 KB of a 58 KB payload.
+     */
+    volume?: number[]
   }
   timeframes?: Record<string, TimeframeSlice>
-  candlesticks?: CandlestickPoint[]
-  volume_series?: VolumePoint[]
 }
 
 export interface EquityUploadResult {

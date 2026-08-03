@@ -46,6 +46,7 @@ import {
   Line,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip as RechartsTooltip,
@@ -460,21 +461,25 @@ export default function StockAnalyzerTab() {
     const sma50 = stock.chart.sma_50 || []
     const sma200 = stock.chart.sma_200 || []
 
+    // Volume is a parallel array aligned to `dates`, not an array of objects with a
+    // repeated date per row. The OHLC series it used to sit beside was removed: no
+    // candlestick renderer exists (Recharts has no candle primitive and the switcher
+    // only offers area and line), so it was 7.9 KB of unrendered payload per stock in
+    // every response and every cache entry.
+    const volume = stock.chart.volume || []
+
     return dates.map((d: string, i: number) => {
       const p = prices[i] ?? null
-      const candle = stock.candlesticks?.[i]
-      const vol = stock.volume_series?.[i]
+      const prev = i > 0 ? prices[i - 1] : null
       return {
         date: d,
         price: p,
         sma_50: sma50[i] ?? null,
         sma_200: sma200[i] ?? null,
-        open: candle?.open ?? p,
-        high: candle?.high ?? p,
-        low: candle?.low ?? p,
-        close: candle?.close ?? p,
-        volume: vol?.volume ?? 0,
-        is_up: vol?.is_up ?? true,
+        volume: volume[i] ?? 0,
+        // Derived from the price series rather than shipped: an up-day is one that
+        // closed above the previous close.
+        is_up: p != null && prev != null ? p >= prev : true,
       }
     })
   }, [stock])
@@ -1322,22 +1327,30 @@ export default function StockAnalyzerTab() {
                 </Grid>
               </Grid>
 
-              {/* Volume Series Bar Chart */}
-              {stock.volume_series && stock.volume_series.length > 0 && (
+              {/*
+                Volume, from the same rows as the price chart above it, so the two are
+                aligned by construction. Up and down days are now coloured — the flag
+                was computed and then thrown away, leaving every bar the same blue.
+              */}
+              {technicalChartData.length > 0 && (
                 <Box>
                   <Typography sx={{ color: '#94A3B8', fontSize: '0.88rem', fontWeight: 700, mb: 1.5 }}>
                     Traded Volume History (Daily)
                   </Typography>
                   <Box sx={{ height: 130 }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stock.volume_series}>
+                      <BarChart data={technicalChartData}>
                         <XAxis dataKey="date" stroke="#64748B" fontSize={10} hide />
                         <YAxis stroke="#64748B" fontSize={10} orientation="right" tickFormatter={(v) => `${(v / 1e5).toFixed(0)}L`} />
                         <RechartsTooltip
                           contentStyle={{ borderRadius: '12px', background: '#0F172A', border: '1px solid rgba(255,255,255,0.1)' }}
                           formatter={(v: number) => [v.toLocaleString(), 'Volume']}
                         />
-                        <Bar dataKey="volume" fill="#38BDF8" radius={[2, 2, 0, 0]} />
+                        <Bar dataKey="volume" radius={[2, 2, 0, 0]}>
+                          {technicalChartData.map((d, i) => (
+                            <Cell key={i} fill={d.is_up ? '#10B981' : '#EF4444'} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </Box>
