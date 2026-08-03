@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from domains.equity import nse_corporate
 from domains.equity.sector_map import SECTOR_MAP, get_sector
 from shared.services import market_hours, refresh
 from shared.services.cache import MARKET_CACHE, ttl_for
@@ -1027,6 +1028,12 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     technicals = _compute_technicals(prices, effective_price, week52_high, week52_low)
     peers = get_sector_peers(clean, effective_sector, limit=5)
 
+    # NSE's disclosure endpoints still serve, unlike its quote API. These fail soft to
+    # empty lists - notably on a cloud host, where NSE blocks datacenter IPs outright -
+    # so the analyzer degrades to "no corporate actions" rather than to an error.
+    actions = nse_corporate.corporate_actions(clean)
+    calendar_events = nse_corporate.event_calendar(clean)
+
     fin_currency = _f("financialCurrency") or "INR"
     stmt_fx = _fx_to_inr(fin_currency)
 
@@ -1091,6 +1098,11 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         "earnings": earnings_hist,
         "earnings_summary": earnings_summary,
         "consensus": consensus,
+        # Authoritative, and the one place NSE beats Yahoo outright: yfinance reports
+        # Indian bonus issues as splits indistinguishably, and gets compound actions
+        # wrong outright (BAJFINANCE Jun-2025 is 10x; yfinance says 2.0).
+        "corporate_actions": actions[:12],
+        "upcoming_events": [e for e in calendar_events if e.get("date")][:6],
         "description": (_f("longBusinessSummary", "")[:600] + "...") if _f("longBusinessSummary") else "",
         "chart": {
             "dates": price_dates,

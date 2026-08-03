@@ -5,7 +5,9 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from domains.equity import nse_corporate
 from domains.equity import sessions as eq_sessions
+from domains.equity.quotes import is_valid_symbol
 from domains.equity.stock_analyzer import (
     UnknownSymbol,
     analyze_stock,
@@ -71,6 +73,38 @@ def analyze(symbol: str):
             status_code=502, detail="Could not fetch data for that stock. Please retry."
         )
     return JSONResponse(content=result, headers=get_cache_headers("comparison_data"))
+
+
+@router.get("/corporate/{symbol}")
+def corporate(symbol: str):
+    """
+    Dividends, bonuses, splits and upcoming board meetings for one symbol.
+
+    Separate from /analyze because it has a different lifecycle: disclosures change on
+    filing, not continuously, and this is the one dataset NSE serves authoritatively
+    while Yahoo gets it wrong (bonuses reported as splits, compound actions mis-scaled).
+
+    Returns empty lists rather than an error when NSE is unreachable - it blocks
+    datacenter IPs, so a cloud deployment degrades instead of failing.
+    """
+    _require_caller()
+    clean = symbol.upper().strip()
+    if not is_valid_symbol(clean):
+        raise HTTPException(status_code=404, detail="That symbol was not recognised.")
+
+    actions = nse_corporate.corporate_actions(clean)
+    return JSONResponse(
+        content={
+            "symbol": clean,
+            "actions": actions,
+            "events": nse_corporate.event_calendar(clean),
+            "announcements": nse_corporate.announcements(clean, limit=10),
+            # Lets a caller check yfinance's split factor against the exchange's own
+            # record before using it to adjust a cost basis.
+            "adjustment_factor": nse_corporate.adjustment_factor(actions),
+        },
+        headers=get_cache_headers("comparison_data"),
+    )
 
 
 class ImpactRequest(BaseModel):
