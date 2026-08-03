@@ -3,7 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
 import authClient, {
   type AccessRequestStatus,
-  REQUEST_ACCESS_MESSAGE,
+  lookupAccessNotice,
 } from './shared/auth/authClient'
 import { readAuthNotice, writeAuthNotice } from './shared/auth/authNotice'
 import { apiClient } from './shared/api/client'
@@ -73,31 +73,15 @@ export default function App() {
             role: me.role,
           })
         } catch (e: unknown) {
-          const unauthorized = parseNotAuthorizedError(e)
-          if (unauthorized) {
-            writeAuthNotice({
-              message: unauthorized.message,
-              access_request_status: unauthorized.access_request_status,
-              email: user.email,
-            })
-          } else if (user.email) {
-            // getMe can fail on network/CORS blips — still look up access_requests so
-            // Google sign-in shows "already pending" instead of silently continuing.
-            try {
-              const st = await authClient.checkAccessStatus(user.email)
-              writeAuthNotice({
-                message: st.message,
-                access_request_status: st.access_request_status,
-                email: user.email,
-              })
-            } catch {
-              writeAuthNotice({
-                message: REQUEST_ACCESS_MESSAGE,
-                access_request_status: 'none',
-                email: user.email,
-              })
+          const notice = await lookupAccessNotice(user.email)
+          if (notice.access_request_status === 'none') {
+            const unauthorized = parseNotAuthorizedError(e)
+            if (unauthorized) {
+              notice.message = unauthorized.message
+              notice.access_request_status = unauthorized.access_request_status
             }
           }
+          writeAuthNotice(notice)
           await authClient.signOut()
           clearIdentity()
         }

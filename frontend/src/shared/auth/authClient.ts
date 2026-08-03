@@ -222,4 +222,26 @@ export const authClient = {
   },
 }
 
+/** Prefer access_requests lookup over backend deny copy when we know the user's email. */
+export async function lookupAccessNotice(email: string | null | undefined): Promise<{
+  message: string
+  access_request_status: AccessRequestStatus
+  email: string | null
+}> {
+  const trimmed = (email || '').trim()
+  if (!trimmed) {
+    return { message: REQUEST_ACCESS_MESSAGE, access_request_status: 'none', email: null }
+  }
+  try {
+    const st = await authClient.checkAccessStatus(trimmed)
+    return {
+      message: st.message,
+      access_request_status: st.access_request_status,
+      email: trimmed,
+    }
+  } catch {
+    return { message: REQUEST_ACCESS_MESSAGE, access_request_status: 'none', email: trimmed }
+  }
+}
+
 export default authClient

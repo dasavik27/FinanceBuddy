@@ -18,7 +18,7 @@ import authClient, {
   consumeOAuthErrorFromUrl,
   REQUEST_ACCESS_MESSAGE,
 } from '../auth/authClient'
-import { readAuthNotice } from '../auth/authNotice'
+import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
 const GoogleMark = () => (
@@ -90,6 +90,15 @@ export default function Landing() {
 
       if (notice) {
         if (cancelled) return
+        if (notice.email && notice.access_request_status === 'none') {
+          try {
+            await applyAccessStatus(notice.email)
+            if (!cancelled) setLoading(false)
+            return
+          } catch {
+            // Fall back to stored notice below.
+          }
+        }
         setAccessRequestStatus(notice.access_request_status)
         setError(notice.message)
         if (notice.email) setEmail(notice.email)
@@ -100,6 +109,9 @@ export default function Landing() {
       if (!oauthMessage) return
 
       let emailHint = email.trim()
+      if (!emailHint) {
+        emailHint = (readAccessRequestEmail() || '').trim()
+      }
       if (!emailHint) {
         try {
           const u = await authClient.getUser()
@@ -201,6 +213,7 @@ export default function Landing() {
       } else {
         setReqSuccess(res.message || 'Access request submitted successfully.')
       }
+      rememberAccessRequestEmail(reqEmail.trim())
     } catch (err: any) {
       setReqError(err?.message || 'Failed to submit request. Please try again.')
     } finally {

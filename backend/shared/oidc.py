@@ -162,6 +162,14 @@ class OidcJwtVerifier:
             meta_email = meta.get("email")
             if isinstance(meta_email, str) and meta_email.strip():
                 raw_email = meta_email.strip()
+        if not raw_email:
+            app_meta = claims.get("app_metadata")
+            if isinstance(app_meta, dict):
+                app_email = app_meta.get("email")
+                if isinstance(app_email, str) and app_email.strip():
+                    raw_email = app_email.strip()
+        if not raw_email and isinstance(claims.get("user_email"), str):
+            raw_email = claims.get("user_email").strip()
 
         return Principal(
             issuer=claims.get("iss", self.issuer),

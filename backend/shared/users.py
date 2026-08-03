@@ -124,6 +124,63 @@ def _has_pending_access(conn, email: str) -> bool:
     return row is not None
 
 
+def _identity_email(conn, issuer: str, subject: str) -> Optional[str]:
+    row = conn.execute(
+        "SELECT email FROM identities WHERE issuer = %s AND subject = %s",
+        (issuer, subject),
+    ).fetchone()
+    if row and row[0] and str(row[0]).strip():
+        return str(row[0]).strip().lower()
+    return None
+
+
+def _email_from_supabase(subject: str) -> Optional[str]:
+    """Resolve email from Supabase Auth when the access token omits the claim (common with Google)."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
+    ).strip()
+    if not supabase_url or not service_role_key or not subject:
+        return None
+
+    try:
+        req = urllib.request.Request(
+            f"{supabase_url}/auth/v1/admin/users/{subject}",
+            headers={
+                "Authorization": f"Bearer {service_role_key}",
+                "apikey": service_role_key,
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        email = (data.get("email") or "").strip().lower()
+        return email or None
+    except Exception as exc:
+        logger.debug("[AUTH] supabase admin user lookup failed for %s: %s", subject, exc)
+        return None
+
+
+def _resolve_email(
+    conn,
+    issuer: str,
+    subject: str,
+    email: Optional[str],
+) -> Optional[str]:
+    """Best email for allowlist checks: JWT claim, identities row, then Supabase admin."""
+    if email and str(email).strip():
+        return str(email).strip().lower()
+    stored = _identity_email(conn, issuer, subject)
+    if stored:
+        return stored
+    return _email_from_supabase(subject)
+
+
 def lookup_access_request_status(conn, email: Optional[str]) -> Optional[str]:
     """Latest access_requests.status for this email, or None if no row."""
     if not email:
@@ -377,18 +434,20 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                 (issuer, subject),
             ).fetchone()
 
+            effective_email = _resolve_email(conn, issuer, subject, email)
+
             if row is None:
-                if not _may_provision(conn, email):
+                if not _may_provision(conn, effective_email):
                     logger.info(
                         "[AUTH] denied provisioning for issuer=%s email=%s",
-                        issuer, email,
+                        issuer, effective_email,
                     )
-                    req_status = lookup_access_request_status(conn, email)
+                    req_status = lookup_access_request_status(conn, effective_email)
                     raise NotAuthorizedError(
                         message_for_access_status(req_status),
                         access_request_status=req_status or "none",
                     )
-                status, role = _initial_account_flags(conn, email)
+                status, role = _initial_account_flags(conn, effective_email)
                 user_id = conn.execute(
                     "INSERT INTO users (status, role) VALUES (%s, %s) RETURNING id",
                     (status, role),
@@ -399,7 +458,7 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (issuer, subject) DO NOTHING
                     """,
-                    (issuer, subject, user_id, email),
+                    (issuer, subject, user_id, effective_email),
                 )
                 # If the insert conflicted, another request created the account
                 # first; adopt theirs so both requests agree on one id. The users row
@@ -427,8 +486,16 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                         """,
                         (email, issuer, subject),
                     )
+                elif effective_email:
+                    conn.execute(
+                        """
+                        UPDATE identities SET email = COALESCE(email, %s)
+                        WHERE issuer = %s AND subject = %s
+                        """,
+                        (effective_email, issuer, subject),
+                    )
 
-            status, role = _sync_account_flags(conn, user_id, email)
+            status, role = _sync_account_flags(conn, user_id, effective_email)
 
             # PAN comes from the profile, not from the caller, so a request cannot
             # assert someone else's. The legacy path passes one in only because it

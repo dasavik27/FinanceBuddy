@@ -24,3 +24,15 @@ export function readAuthNotice(): AuthNotice | null {
 export function writeAuthNotice(notice: AuthNotice): void {
   sessionStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify(notice))
 }
+
+/** Remember the email used for an access request (Google OAuth may not return a session). */
+export const ACCESS_REQUEST_EMAIL_KEY = 'fb_access_request_email'
+
+export function rememberAccessRequestEmail(email: string): void {
+  const trimmed = email.trim().toLowerCase()
+  if (trimmed) sessionStorage.setItem(ACCESS_REQUEST_EMAIL_KEY, trimmed)
+}
+
+export function readAccessRequestEmail(): string | null {
+  return sessionStorage.getItem(ACCESS_REQUEST_EMAIL_KEY)
+}
