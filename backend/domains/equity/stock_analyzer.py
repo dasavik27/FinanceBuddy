@@ -9,13 +9,16 @@ sector allocation, beta, and diversification score.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 
 from domains.equity.sector_map import SECTOR_MAP, get_sector
+from shared.services import market_hours, refresh
 from shared.services.cache import MARKET_CACHE, ttl_for
+from shared.services.refresh import WARM
 from domains.equity.quotes import fetch_quotes, is_valid_symbol, to_yahoo_ticker
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,11 @@ class UnknownSymbol(ValueError):
 #: capacity for as long as the far end keeps the socket open - and no yfinance call in
 #: this codebase previously passed a timeout at all.
 _YF_TIMEOUT = 20
+
+#: Maximum points shipped per chart timeframe. A line chart is drawn a few hundred
+#: pixels wide, so beyond this the extra points cost bytes and cache budget without
+#: being visible.
+_MAX_CHART_POINTS = 260
 
 
 # ── NSE → Yahoo Finance ticker conversion ────────────────────────────────────
@@ -131,14 +139,27 @@ def search_stocks(query: str, limit: int = 15) -> list[dict]:
 
 # ── Stock Analysis ───────────────────────────────────────────────────────────
 
+#: How long a *stale* analysis is still worth serving while a fresh one is fetched.
+#: Far longer than the freshness window: past its soft deadline the payload is out of
+#: date, but it is still enormously better than making someone wait ~30s for a cold
+#: rebuild, and better than the zeros the old path returned when upstream was down.
+_ANALYSIS_STALE_TTL = 24 * 3600
+
+_ANALYSIS_KEY = "equity_analysis_v2:{}"
+
+
 def analyze_stock(symbol: str) -> dict[str, Any]:
     """
-    Fundamental + technical data for one NSE stock directly from NSE.
+    Fundamental + technical data for one NSE stock.
 
-    Cached in L1 under the symbol. A stock's fundamentals are user-independent, so two
-    users researching the same name share one entry; without this, every request paid
-    3-5 upstream round trips and the response was only cached in the *browser* via a
-    Cache-Control header, which does nothing for a second user or a second device.
+    Stale-while-revalidate. The cache holds an envelope with its own soft deadline and
+    a much longer hard TTL, so a request past the freshness window is answered from the
+    existing copy *immediately* and the rebuild happens on the janitor thread instead of
+    inside someone's request. A cold rebuild was measured at 48.7s against a threadpool
+    of 8, and the previous code did that work inline on every expiry.
+
+    Entries are user-independent - a stock's fundamentals are the same for everyone - so
+    one fetch serves every caller.
     """
     clean = _clean_symbol(symbol)
     if not is_valid_symbol(clean):
@@ -147,6 +168,9 @@ def analyze_stock(symbol: str) -> dict[str, Any]:
         # or query characters was interpolated straight into the provider request.
         raise UnknownSymbol(f"{symbol!r} is not a valid NSE symbol.")
 
+    # Someone is looking at this name, so it earns a place in the refresh rotation.
+    WARM.touch(clean)
+
     # Honours the process-wide cache kill-switch, same as every mutual-fund provider
     # path does. Without this, POST /market/config with ttl=0 would still serve
     # fundamentals from L1.
@@ -154,11 +178,37 @@ def analyze_stock(symbol: str) -> dict[str, Any]:
     if config.CACHE_TTL_MINUTES <= 0:
         return _analyze_stock_uncached(clean)
 
-    return MARKET_CACHE.get_or_compute(
-        f"equity_analysis_v1:{clean}",
-        lambda: _analyze_stock_uncached(clean),
-        ttl_for("comparison_data"),
+    key = _ANALYSIS_KEY.format(clean)
+    found, envelope = MARKET_CACHE.get(key)
+    if found and isinstance(envelope, dict) and "data" in envelope:
+        if time.time() < envelope.get("fresh_until", 0):
+            return envelope["data"]
+        # Past the soft deadline: hand back what we have and let the sweep replace it.
+        # The `stale` flag is what lets the UI say "as of" honestly instead of
+        # presenting an hours-old price as current.
+        return {**envelope["data"], "stale": True}
+
+    return _refresh_analysis(clean)
+
+
+def _refresh_analysis(symbol: str) -> dict[str, Any]:
+    """
+    Rebuild one symbol's analysis and replace its cache envelope.
+
+    Also the tier refresher, so the background sweep and a cold request go through
+    exactly one code path.
+    """
+    clean = _clean_symbol(symbol)
+    data = _analyze_stock_uncached(clean)
+    MARKET_CACHE.set(
+        _ANALYSIS_KEY.format(clean),
+        {"data": data, "fresh_until": time.time() + market_hours.fundamentals_ttl()},
+        _ANALYSIS_STALE_TTL,
+        # The payload is serialised to JSON and discarded; nothing mutates it. Deep
+        # copying ~16 KB on every read would cost more than it protects.
+        copy_on_read=False,
     )
+    return data
 
 
 import numpy as np
@@ -616,9 +666,22 @@ def _build_timeframe_charts(hist: pd.DataFrame, current_price: float) -> dict[st
         chg = round(end_val - st_val, 2)
         pchg = round((chg / st_val) * 100, 2) if st_val else 0.0
 
+        # Endpoints are computed from the *full* slice above, then the points are
+        # thinned for transport. The 5Y slice was 1,239 daily points and `timeframes`
+        # alone was 40.7 KB of a 56 KB payload - more resolution than a ~600px chart
+        # can draw, paid for on every response and in every cache entry. Stride
+        # sampling keeps the first and last point so the line still starts and ends
+        # where the numbers beside it say it does.
+        idx, vals = s.index, s.values
+        n = len(s)
+        if n > _MAX_CHART_POINTS:
+            stride = (n // _MAX_CHART_POINTS) + 1
+            keep = list(range(0, n - 1, stride)) + [n - 1]
+            idx, vals = idx[keep], vals[keep]
+
         return {
-            "dates": [d.strftime("%Y-%m-%d") for d in s.index],
-            "prices": [round(float(v), 2) for v in s.values],
+            "dates": [d.strftime("%Y-%m-%d") for d in idx],
+            "prices": [round(float(v), 2) for v in vals],
             "start_price": round(st_val, 2),
             "end_price": round(end_val, 2),
             "change": chg,
@@ -1043,6 +1106,12 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         "candlesticks": candlesticks,
         "volume_series": volume_series,
     }
+
+
+# The background sweep rebuilds warm symbols on the janitor thread. Registered at
+# import, like every other janitor sweep in the codebase, so mounting the equity router
+# is what turns it on - and importing this module in a test does not start a thread.
+refresh.register(refresh.TIER_DAILY, _refresh_analysis)
 
 
 # ── Portfolio Impact ─────────────────────────────────────────────────────────

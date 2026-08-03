@@ -160,10 +160,27 @@ class NSEClient:
 
         return unique
 
+    #: `/api/quote-equity` returns 403 by exchange policy, not by bot detection.
+    #: Verified from a residential Indian IP with full Chrome TLS impersonation: the
+    #: cookie bootstrap and the endpoint both return Akamai "Access Denied", while
+    #: `/api/corporates-corporateActions`, `/api/corporate-announcements` and
+    #: `/api/event-calendar` return 200 from the same session. So this is not something
+    #: better headers or a different host can fix, and each attempt cost ~4-8s inside a
+    #: request - five of them per analysis, via the peer loop, for five null prices.
+    #:
+    #: Left callable and off by default rather than deleted: if NSE ever reopens the
+    #: endpoint, flipping this is the whole change.
+    QUOTE_API_ENABLED = False
+
     def get_equity_quote(self, symbol: str) -> dict[str, Any] | None:
         """
-        Fetch direct equity quote and metadata from NSE official API.
+        Fetch direct equity quote and metadata from NSE's official API.
+
+        Returns None without touching the network while `QUOTE_API_ENABLED` is False.
         """
+        if not self.QUOTE_API_ENABLED:
+            return None
+
         clean = symbol.upper().strip().replace("-EQ", "").replace(".NS", "").replace(".BO", "")
         self._refresh_session_cookies()
 
