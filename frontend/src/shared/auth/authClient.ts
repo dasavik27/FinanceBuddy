@@ -37,6 +37,66 @@ export interface AuthUser {
   email: string | null
 }
 
+/** Shown when Google/email works at the IdP but the app has not allowlisted them. */
+export const REQUEST_ACCESS_MESSAGE =
+  'You do not have access yet. Please raise an access request and wait for an admin to approve you.'
+
+/**
+ * Map provider / OAuth error text into a clear "request access" message when the
+ * failure is "no account / sign-ups disabled / not invited".
+ */
+export function toAccessRequestMessage(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const text = raw.replace(/\+/g, ' ').toLowerCase()
+  const hints = [
+    'signup',
+    'sign up',
+    'signups not allowed',
+    'not allowed',
+    'access_denied',
+    'access denied',
+    'user not found',
+    'invalid login',
+    'invalid credentials',
+    'email not confirmed',
+    'not authorized',
+    'not_authorized',
+    'disabled',
+  ]
+  if (hints.some((h) => text.includes(h))) return REQUEST_ACCESS_MESSAGE
+  return null
+}
+
+/**
+ * After Google OAuth, Supabase may bounce back with ?error= / #error= when the
+ * user has no Auth account (e.g. public sign-up off). Parse and clear the URL.
+ */
+export function consumeOAuthErrorFromUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  const fromSearch = new URLSearchParams(window.location.search)
+  const hash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  const fromHash = new URLSearchParams(hash)
+
+  const code = fromSearch.get('error_code') || fromHash.get('error_code')
+  const error = fromSearch.get('error') || fromHash.get('error')
+  const description =
+    fromSearch.get('error_description') || fromHash.get('error_description')
+
+  if (!code && !error && !description) return null
+
+  const combined = [code, error, description].filter(Boolean).join(' ')
+  const message = toAccessRequestMessage(combined) || REQUEST_ACCESS_MESSAGE
+
+  const url = new URL(window.location.href)
+  ;['error', 'error_code', 'error_description'].forEach((k) => url.searchParams.delete(k))
+  url.hash = ''
+  window.history.replaceState({}, '', `${url.pathname}${url.search}`)
+
+  return message
+}
+
 function toUser(session: Session | null): AuthUser | null {
   if (!session?.user) return null
   return { id: session.user.id, email: session.user.email ?? null }
@@ -48,9 +108,10 @@ export const authClient = {
   /** Start the Google redirect flow. Resolves as the browser navigates away. */
   signInWithGoogle: async (): Promise<void> => {
     if (!supabase) throw new Error('Sign-in is not configured.')
+    // Land on "/" so OAuth failures (signup disabled, etc.) show on Landing.
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/dashboard` },
+      options: { redirectTo: `${window.location.origin}/` },
     })
     if (error) throw error
   },

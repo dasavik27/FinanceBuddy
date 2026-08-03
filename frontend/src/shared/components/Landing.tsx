@@ -14,7 +14,11 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 import CloseIcon from '@mui/icons-material/Close'
 import BoltIcon from '@mui/icons-material/Bolt'
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
-import authClient from '../auth/authClient'
+import authClient, {
+  REQUEST_ACCESS_MESSAGE,
+  consumeOAuthErrorFromUrl,
+  toAccessRequestMessage,
+} from '../auth/authClient'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
 const GoogleMark = () => (
@@ -69,12 +73,29 @@ export default function Landing() {
     import.meta.env.VITE_DEV_PASSWORD
   )
 
-  // Shown after App.tsx signs the user out for a 403 not_authorized response.
+  const needsAccessRequest = Boolean(
+    error && (
+      error === REQUEST_ACCESS_MESSAGE ||
+      error.toLowerCase().includes('request access') ||
+      error.toLowerCase().includes('not authorized') ||
+      error.toLowerCase().includes('do not have access')
+    ),
+  )
+
+  const openRequestAccess = () => {
+    if (email.trim()) setReqEmail(email.trim())
+    setRequestModalOpen(true)
+  }
+
+  // Shown after App.tsx signs the user out for 403 not_authorized, or after a
+  // Google OAuth bounce when Supabase rejects an unregistered user.
   useEffect(() => {
+    const oauthMessage = consumeOAuthErrorFromUrl()
     const notice = sessionStorage.getItem(AUTH_NOTICE_KEY)
-    if (!notice) return
-    sessionStorage.removeItem(AUTH_NOTICE_KEY)
-    setError(notice)
+    if (notice) sessionStorage.removeItem(AUTH_NOTICE_KEY)
+    const message = notice || oauthMessage
+    if (!message) return
+    setError(message)
     setLoading(false)
   }, [])
 
@@ -90,7 +111,8 @@ export default function Landing() {
       await authClient.signInWithEmail(email.trim(), password)
       // App.tsx auth listener handles redirect to /dashboard
     } catch (err: any) {
-      setError(err?.message || 'Invalid email or password.')
+      const raw = err?.message || 'Invalid email or password.'
+      setError(toAccessRequestMessage(raw) || raw)
       setLoading(false)
     }
   }
@@ -101,7 +123,8 @@ export default function Landing() {
     try {
       await authClient.signInWithGoogle()
     } catch (e: any) {
-      setError(e?.message ?? 'Could not start Google sign-in.')
+      const raw = e?.message ?? 'Could not start Google sign-in.'
+      setError(toAccessRequestMessage(raw) || raw)
       setLoading(false)
     }
   }
@@ -340,18 +363,33 @@ export default function Landing() {
               }}
             />
 
-            {/* Error Message */}
+            {/* Error / request-access Message */}
             <Collapse in={!!error} unmountOnExit>
-              <Alert 
-                severity="error" 
-                sx={{ 
-                  borderRadius: '12px', 
-                  bgcolor: 'rgba(239, 68, 68, 0.1)', 
-                  color: '#EF4444', 
-                  border: '1px solid rgba(239, 68, 68, 0.2)',
+              <Alert
+                severity={needsAccessRequest ? 'info' : 'error'}
+                action={
+                  needsAccessRequest ? (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={openRequestAccess}
+                      sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
+                    >
+                      Raise request
+                    </Button>
+                  ) : undefined
+                }
+                sx={{
+                  borderRadius: '12px',
+                  bgcolor: needsAccessRequest ? 'rgba(56, 189, 248, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                  color: needsAccessRequest ? '#7DD3FC' : '#EF4444',
+                  border: needsAccessRequest
+                    ? '1px solid rgba(56, 189, 248, 0.25)'
+                    : '1px solid rgba(239, 68, 68, 0.2)',
                   fontSize: '0.85rem',
                   py: 0.5,
-                  '& .MuiAlert-icon': { color: '#EF4444' } 
+                  alignItems: 'center',
+                  '& .MuiAlert-icon': { color: needsAccessRequest ? '#38BDF8' : '#EF4444' },
                 }}
               >
                 {error}
@@ -441,24 +479,27 @@ export default function Landing() {
             {/* Invite-Only Notice & Request Access CTA */}
             <Box sx={{ mt: 1.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
               <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 0.8 }}>
-                {error?.toLowerCase().includes('not authorized') || error?.toLowerCase().includes('request access')
+                {needsAccessRequest
                   ? 'Need access? Submit a request and an admin will approve you.'
                   : "Don't have an authorized account?"}
               </Typography>
               <Button
-                variant="text"
-                onClick={() => {
-                  if (email.trim()) setReqEmail(email.trim())
-                  setRequestModalOpen(true)
-                }}
+                variant={needsAccessRequest ? 'contained' : 'text'}
+                onClick={openRequestAccess}
                 endIcon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
                 sx={{
-                  color: '#38BDF8',
+                  color: needsAccessRequest ? '#0F172A' : '#38BDF8',
+                  bgcolor: needsAccessRequest ? '#38BDF8' : 'transparent',
                   fontSize: '0.86rem',
                   fontWeight: 700,
                   textTransform: 'none',
-                  p: 0,
-                  '&:hover': { color: '#7dd3fc', bgcolor: 'transparent' }
+                  px: needsAccessRequest ? 2 : 0,
+                  py: needsAccessRequest ? 0.8 : 0,
+                  borderRadius: needsAccessRequest ? '12px' : 0,
+                  '&:hover': {
+                    color: needsAccessRequest ? '#0F172A' : '#7dd3fc',
+                    bgcolor: needsAccessRequest ? '#7DD3FC' : 'transparent',
+                  },
                 }}
               >
                 Request Early Access

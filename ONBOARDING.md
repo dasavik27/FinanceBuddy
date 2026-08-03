@@ -39,7 +39,8 @@ Providers → Google → paste credentials → Enable
 ### 1.5 Configure redirects
 URL Configuration:
 - Site URL: http://localhost:5173
-- Redirect: http://localhost:5173/dashboard
+- Redirect URLs: `http://localhost:5173/` and `http://localhost:5173/dashboard`
+  (Google OAuth returns to `/` so unregistered users see a “raise access request” message)
 
 ### 1.6 Lock down sign-up (required for admin-controlled access)
 

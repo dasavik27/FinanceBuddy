@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
-import authClient from './shared/auth/authClient'
+import authClient, { REQUEST_ACCESS_MESSAGE } from './shared/auth/authClient'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
@@ -15,11 +15,7 @@ function isNotAuthorizedError(e: unknown): { message: string } | null {
   const err = e as { response?: { status?: number; data?: { detail?: string; message?: string } } }
   if (err?.response?.status !== 403) return null
   if (err.response.data?.detail !== 'not_authorized') return null
-  return {
-    message:
-      err.response.data?.message ||
-      'Your account is not authorized. Request access or ask an administrator to invite you.',
-  }
+  return { message: REQUEST_ACCESS_MESSAGE }
 }
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
