@@ -17,6 +17,7 @@ import authClient, {
   type AccessRequestStatus,
   consumeOAuthErrorFromUrl,
   lookupAccessNoticeForEmails,
+  normalizeAuthMessage,
   REQUEST_ACCESS_MESSAGE,
 } from '../auth/authClient'
 import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
@@ -78,7 +79,28 @@ export default function Landing() {
   const applyAccessStatus = async (emailTrim: string) => {
     const st = await authClient.checkAccessStatus(emailTrim)
     setAccessRequestStatus(st.access_request_status)
-    setError(st.message)
+    setError(normalizeAuthMessage(st.message))
+  }
+
+  const showAuthMessage = (
+    message: string,
+    status: AccessRequestStatus | null,
+    emailValue?: string,
+  ) => {
+    setAccessRequestStatus(status)
+    setError(normalizeAuthMessage(message))
+    if (emailValue) setEmail(emailValue)
+  }
+
+  const handleEmailBlur = async () => {
+    const trimmed = email.trim()
+    if (!trimmed) return
+    rememberAccessRequestEmail(trimmed)
+    try {
+      await applyAccessStatus(trimmed)
+    } catch {
+      // Keep existing message if lookup fails (offline / misconfigured API).
+    }
   }
 
   // After sign-out (403) or OAuth bounce: show message from access_requests lookup.
@@ -86,6 +108,9 @@ export default function Landing() {
     let cancelled = false
 
     const run = async () => {
+      const storedEmail = (readAccessRequestEmail() || '').trim()
+      if (storedEmail) setEmail((current) => current.trim() || storedEmail)
+
       const notice = readAuthNotice()
       const oauthMessage = consumeOAuthErrorFromUrl()
 
@@ -95,12 +120,14 @@ export default function Landing() {
           try {
             const refreshed = await lookupAccessNoticeForEmails([
               notice.email,
-              readAccessRequestEmail(),
+              storedEmail,
             ])
             if (refreshed.access_request_status !== 'none') {
-              setAccessRequestStatus(refreshed.access_request_status)
-              setError(refreshed.message)
-              if (refreshed.email) setEmail(refreshed.email)
+              showAuthMessage(
+                refreshed.message,
+                refreshed.access_request_status,
+                refreshed.email || notice.email || undefined,
+              )
               setLoading(false)
               return
             }
@@ -108,44 +135,37 @@ export default function Landing() {
             // Fall back to stored notice below.
           }
         }
-        setAccessRequestStatus(notice.access_request_status)
-        setError(notice.message)
-        if (notice.email) setEmail(notice.email)
+        showAuthMessage(
+          notice.message,
+          notice.access_request_status,
+          notice.email || storedEmail || undefined,
+        )
         setLoading(false)
         return
       }
 
-      if (!oauthMessage) return
-
-      let emailHint = email.trim()
-      if (!emailHint) emailHint = (readAccessRequestEmail() || '').trim()
-      if (!emailHint) {
-        try {
-          const u = await authClient.getUser()
-          emailHint = (u?.email || '').trim()
-          if (emailHint && !cancelled) setEmail(emailHint)
-        } catch {
-          // No Supabase session — rely on oauthMessage below.
-        }
-      }
-
-      if (emailHint) {
-        try {
-          const refreshed = await lookupAccessNoticeForEmails([emailHint, readAccessRequestEmail()])
-          if (!cancelled) {
-            setAccessRequestStatus(refreshed.access_request_status)
-            setError(refreshed.message)
-            setEmail(refreshed.email || emailHint)
+      const emailHint = storedEmail
+      if (oauthMessage || emailHint) {
+        if (emailHint) {
+          try {
+            const refreshed = await lookupAccessNoticeForEmails([emailHint, storedEmail])
+            if (!cancelled) {
+              showAuthMessage(
+                refreshed.access_request_status !== 'none'
+                  ? refreshed.message
+                  : oauthMessage || refreshed.message,
+                refreshed.access_request_status !== 'none' ? refreshed.access_request_status : 'none',
+                refreshed.email || emailHint,
+              )
+            }
+          } catch {
+            if (!cancelled && oauthMessage) {
+              showAuthMessage(oauthMessage, 'none', emailHint)
+            }
           }
-        } catch {
-          if (!cancelled) {
-            setAccessRequestStatus('none')
-            setError(oauthMessage)
-          }
+        } else if (!cancelled && oauthMessage) {
+          showAuthMessage(oauthMessage, 'none')
         }
-      } else if (!cancelled) {
-        setAccessRequestStatus('none')
-        setError(oauthMessage)
       }
 
       if (!cancelled) setLoading(false)
@@ -366,6 +386,7 @@ export default function Landing() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => void handleEmailBlur()}
               disabled={loading}
               autoComplete="email"
               InputProps={{

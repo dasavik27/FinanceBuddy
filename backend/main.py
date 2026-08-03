@@ -249,6 +249,7 @@ class IdentityMiddleware:
 
         principal = self._verifier.verify(value[7:].strip())
         if principal is None:
+            logger.info("[AUTH] bearer token present but JWT verification failed")
             return None
         return users.resolve(
             principal.issuer,

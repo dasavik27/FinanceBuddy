@@ -50,8 +50,26 @@ export const REQUEST_ACCESS_MESSAGE =
 
 /** OAuth/sign-up disabled bounce — pending request may still exist. */
 export const OAUTH_NO_ACCOUNT_MESSAGE =
-  'Sign-in failed because no login account exists yet. If you already submitted an access request, ' +
-  'it is pending admin approval — enter that email below to check status, or wait for an invite.'
+  'No login account exists yet. Enter your access-request email below to check status, or wait for an admin invite.'
+
+const OAUTH_ERROR_KEY = 'fb_oauth_error_msg'
+
+export function normalizeAuthMessage(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let msg = raw.trim()
+  if (!msg) return null
+
+  // Collapse accidental exact duplication (double effect / double URL parse).
+  if (msg.length > 40 && msg.length % 2 === 0) {
+    const half = msg.length / 2
+    if (msg.slice(0, half) === msg.slice(half)) msg = msg.slice(0, half)
+  }
+
+  const doubled = OAUTH_NO_ACCOUNT_MESSAGE + OAUTH_NO_ACCOUNT_MESSAGE
+  if (msg.includes(doubled)) msg = msg.replace(doubled, OAUTH_NO_ACCOUNT_MESSAGE)
+
+  return msg
+}
 
 export type AccessRequestStatus = 'none' | 'pending' | 'approved'
 
@@ -103,6 +121,7 @@ export function toAccessRequestMessage(raw: string | null | undefined): string |
  */
 export function consumeOAuthErrorFromUrl(): string | null {
   if (typeof window === 'undefined') return null
+
   const fromSearch = new URLSearchParams(window.location.search)
   const hash = window.location.hash.startsWith('#')
     ? window.location.hash.slice(1)
@@ -114,17 +133,30 @@ export function consumeOAuthErrorFromUrl(): string | null {
   const description =
     fromSearch.get('error_description') || fromHash.get('error_description')
 
-  if (!code && !error && !description) return null
-
-  const combined = [code, error, description].filter(Boolean).join(' ')
-  const message = toAccessRequestMessage(combined) || OAUTH_NO_ACCOUNT_MESSAGE
-
   const url = new URL(window.location.href)
   ;['error', 'error_code', 'error_description'].forEach((k) => url.searchParams.delete(k))
-  url.hash = ''
-  window.history.replaceState({}, '', `${url.pathname}${url.search}`)
+  const hadErrorParams = Boolean(code || error || description)
+  if (hadErrorParams) {
+    url.hash = ''
+    window.history.replaceState({}, '', `${url.pathname}${url.search}`)
+  }
 
+  if (!hadErrorParams) return null
+
+  // StrictMode / double mount must not surface the same OAuth copy twice.
+  const cached = sessionStorage.getItem(OAUTH_ERROR_KEY)
+  if (cached) return cached
+
+  const combined = [code, error, description].filter(Boolean).join(' ')
+  const message = normalizeAuthMessage(
+    toAccessRequestMessage(combined) || OAUTH_NO_ACCOUNT_MESSAGE,
+  )!
+  sessionStorage.setItem(OAUTH_ERROR_KEY, message)
   return message
+}
+
+export function clearOAuthErrorCache(): void {
+  sessionStorage.removeItem(OAUTH_ERROR_KEY)
 }
 
 function extractEmail(user: { email?: string | null; user_metadata?: Record<string, unknown>; identities?: Array<{ identity_data?: Record<string, unknown> }> } | null | undefined): string | null {

@@ -146,40 +146,128 @@ class OidcJwtVerifier:
         if not subject:
             return None
 
-        raw_meta = claims.get("user_metadata")
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        extracted_name = (
-            claims.get("name")
-            or claims.get("full_name")
-            or meta.get("full_name")
-            or meta.get("name")
-            or meta.get("user_name")
-        )
-        clean_name = extracted_name.strip() if isinstance(extracted_name, str) and extracted_name.strip() else None
-
-        raw_email = claims.get("email")
-        if not raw_email and isinstance(meta, dict):
-            meta_email = meta.get("email")
-            if isinstance(meta_email, str) and meta_email.strip():
-                raw_email = meta_email.strip()
-        if not raw_email:
-            app_meta = claims.get("app_metadata")
-            if isinstance(app_meta, dict):
-                app_email = app_meta.get("email")
-                if isinstance(app_email, str) and app_email.strip():
-                    raw_email = app_email.strip()
-        if not raw_email and isinstance(claims.get("user_email"), str):
-            raw_email = claims.get("user_email").strip()
-
-        return Principal(
-            issuer=claims.get("iss", self.issuer),
-            subject=str(subject),
-            email=raw_email if isinstance(raw_email, str) and raw_email.strip() else None,
-            name=clean_name,
-        )
+        return _principal_from_claims(claims, self.issuer)
 
 
-def from_env(env: Optional[dict] = None) -> Optional[OidcJwtVerifier]:
+def _principal_from_claims(claims: dict, default_issuer: str) -> Optional[Principal]:
+    subject = claims.get("sub")
+    if not subject:
+        return None
+
+    raw_meta = claims.get("user_metadata")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    extracted_name = (
+        claims.get("name")
+        or claims.get("full_name")
+        or meta.get("full_name")
+        or meta.get("name")
+        or meta.get("user_name")
+    )
+    clean_name = extracted_name.strip() if isinstance(extracted_name, str) and extracted_name.strip() else None
+
+    raw_email = claims.get("email")
+    if not raw_email and isinstance(meta, dict):
+        meta_email = meta.get("email")
+        if isinstance(meta_email, str) and meta_email.strip():
+            raw_email = meta_email.strip()
+    if not raw_email:
+        app_meta = claims.get("app_metadata")
+        if isinstance(app_meta, dict):
+            app_email = app_meta.get("email")
+            if isinstance(app_email, str) and app_email.strip():
+                raw_email = app_email.strip()
+    if not raw_email and isinstance(claims.get("user_email"), str):
+        raw_email = claims.get("user_email").strip()
+
+    return Principal(
+        issuer=claims.get("iss", default_issuer),
+        subject=str(subject),
+        email=raw_email if isinstance(raw_email, str) and raw_email.strip() else None,
+        name=clean_name,
+    )
+
+
+class Hs256JwtVerifier:
+    """Verify legacy Supabase tokens signed with the project JWT secret (HS256)."""
+
+    def __init__(
+        self,
+        secret: str,
+        issuer: str,
+        audience: str,
+        leeway: int = DEFAULT_LEEWAY,
+    ):
+        if not secret:
+            raise ValueError("secret is required")
+        if not issuer:
+            raise ValueError("issuer is required")
+        if not audience:
+            raise ValueError("audience is required")
+        self.issuer = issuer
+        self.audience = audience
+        self.leeway = leeway
+        self._secret = secret
+
+    def verify(self, token: str) -> Optional[Principal]:
+        if not token:
+            return None
+        try:
+            claims = jwt.decode(
+                token,
+                self._secret,
+                algorithms=["HS256"],
+                issuer=self.issuer,
+                audience=self.audience,
+                leeway=self.leeway,
+                options={
+                    "require": ["exp", "iss", "aud", "sub"],
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iss": True,
+                    "verify_aud": True,
+                },
+            )
+        except jwt.PyJWTError as e:
+            logger.info("[AUTH] HS256 token rejected: %s", type(e).__name__)
+            return None
+        return _principal_from_claims(claims, self.issuer)
+
+
+class CompositeAuthVerifier:
+    """Try JWKS (asymmetric) first, then legacy HS256 when configured."""
+
+    def __init__(
+        self,
+        jwks: Optional[OidcJwtVerifier],
+        hs256: Optional[Hs256JwtVerifier],
+    ):
+        if jwks is None and hs256 is None:
+            raise ValueError("at least one verifier is required")
+        self._jwks = jwks
+        self._hs256 = hs256
+        ref = jwks or hs256
+        self.issuer = ref.issuer
+        self.audience = ref.audience
+
+    def verify(self, token: str) -> Optional[Principal]:
+        if not token:
+            return None
+        try:
+            alg = jwt.get_unverified_header(token).get("alg")
+        except jwt.PyJWTError:
+            return None
+
+        if alg == "HS256" and self._hs256 is not None:
+            principal = self._hs256.verify(token)
+            if principal is not None:
+                return principal
+
+        if self._jwks is not None:
+            return self._jwks.verify(token)
+        return None
+
+
+def from_env(env: Optional[dict] = None) -> Optional[AuthVerifier]:
     """
     Build the verifier from configuration, or None when auth is not configured.
 
@@ -211,4 +299,16 @@ def from_env(env: Optional[dict] = None) -> Optional[OidcJwtVerifier]:
         )
         return None
 
-    return OidcJwtVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)
+    jwt_secret = (
+        env.get("SUPABASE_JWT_SECRET")
+        or env.get("JWT_SECRET")
+        or ""
+    ).strip()
+
+    jwks_verifier = OidcJwtVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)
+    hs256_verifier = Hs256JwtVerifier(jwt_secret, issuer, audience) if jwt_secret else None
+
+    if hs256_verifier is not None:
+        logger.info("[AUTH] JWT verification: JWKS + legacy HS256 secret configured")
+        return CompositeAuthVerifier(jwks_verifier, hs256_verifier)
+    return jwks_verifier

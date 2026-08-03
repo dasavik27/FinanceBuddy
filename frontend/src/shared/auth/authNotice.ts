@@ -1,4 +1,5 @@
 import type { AccessRequestStatus } from './authClient'
+import { clearOAuthErrorCache } from './authClient'
 
 export const AUTH_NOTICE_KEY = 'fb_auth_notice'
 
@@ -35,4 +36,8 @@ export function rememberAccessRequestEmail(email: string): void {
 
 export function readAccessRequestEmail(): string | null {
   return sessionStorage.getItem(ACCESS_REQUEST_EMAIL_KEY)
+}
+
+export function clearAuthLandingCache(): void {
+  clearOAuthErrorCache()
 }
