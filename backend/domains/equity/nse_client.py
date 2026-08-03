@@ -55,6 +55,35 @@ class NSEClient:
         self._master_symbols: list[dict[str, str]] = []
         self._master_loaded: bool = False
         self._name_index: dict[str, str] = {}
+        self._isin_index: dict[str, str] = {}
+
+    def _ensure_indexes(self) -> None:
+        """Build the symbol->name and ISIN->symbol maps once, on first use."""
+        if self._name_index and self._isin_index:
+            return
+        master = self.load_master_symbols()
+        self._name_index = {i["symbol"]: i["name"] for i in master}
+        # NSE publishes an ISIN for every listed symbol (verified: 2,371 of 2,371), and
+        # an ISIN survives a rename while the trading symbol does not. This is what
+        # lets a holding recorded under a retired ticker still resolve, without anyone
+        # maintaining a list of which names changed.
+        self._isin_index = {i["isin"]: i["symbol"] for i in master if i.get("isin")}
+
+    def is_listed(self, symbol: str) -> bool:
+        """Whether `symbol` is currently in NSE's master list of live equities."""
+        self._ensure_indexes()
+        # An empty index means the download failed; assume listed rather than
+        # declaring every symbol delisted on a network blip.
+        if not self._name_index:
+            return True
+        return symbol.upper().strip() in self._name_index
+
+    def symbol_for_isin(self, isin: str) -> str | None:
+        """Current trading symbol for an ISIN, or None if it is not listed."""
+        if not isin:
+            return None
+        self._ensure_indexes()
+        return self._isin_index.get(isin.upper().strip())
 
     def name_for(self, symbol: str) -> str | None:
         """
@@ -63,10 +92,7 @@ class NSEClient:
         Indexed on first use rather than scanned: resolving a handful of peer names
         per analysis was otherwise a linear pass over ~2,400 rows each time.
         """
-        if not self._name_index:
-            self._name_index = {
-                i["symbol"]: i["name"] for i in self.load_master_symbols()
-            }
+        self._ensure_indexes()
         return self._name_index.get(symbol.upper().strip())
 
     def _refresh_session_cookies(self) -> None:

@@ -67,28 +67,45 @@ class Quote:
         return self.ltp - self.prev_close
 
 
-#: Symbols that have been renamed on the exchange, old -> current.
-#:
-#: A rename is invisible until it isn't: Zomato became Eternal and ZOMATO.NS now returns
-#: zero rows from Yahoo and zero records from NSE, while ETERNAL returns the full
-#: history back to 2021 - so a saved watchlist entry or an older broker statement
-#: silently produced an empty chart rather than an error. Tata Motors is the same story
-#: post-demerger (TATAMOTORS.NS is a hard 404 on both .NS and .BO).
-#:
-#: The durable fix is keying on ISIN, which survives renames. This table is the
-#: stopgap that covers the names people actually hold today.
-_RENAMED: dict[str, str] = {
-    "ZOMATO": "ETERNAL",
-    "TATAMOTORS": "TMPV",
-}
-
-
-def resolve_symbol(symbol: str) -> str:
-    """Current NSE symbol for a possibly-renamed one."""
+def _bare_symbol(symbol: str) -> str:
     s = str(symbol).upper().strip()
-    if s.endswith("-EQ"):
-        s = s[:-3]
-    return _RENAMED.get(s, s)
+    return s[:-3] if s.endswith("-EQ") else s
+
+
+def resolve_symbol(symbol: str, isin: str | None = None) -> str:
+    """
+    Current NSE symbol for one that may have been renamed.
+
+    Renames are silent rather than loud: the retired ticker returns *zero rows* from
+    both Yahoo and NSE rather than an error, so a holding recorded under the old name
+    renders an empty chart with nothing to explain it.
+
+    Resolution is by **ISIN**, which survives a rename, against NSE's master list -
+    not by a hand-maintained table of old-to-new names. A table only covers the
+    renames someone thought to add, goes stale the moment the next one happens, and
+    silently does nothing for every name not in it. NSE publishes an ISIN for all
+    ~2,400 listed symbols and broker statements carry one per holding, so the general
+    case is already answerable from data we have.
+
+    Falls back to the symbol unchanged when there is no ISIN to go on, or when the
+    master list is unreachable. Callers that need to distinguish "renamed" from "still
+    listed" should use `is_listed`.
+    """
+    s = _bare_symbol(symbol)
+    if not isin:
+        return s
+
+    from domains.equity.nse_client import nse_client
+    try:
+        if nse_client.is_listed(s):
+            return s
+        current = nse_client.symbol_for_isin(isin)
+        if current and current != s:
+            logger.info("[equity.quotes] %s resolved to %s via ISIN %s", s, current, isin)
+            return current
+    except Exception as e:
+        logger.warning("[equity.quotes] symbol resolution failed for %s: %s", s, e)
+    return s
 
 
 def to_yahoo_ticker(symbol: str) -> str:
@@ -98,7 +115,7 @@ def to_yahoo_ticker(symbol: str) -> str:
         s = s[:-3]
     if s.endswith(".NS") or s.endswith(".BO"):
         return s
-    return _RENAMED.get(s, s) + ".NS"
+    return s + ".NS"
 
 
 def is_valid_symbol(symbol: str) -> bool:

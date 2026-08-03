@@ -17,7 +17,6 @@ import pandas as pd
 import pytest
 
 from domains.equity.quotes import resolve_symbol, to_yahoo_ticker
-from domains.equity.sector_map import get_sector
 from domains.equity.stock_analyzer import (
     _dividend_yield_pct,
     _fetch_consensus,
@@ -28,36 +27,76 @@ from domains.equity.stock_analyzer import (
 
 # ── renamed symbols ──────────────────────────────────────────────────────────
 
+class _FakeMaster:
+    """
+    Stands in for NSE's master list. `OLDSYM` has been renamed to `NEWSYM`, keeping its
+    ISIN - which is the whole point: the ISIN is the identity, the ticker is a label.
+    """
+
+    def __init__(self):
+        self._name_index = {"NEWSYM": "New Name Ltd", "OTHER": "Other Ltd"}
+        self._isin_index = {"INE000A01001": "NEWSYM", "INE000A01002": "OTHER"}
+
+    def is_listed(self, symbol):
+        return symbol.upper().strip() in self._name_index
+
+    def symbol_for_isin(self, isin):
+        return self._isin_index.get((isin or "").upper().strip())
+
+
+@pytest.fixture
+def fake_master(monkeypatch):
+    from domains.equity import nse_client as nse_mod
+    fake = _FakeMaster()
+    monkeypatch.setattr(nse_mod, "nse_client", fake)
+    return fake
+
+
 class TestRenamedSymbols:
     """
-    A rename is silent, not loud: the old ticker returns *zero rows* rather than an
-    error, so a saved watchlist entry produced an empty chart with nothing to explain
-    it. Verified against live data - ZOMATO.NS returns nothing while ETERNAL.NS returns
-    1,246 rows over five years.
+    Renames resolve by ISIN against NSE's master list, not by a table of old-to-new
+    names. A table only covers the renames someone remembered to add, goes stale at the
+    next one, and silently does nothing for every name not in it. NSE publishes an ISIN
+    for all ~2,400 listed symbols and broker statements carry one per holding, so this
+    is answerable from data rather than from a maintained list.
     """
 
-    def test_zomato_resolves_to_eternal(self):
-        assert resolve_symbol("ZOMATO") == "ETERNAL"
-        assert to_yahoo_ticker("ZOMATO") == "ETERNAL.NS"
+    def test_retired_symbol_resolves_to_the_current_one_via_isin(self, fake_master):
+        assert resolve_symbol("OLDSYM", isin="INE000A01001") == "NEWSYM"
 
-    def test_tatamotors_resolves_to_its_demerged_successor(self):
-        assert to_yahoo_ticker("TATAMOTORS") == "TMPV.NS"
+    def test_currently_listed_symbol_is_left_alone(self, fake_master):
+        # Must not be rewritten even though its ISIN is in the index.
+        assert resolve_symbol("NEWSYM", isin="INE000A01001") == "NEWSYM"
 
-    def test_current_symbols_are_untouched(self):
+    def test_without_an_isin_the_symbol_is_returned_unchanged(self, fake_master):
+        # A watchlist entry carries no ISIN. Guessing would be worse than not guessing.
+        assert resolve_symbol("OLDSYM") == "OLDSYM"
+
+    def test_unknown_isin_leaves_the_symbol_alone(self, fake_master):
+        assert resolve_symbol("OLDSYM", isin="INE999Z01999") == "OLDSYM"
+
+    def test_eq_suffix_is_stripped_before_resolution(self, fake_master):
+        assert resolve_symbol("OLDSYM-EQ", isin="INE000A01001") == "NEWSYM"
+
+    def test_unreachable_master_does_not_break_resolution(self, monkeypatch):
+        from domains.equity import nse_client as nse_mod
+
+        class Broken:
+            def is_listed(self, s):
+                raise RuntimeError("network down")
+
+            def symbol_for_isin(self, i):
+                raise RuntimeError("network down")
+
+        monkeypatch.setattr(nse_mod, "nse_client", Broken())
+        assert resolve_symbol("OLDSYM", isin="INE000A01001") == "OLDSYM"
+
+    def test_to_yahoo_ticker_carries_no_rename_table(self):
+        # Ticker formatting is a pure string transform; renames belong in
+        # resolve_symbol, where the ISIN is available to decide them.
         assert to_yahoo_ticker("RELIANCE") == "RELIANCE.NS"
-        assert resolve_symbol("RELIANCE") == "RELIANCE"
-
-    def test_rename_applies_after_the_eq_suffix_is_stripped(self):
-        assert to_yahoo_ticker("ZOMATO-EQ") == "ETERNAL.NS"
-
-    def test_explicit_yahoo_suffix_still_passes_through(self):
+        assert to_yahoo_ticker("TCS-EQ") == "TCS.NS"
         assert to_yahoo_ticker("ETERNAL.NS") == "ETERNAL.NS"
-
-    def test_both_old_and_new_names_classify(self):
-        # A holding recorded under either name must still land in a sector, or it falls
-        # into "Others" and drags the allocation chart with it.
-        assert get_sector("ZOMATO")[0] == "Consumer Discretionary"
-        assert get_sector("ETERNAL")[0] == "Consumer Discretionary"
 
 
 # ── dividend yield ───────────────────────────────────────────────────────────

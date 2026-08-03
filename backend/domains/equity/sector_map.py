@@ -103,13 +103,7 @@ SECTOR_MAP: dict[str, tuple[str, str]] = {
     "TRENT": ("Consumer Discretionary", "Retail"),
     "DMART": ("Consumer Discretionary", "Retail"),
     "NYKAA": ("Consumer Discretionary", "Retail"),
-    # Zomato Ltd renamed to Eternal Ltd; NSE re-keyed the ticker and the history moved
-    # with it. ZOMATO.NS now returns nothing at all from Yahoo, and querying NSE for
-    # ZOMATO returns zero rows while ETERNAL returns the full series back to Jun-2021.
-    # The old symbol is kept as an alias so saved watchlists and older statements
-    # continue to resolve.
     "ETERNAL": ("Consumer Discretionary", "Food Services"),
-    "ZOMATO": ("Consumer Discretionary", "Food Services"),
     "SWIGGY": ("Consumer Discretionary", "Food Services"),
     "BATA": ("Consumer Discretionary", "Footwear"),
     "RELAXO": ("Consumer Discretionary", "Footwear"),
@@ -124,9 +118,6 @@ SECTOR_MAP: dict[str, tuple[str, str]] = {
     "MANYAVAR": ("Consumer Discretionary", "Textiles"),
     "PAGEIND": ("Consumer Discretionary", "Textiles"),
     "MARUTI": ("Consumer Discretionary", "Automobiles"),
-    # Post-demerger. TATAMOTORS.NS is a hard 404 on Yahoo (and so is .BO); the
-    # passenger-vehicle successor lists as TMPV. Both are mapped so a holding recorded
-    # under either name still classifies.
     "TATAMOTORS": ("Consumer Discretionary", "Automobiles"),
     "TMPV": ("Consumer Discretionary", "Automobiles"),
     "M&M": ("Consumer Discretionary", "Automobiles"),
