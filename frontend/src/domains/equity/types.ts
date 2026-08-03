@@ -160,7 +160,8 @@ export interface BalanceSheetItem {
   total_liabilities_cr?: number | null
   total_equity_cr?: number | null
   shares_outstanding?: number | null
-  price_to_book?: number | null
+  /** Total assets / equity. Was misnamed `price_to_book`; there is no price term. */
+  equity_multiplier?: number | null
   return_on_assets_pct?: number | null
 }
 
@@ -188,31 +189,48 @@ export interface FinancialStatements {
   annual: FinancialStatementsPeriod
 }
 
+/**
+ * A *reported* quarter. The estimate fields are always null today: Yahoo publishes no
+ * historical consensus for NSE names, and these used to be back-computed from the
+ * actual (`reported_eps * 0.97`), which made every quarter beat by exactly +3.09%.
+ * Forward consensus lives in `Consensus`, and is never mixed into reported history.
+ */
 export interface EarningsHistoryItem {
   period: string
   date: string
   reported_eps?: number | null
   estimated_eps?: number | null
   surprise_pct?: number | null
-  eps_surprise_type?: 'beat' | 'miss'
+  eps_surprise_type?: 'beat' | 'miss' | null
   reported_revenue_cr?: number | null
   estimated_revenue_cr?: number | null
   revenue_surprise_pct?: number | null
-  revenue_surprise_type?: 'beat' | 'miss'
+  revenue_surprise_type?: 'beat' | 'miss' | null
 }
 
 export interface EarningsSummary {
-  last_report_date?: string
-  financial_period?: string
+  last_report_date?: string | null
+  financial_period?: string | null
   reported_eps?: number | null
-  estimated_eps?: number | null
-  eps_surprise_pct?: number | null
-  eps_surprise_type?: 'beat' | 'miss' | 'met'
   reported_revenue_cr?: number | null
-  estimated_revenue_cr?: number | null
-  revenue_surprise_pct?: number | null
-  revenue_surprise_type?: 'beat' | 'miss'
   history?: EarningsHistoryItem[]
+}
+
+/** Forward analyst consensus. Absent entirely when no broker covers the name. */
+export interface ConsensusEstimate {
+  avg?: number | null
+  low?: number | null
+  high?: number | null
+  analysts: number
+}
+
+export interface Consensus {
+  eps?: Record<string, ConsensusEstimate>
+  revenue_cr?: Record<string, { avg?: number | null; analysts: number }>
+  price_target?: { low?: number; high?: number; mean?: number; median?: number }
+  analyst_count?: number
+  recommendation?: string
+  recommendation_mean?: number
 }
 
 export interface QuarterlyFinancial {
@@ -268,7 +286,16 @@ export interface StockTechnicals {
 }
 
 export interface StockAnalysis {
+  /** Which upstream actually served this — "NSE" or "Yahoo Finance", not a fixed label. */
   source?: string
+  /** ISO-8601 UTC timestamp of when the payload was built, for the staleness chip. */
+  as_of?: string
+  /**
+   * Currency the *statement* figures are reported in before conversion. Yahoo reports
+   * some NSE companies (INFY) in USD while quoting them in INR; the `_cr` fields are
+   * converted, and this records what they were converted from.
+   */
+  financial_currency?: string
   symbol: string
   name?: string
   sector?: string
@@ -309,8 +336,17 @@ export interface StockAnalysis {
   financial_statements?: FinancialStatements
   earnings?: QuarterlyEarnings[]
   earnings_summary?: EarningsSummary
+  consensus?: Consensus
   description?: string
-  chart?: { dates: string[]; prices: number[] }
+  chart?: {
+    dates: string[]
+    prices: number[]
+    /** Per-point moving averages, aligned to `dates`. Null before the window fills. */
+    sma_50?: (number | null)[]
+    sma_200?: (number | null)[]
+    /** Real NIFTY 50 closes aligned to `dates`; null on days the index has no print. */
+    benchmark?: (number | null)[]
+  }
   timeframes?: Record<string, TimeframeSlice>
   candlesticks?: CandlestickPoint[]
   volume_series?: VolumePoint[]

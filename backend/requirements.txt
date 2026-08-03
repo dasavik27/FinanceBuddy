@@ -41,7 +41,11 @@ numpy==2.4.4
 pyxirr==0.10.8
 
 # ── Market data ────────────────────────────────────────────────────────────
-yfinance==1.3.0
+# 1.5.2, not 1.3.0: yfinance does not cap curl_cffi, and 1.3.0 resolves against
+# curl_cffi>=0.16, which it is incompatible with ("Fix yfinance breaking with
+# curl_cffi>=0.16" is a 1.5.2 changelog entry). The pin was also drifting from what
+# was actually installed, which is how the dividendYield scale change went unnoticed.
+yfinance==1.5.2
 nsepython==2.97
 # Zerodha Kite Connect SDK for equity portfolio sync (OAuth + holdings + P&L)
 kiteconnect==5.2.1

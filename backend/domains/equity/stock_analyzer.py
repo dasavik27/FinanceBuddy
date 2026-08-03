@@ -9,19 +9,27 @@ sector allocation, beta, and diversification score.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 
-from domains.equity.sector_map import get_sector
+from domains.equity.sector_map import SECTOR_MAP, get_sector
 from shared.services.cache import MARKET_CACHE, ttl_for
-from domains.equity.quotes import is_valid_symbol, to_yahoo_ticker
+from domains.equity.quotes import fetch_quotes, is_valid_symbol, to_yahoo_ticker
 
 logger = logging.getLogger(__name__)
 
 
 class UnknownSymbol(ValueError):
     """Raised when a symbol is not well-formed enough to look up."""
+
+
+#: Deadline for every outbound yfinance call. The sync-handler threadpool is capped at
+#: 8 (main.py), so a single untimed download can hold an eighth of the server's request
+#: capacity for as long as the far end keeps the socket open - and no yfinance call in
+#: this codebase previously passed a timeout at all.
+_YF_TIMEOUT = 20
 
 
 # ── NSE → Yahoo Finance ticker conversion ────────────────────────────────────
@@ -32,6 +40,14 @@ def _to_yf_ticker(symbol: str) -> str:
 
 def _clean_symbol(symbol: str) -> str:
     return symbol.upper().strip().replace("-EQ", "").replace(".NS", "").replace(".BO", "")
+
+
+def _company_name(symbol: str) -> str:
+    """Company name from NSE's master list, falling back to the symbol itself."""
+    try:
+        return nse_client.name_for(symbol) or symbol
+    except Exception:
+        return symbol
 
 
 # ── Search ───────────────────────────────────────────────────────────────────
@@ -236,25 +252,6 @@ def _compute_technicals(
     }
 
 
-# ── Sector Peers Mapping ───────────────────────────────────────────────────
-
-SECTOR_PEERS_MAP: dict[str, list[str]] = {
-    "Financial Services": ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "BAJFINANCE", "BAJAJFINSV"],
-    "Information Technology": ["TCS", "INFY", "HCLTECH", "WIPRO", "LTIM", "TECHM", "PERSISTENT", "COFORGE"],
-    "Oil, Gas & Consumable Fuels": ["RELIANCE", "ONGC", "COALINDIA", "BPCL", "IOC", "GAIL"],
-    "Automobile and Auto Components": ["TATAMOTORS", "MARUTI", "M&M", "BAJAJ-AUTO", "EICHERMOT", "HEROMOTOCO"],
-    "Fast Moving Consumer Goods": ["HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "TATACONSUM", "DABUR"],
-    "Healthcare": ["SUNPHARMA", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP", "MAXHEALTH"],
-    "Metals & Mining": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "JINDALSTEL", "NMDC"],
-    "Power": ["NTPC", "POWERGRID", "TATAPOWER", "ADANIPOWER"],
-    "Construction": ["LT", "GRASIM", "ULTRACEMCO", "AMBUJACEM", "SHREECEM"],
-    "Consumer Services": ["TITAN", "ZOMATO", "TRENT", "DMART", "INDIGO", "SWIGGY"],
-    "Capital Goods": ["HAL", "BEL", "SIEMENS", "ABB", "BHEL"],
-    "Telecommunication": ["BHARTIARTL", "IDEA", "TATACOMM", "INDUSTOWER"],
-    "Chemicals": ["PIDILITIND", "SRF", "AARTIIND", "DEEPAKNTR", "TATACHEM"],
-}
-
-
 def get_market_indices() -> list[dict[str, Any]]:
     """
     Fetch live levels for top Indian market indices:
@@ -272,7 +269,10 @@ def get_market_indices() -> list[dict[str, Any]]:
         try:
             import yfinance as yf
             tickers = [item["symbol"] for item in indices_config]
-            data = yf.download(tickers, period="5d", interval="1d", progress=False, group_by="ticker")
+            data = yf.download(
+                tickers, period="5d", interval="1d",
+                progress=False, group_by="ticker", timeout=_YF_TIMEOUT,
+            )
             
             for item in indices_config:
                 sym = item["symbol"]
@@ -314,45 +314,275 @@ def get_market_indices() -> list[dict[str, Any]]:
     )
 
 
+def _peer_symbols(clean: str, sector: str, industry: str, limit: int) -> list[str]:
+    """
+    Peer candidates derived from SECTOR_MAP itself, nearest-first.
+
+    This used to read a second, hand-maintained SECTOR_PEERS_MAP keyed on NSE's sector
+    vocabulary ("Financial Services", "Oil, Gas & Consumable Fuels") while `get_sector`
+    returns GICS-style names ("Financials", "Energy"). The two vocabularies intersected
+    on exactly two keys, so 157 of 190 mapped symbols missed and fell through to a fixed
+    fallback: every one of them was shown RELIANCE/TCS/HDFCBANK/INFY/ICICIBANK as its
+    "sector peers". Deriving peers from the same table the sector came from makes that
+    class of drift structurally impossible.
+    """
+    same_industry: list[str] = []
+    same_sector: list[str] = []
+    for sym, (sec, ind) in SECTOR_MAP.items():
+        if sym == clean:
+            continue
+        if industry and ind == industry:
+            same_industry.append(sym)
+        elif sector and sec == sector:
+            same_sector.append(sym)
+    return (same_industry + same_sector)[:limit]
+
+
 def get_sector_peers(symbol: str, sector: str, limit: int = 5) -> list[dict[str, Any]]:
     """
-    Get top peer companies in the same sector with key metrics.
+    Peer companies in the same industry (falling back to the same sector), with
+    last price and day move.
+
+    Quotes come from the batched, cached `fetch_quotes` rather than one NSE call per
+    peer. The per-peer loop issued `limit` sequential requests to NSE's quote-equity
+    endpoint, which returns 403 by exchange policy - so it cost ~10s per analysis and
+    every peer card rendered with a null price. P/E and market cap are no longer
+    claimed here: sourcing them needs a full `.info` fetch per peer, which is the same
+    trap in a different shape.
     """
     clean = _clean_symbol(symbol)
-    candidates = SECTOR_PEERS_MAP.get(sector, [])
-    filtered = [p for p in candidates if p != clean][:limit]
-    
-    if not filtered:
-        # Fallback peers from top search index in different sectors
-        filtered = [item["symbol"] for item in _SEARCH_INDEX if item["symbol"] != clean][:limit]
+    _, industry = get_sector(clean)
+    candidates = _peer_symbols(clean, sector, industry, limit)
+    if not candidates:
+        return []
+
+    try:
+        quotes = fetch_quotes(candidates)
+    except Exception as e:
+        logger.warning("[analyzer] peer quote fetch failed: %s", e)
+        quotes = {}
 
     peers = []
-    for p in filtered:
-        p_sector, p_ind = get_sector(p)
-        quote = nse_client.get_equity_quote(p)
-        if quote:
-            peers.append({
-                "symbol": p,
-                "name": quote.get("name", p),
-                "current_price": quote.get("current_price"),
-                "change": quote.get("change"),
-                "p_change": quote.get("p_change"),
-                "pe_ratio": quote.get("pe_ratio"),
-                "market_cap_cr": quote.get("market_cap_cr"),
-                "sector": p_sector,
-            })
-        else:
-            peers.append({
-                "symbol": p,
-                "name": p,
-                "current_price": None,
-                "change": None,
-                "p_change": None,
-                "pe_ratio": None,
-                "market_cap_cr": None,
-                "sector": p_sector,
-            })
+    for p in candidates:
+        p_sector, _p_ind = get_sector(p)
+        q = quotes.get(p)
+        change = q.day_change_per_share if q else None
+        p_change = (
+            round((change / q.prev_close) * 100, 2)
+            if (q and change is not None and q.prev_close)
+            else None
+        )
+        peers.append({
+            "symbol": p,
+            "name": _company_name(p),
+            "current_price": round(q.ltp, 2) if q else None,
+            "change": round(change, 2) if change is not None else None,
+            "p_change": p_change,
+            "sector": p_sector,
+        })
     return peers
+
+
+def _now_iso() -> str:
+    """UTC timestamp for the payload's `as_of`, so the UI can show data age."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _dividend_yield_pct(info: dict[str, Any]) -> float | None:
+    """
+    Trailing dividend yield as a percentage, or None when it cannot be established.
+
+    Yahoo's v7 /quote endpoint - which is what `.info` reads - returns this already
+    scaled: RELIANCE.NS comes back as 0.46 against a real 0.46% yield, and ITC.NS as
+    5.69 against 5.69%. The previous `* 100` therefore rendered Reliance at 46%.
+
+    `dividendRate / price` is the arithmetic cross-check (ITC: 16.0 / 281.0 = 5.69%),
+    so it is preferred where both legs are present. The bare value is only trusted
+    inside a plausible band; a yield above 30% is far likelier to be a units flip than
+    a real payout, and 0 is returned as None rather than as a confident "0.0%".
+    """
+    rate = info.get("dividendRate")
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+    if rate and price:
+        try:
+            return round((float(rate) / float(price)) * 100, 2)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    raw = info.get("dividendYield")
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    if val > 30:
+        # Almost certainly a fraction-vs-percent flip upstream; withhold rather than
+        # print an implausible number with two decimal places of false precision.
+        logger.warning("[analyzer] implausible dividendYield %.4f, withholding", val)
+        return None
+    return round(val, 2)
+
+
+def _fx_to_inr(currency: str | None) -> float | None:
+    """
+    Multiplier converting `currency` into INR, or None when it cannot be resolved.
+
+    Yahoo quotes some NSE companies in INR but reports their *statements* in another
+    currency - INFY.NS is `currency=INR, financialCurrency=USD`, and its `totalRevenue`
+    comes back as 20.3bn USD. Dividing that by 1e7 and labelling it "Rs Cr" understated
+    Infosys' free cash flow by roughly 85x. Anything not INR is converted here or the
+    figure is withheld; it is never relabelled.
+    """
+    if not currency or currency.upper() == "INR":
+        return 1.0
+
+    def _fetch() -> float | None:
+        try:
+            import yfinance as yf
+            fx = yf.Ticker(f"{currency.upper()}INR=X").fast_info
+            rate = float(getattr(fx, "last_price", 0) or 0)
+            return rate if rate > 0 else None
+        except Exception as e:
+            logger.warning("[analyzer] FX %s->INR lookup failed: %s", currency, e)
+            return None
+
+    # One rate per currency per day: a statement figure does not need intraday FX, and
+    # this must not become a per-analysis upstream call.
+    return MARKET_CACHE.get_or_compute(
+        f"fx_inr_v1:{currency.upper()}", _fetch, 24 * 3600,
+    )
+
+
+def _fetch_consensus(yf_ticker, info: dict[str, Any]) -> dict[str, Any]:
+    """
+    Forward analyst consensus, or `{}` when nobody covers the name.
+
+    Coverage tracks sell-side following, not size: a Rs 2,000 cr name with one analyst
+    has estimates while a Rs 9,000 cr name with none does not. So this gates on the
+    data, never on market cap.
+
+    Three of Yahoo's "no coverage" responses are truthy and would pass a naive check:
+
+      * `revenue_estimate` comes back as a 4x4 frame of literal zeros with
+        numberOfAnalysts=0 rather than an empty frame, so `if not df.empty` renders a
+        confident "forecast revenue Rs 0";
+      * `analyst_price_targets` degrades to `{'current': <price>}`, a truthy dict with
+        no consensus in it at all;
+      * `recommendationKey` reads 'none' even for names with real analyst counts, so it
+        is not a usable coverage flag either.
+
+    The gate is therefore numberOfAnalysts > 0 on the estimate frame plus an explicit
+    'mean' key on the targets dict.
+    """
+    out: dict[str, Any] = {}
+
+    try:
+        est = yf_ticker.earnings_estimate
+        rev = yf_ticker.revenue_estimate
+    except Exception:
+        return {}
+
+    def _covered(df) -> bool:
+        if df is None or getattr(df, "empty", True):
+            return False
+        if "numberOfAnalysts" not in df.columns:
+            return False
+        try:
+            return float(df["numberOfAnalysts"].max() or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    if not _covered(est) and not _covered(rev):
+        return {}
+
+    def _row(df, period: str, field: str):
+        try:
+            if df is None or df.empty or period not in df.index or field not in df.columns:
+                return None
+            v = df.loc[period, field]
+            return None if v is None or pd.isna(v) else float(v)
+        except Exception:
+            return None
+
+    if _covered(est):
+        out["eps"] = {
+            p: {
+                "avg": _row(est, p, "avg"),
+                "low": _row(est, p, "low"),
+                "high": _row(est, p, "high"),
+                "analysts": int(_row(est, p, "numberOfAnalysts") or 0),
+            }
+            for p in ("0q", "+1q", "0y", "+1y")
+            if _row(est, p, "numberOfAnalysts")
+        }
+    if _covered(rev):
+        out["revenue_cr"] = {
+            p: {
+                "avg": round(v / 1e7, 2) if (v := _row(rev, p, "avg")) else None,
+                "analysts": int(_row(rev, p, "numberOfAnalysts") or 0),
+            }
+            for p in ("0q", "+1q", "0y", "+1y")
+            if _row(rev, p, "numberOfAnalysts")
+        }
+
+    try:
+        targets = yf_ticker.analyst_price_targets or {}
+    except Exception:
+        targets = {}
+    # A dict without 'mean' is the degraded `{'current': price}` shape, not a target.
+    if isinstance(targets, dict) and "mean" in targets:
+        out["price_target"] = {
+            k: targets.get(k) for k in ("low", "high", "mean", "median") if targets.get(k) is not None
+        }
+
+    opinions = info.get("numberOfAnalystOpinions")
+    if opinions:
+        out["analyst_count"] = int(opinions)
+        rec = info.get("recommendationKey")
+        # 'none' co-occurs with genuine analyst counts, so it is dropped rather than shown.
+        if rec and rec != "none":
+            out["recommendation"] = rec
+        if info.get("recommendationMean") is not None:
+            out["recommendation_mean"] = round(float(info["recommendationMean"]), 2)
+
+    return out
+
+
+def _nifty_close_series() -> dict[str, float]:
+    """
+    NIFTY 50 daily closes for the last ~6 months, keyed by ISO date.
+
+    Cached once process-wide and shared by every analysis: the index level is the same
+    for every stock and every user, so this must not become one download per request.
+
+    The Compare tab previously drew its "NIFTY 50 (Benchmark)" line from
+    `(i / totalPoints) * stock.year_return * 0.55` - a straight line synthesised from
+    the *target stock's own* return, carrying a real-looking legend entry. Nothing was
+    ever fetched for it.
+    """
+    def _fetch() -> dict[str, float]:
+        try:
+            import yfinance as yf
+            hist = yf.download(
+                "^NSEI", period="6mo", interval="1d",
+                auto_adjust=True, progress=False, timeout=_YF_TIMEOUT,
+            )
+            if hist is None or hist.empty or "Close" not in hist.columns:
+                return {}
+            close = hist["Close"]
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            close = close.dropna()
+            return {d.strftime("%Y-%m-%d"): round(float(v), 2)
+                    for d, v in zip(close.index, close.values)}
+        except Exception as e:
+            logger.warning("[analyzer] NIFTY benchmark fetch failed: %s", e)
+            return {}
+
+    return MARKET_CACHE.get_or_compute("nifty_close_6mo_v1", _fetch, 12 * 3600)
 
 
 def _build_timeframe_charts(hist: pd.DataFrame, current_price: float) -> dict[str, Any]:
@@ -425,6 +655,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         "annual": {"income_statement": [], "balance_sheet": [], "cash_flow": []},
     }
     earnings_summary: dict[str, Any] = {}
+    consensus: dict[str, Any] = {}
 
     try:
         import yfinance as yf
@@ -439,10 +670,16 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
                 return None
             return float(v)
 
+        # Statements are denominated in `financialCurrency`, which is not always the
+        # quote currency. `fin_fx` is 1.0 for the INR majority and a live rate
+        # otherwise; None means we could not resolve one, in which case every derived
+        # figure is withheld rather than shown under a "Rs Cr" label it does not have.
+        fin_fx = _fx_to_inr(info.get("financialCurrency"))
+
         def _cr(v):
-            if v is None:
+            if v is None or fin_fx is None:
                 return None
-            return round(v / 1e7, 2)
+            return round((v * fin_fx) / 1e7, 2)
 
         def _fmt_period(dt, is_quarterly=True):
             col_dt = pd.to_datetime(dt)
@@ -488,7 +725,8 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
                     "operating_expense_cr": _cr(op_exp),
                     "net_income_cr": _cr(net_inc),
                     "net_margin_pct": net_margin,
-                    "eps": round(eps, 2) if eps is not None else None,
+                    # Per-share too, so it carries the same reporting currency.
+                    "eps": round(eps * fin_fx, 2) if (eps is not None and fin_fx) else None,
                     "ebitda_cr": _cr(ebitda),
                     "effective_tax_rate_pct": round(tax_rate * 100, 1) if (tax_rate is not None and tax_rate <= 1.0) else (round(tax_rate, 1) if tax_rate is not None else None),
                 })
@@ -510,7 +748,10 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
                     "total_liabilities_cr": _cr(tot_liab),
                     "total_equity_cr": _cr(equity),
                     "shares_outstanding": int(shares) if shares is not None else None,
-                    "price_to_book": round(tot_assets / equity, 2) if (tot_assets and equity and equity > 0) else None,
+                    # Assets/equity is the equity multiplier - a leverage ratio with no
+                    # price term in it. It was labelled "price_to_book" and rendered in
+                    # the balance-sheet table under that name.
+                    "equity_multiplier": round(tot_assets / equity, 2) if (tot_assets and equity and equity > 0) else None,
                     "return_on_assets_pct": roa,
                 })
 
@@ -560,73 +801,59 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
                 "net_margin_pct": row["net_margin_pct"] or 0.0,
             })
 
-        # Earnings Summary & History
+        # Earnings history: reported actuals only.
+        #
+        # Every "estimate" here used to be synthesised from the actual it was compared
+        # against - `estimated_eps = reported_eps * 0.97`, `estimated_revenue = revenue
+        # * 0.98` - so every quarter beat by exactly +3.09% on EPS and +2.04% on
+        # revenue, and the UI presented that as analyst consensus under a "Surprise %"
+        # column. Yahoo publishes no *historical* consensus for NSE names, so there is
+        # nothing to compare a past quarter against. We report what the company
+        # reported and leave the estimate fields null; the UI already omits the slot
+        # when an estimate is missing. Forward consensus, where it exists, is a
+        # separate field (`consensus`) and is never mixed into reported history.
         cal = yf_ticker.calendar or {}
         latest_q = q_stmts["income_statement"][-1] if q_stmts["income_statement"] else None
         last_rep_dt = cal.get("Earnings Date")
         if isinstance(last_rep_dt, list) and len(last_rep_dt) > 0:
             last_rep_date_str = pd.to_datetime(last_rep_dt[0]).strftime("%d %b %Y")
+        elif latest_q:
+            last_rep_date_str = pd.to_datetime(latest_q["date"]).strftime("%d %b %Y")
         else:
-            last_rep_date_str = pd.to_datetime(latest_q["date"]).strftime("%d %b %Y") if latest_q else "Latest"
-
-        rep_eps = latest_q["eps"] if (latest_q and latest_q.get("eps") is not None) else (round(info.get("trailingEps", 0) / 4, 2) if info.get("trailingEps") else 0.0)
-        est_eps = round(float(cal.get("Earnings Average", rep_eps * 0.98)), 2) if cal.get("Earnings Average") else round(rep_eps * 0.98, 2)
-        eps_diff = rep_eps - est_eps if (rep_eps is not None and est_eps is not None) else 0
-        eps_surp_pct = round((eps_diff / abs(est_eps)) * 100, 2) if (est_eps and est_eps != 0) else 0.0
-        eps_type = "beat" if eps_surp_pct >= 0 else "miss"
-
-        rep_rev_cr = latest_q["revenue_cr"] if (latest_q and latest_q.get("revenue_cr") is not None) else 0.0
-        est_rev_raw = cal.get("Revenue Average")
-        est_rev_cr = round(float(est_rev_raw) / 1e7, 2) if est_rev_raw else round(rep_rev_cr * 0.99, 2)
-        rev_diff = rep_rev_cr - est_rev_cr if (rep_rev_cr and est_rev_cr) else 0
-        rev_surp_pct = round((rev_diff / abs(est_rev_cr)) * 100, 2) if (est_rev_cr and est_rev_cr != 0) else 0.0
-        rev_type = "beat" if rev_surp_pct >= 0 else "miss"
+            last_rep_date_str = None
 
         earnings_quarters = []
         for inc_row in q_stmts["income_statement"]:
-            q_eps = inc_row.get("eps") or 0.0
-            q_est = round(q_eps * 0.97, 2)
-            q_diff = q_eps - q_est
-            q_surp = round((q_diff / abs(q_est)) * 100, 2) if q_est else 0.0
-
-            q_rev = inc_row.get("revenue_cr") or 0.0
-            q_rev_est = round(q_rev * 0.98, 2)
-            q_rev_surp = round(((q_rev - q_rev_est) / abs(q_rev_est)) * 100, 2) if q_rev_est else 0.0
-
             item = {
                 "period": inc_row["period"],
                 "date": inc_row["date"],
-                "reported_eps": q_eps,
-                "estimated_eps": q_est,
-                "surprise_pct": q_surp,
-                "eps_surprise_type": "beat" if q_surp >= 0 else "miss",
-                "reported_revenue_cr": q_rev,
-                "estimated_revenue_cr": q_rev_est,
-                "revenue_surprise_pct": q_rev_surp,
-                "revenue_surprise_type": "beat" if q_rev_surp >= 0 else "miss",
+                "reported_eps": inc_row.get("eps"),
+                "estimated_eps": None,
+                "surprise_pct": None,
+                "eps_surprise_type": None,
+                "reported_revenue_cr": inc_row.get("revenue_cr"),
+                "estimated_revenue_cr": None,
+                "revenue_surprise_pct": None,
+                "revenue_surprise_type": None,
             }
             earnings_quarters.append(item)
             earnings_hist.append({
                 "date": inc_row["date"],
                 "quarter": inc_row["period"],
-                "reported_eps": q_eps,
-                "estimated_eps": q_est,
-                "surprise_pct": q_surp,
+                "reported_eps": inc_row.get("eps"),
+                "estimated_eps": None,
+                "surprise_pct": None,
             })
 
         earnings_summary = {
             "last_report_date": last_rep_date_str,
-            "financial_period": latest_q["period"] if latest_q else "Q1",
-            "reported_eps": rep_eps,
-            "estimated_eps": est_eps,
-            "eps_surprise_pct": eps_surp_pct,
-            "eps_surprise_type": eps_type,
-            "reported_revenue_cr": rep_rev_cr,
-            "estimated_revenue_cr": est_rev_cr,
-            "revenue_surprise_pct": rev_surp_pct,
-            "revenue_surprise_type": rev_type,
+            "financial_period": latest_q["period"] if latest_q else None,
+            "reported_eps": latest_q.get("eps") if latest_q else None,
+            "reported_revenue_cr": latest_q.get("revenue_cr") if latest_q else None,
             "history": earnings_quarters,
         }
+
+        consensus = _fetch_consensus(yf_ticker, info)
 
     except Exception as e:
         logger.warning("[analyzer] extended info failed for %s: %s", ticker, e)
@@ -637,13 +864,18 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     year_return = 0.0
     price_dates: list[str] = []
     price_values: list[float] = []
+    sma_50_series: list[float | None] = []
+    sma_200_series: list[float | None] = []
     candlesticks: list[dict[str, Any]] = []
     volume_series: list[dict[str, Any]] = []
     timeframe_charts: dict[str, Any] = {}
 
     try:
         import yfinance as yf
-        hist = yf.download(ticker, period="5y", interval="1d", auto_adjust=True, progress=False)
+        hist = yf.download(
+            ticker, period="5y", interval="1d",
+            auto_adjust=True, progress=False, timeout=_YF_TIMEOUT,
+        )
         if not hist.empty:
             close = hist["Close"]
             if isinstance(close, pd.DataFrame):
@@ -660,6 +892,21 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
             tail = prices.iloc[-90:]
             price_dates = [d.strftime("%Y-%m-%d") for d in tail.index]
             price_values = [round(float(v), 2) for v in tail.values]
+
+            # Moving-average *series*, not the scalars alone. The UI plotted
+            # `technicals.sma_50` - a single number - against every point, so the
+            # "50 DMA" and "200 DMA" overlays rendered as flat horizontal lines that
+            # were visually indistinguishable from a real moving average. Computed off
+            # the full 5y series so the 200-day window is genuinely 200 days, then
+            # sliced to the same 90-point window as the price line.
+            def _sma_tail(window: int) -> list[float | None]:
+                if len(prices) < window:
+                    return []
+                s = prices.rolling(window=window).mean().iloc[-90:]
+                return [None if pd.isna(v) else round(float(v), 2) for v in s.values]
+
+            sma_50_series = _sma_tail(50)
+            sma_200_series = _sma_tail(200)
 
             # Multi-timeframe charts
             timeframe_charts = _build_timeframe_charts(hist, current_price)
@@ -717,8 +964,16 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     technicals = _compute_technicals(prices, effective_price, week52_high, week52_low)
     peers = get_sector_peers(clean, effective_sector, limit=5)
 
+    fin_currency = _f("financialCurrency") or "INR"
+    stmt_fx = _fx_to_inr(fin_currency)
+
     return {
-        "source": "NSE (National Stock Exchange)",
+        # Provenance, so the UI can stop asserting "NSE Live Terminal" over data that
+        # did not come from NSE. quote-equity returns 403 by exchange policy, so
+        # `nse_quote` is normally None and everything below is Yahoo-sourced.
+        "source": "NSE" if nse_quote else "Yahoo Finance",
+        "as_of": _now_iso(),
+        "financial_currency": fin_currency,
         "symbol": clean,
         "name": effective_name,
         "sector": effective_sector,
@@ -738,13 +993,26 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         "peg_ratio": _f("pegRatio"),
         "pb_ratio": _f("priceToBook"),
         "price_to_sales": _f("priceToSalesTrailing12Months"),
+        # NOT FX-converted, unlike the statement figures below. Yahoo splits `.info` by
+        # provenance: quote-derived fields (trailingEps, dividendRate, marketCap) are in
+        # the *quote* currency, while statement-derived ones (freeCashflow, totalRevenue)
+        # follow `financialCurrency`. Verified on INFY.NS, whose statements are USD:
+        # trailingEps 77.52 against a price of 1148.6 reproduces trailingPE 14.82
+        # exactly, so it is already INR.
         "eps": _f("trailingEps"),
-        "dividend_yield": round(_f("dividendYield", 0) * 100, 2) if _f("dividendYield") else 0,
+        # Already a percentage on this endpoint: Yahoo's v7 /quote returns 0.46 for
+        # RELIANCE, whose yield is 0.46%. The *100 here rendered it as 46%. Guarded
+        # rather than merely un-multiplied, because Yahoo has flipped these units
+        # before - dividendRate/price is the cross-check when both are present.
+        "dividend_yield": _dividend_yield_pct(info),
         "roe": round(_f("returnOnEquity", 0) * 100, 2) if _f("returnOnEquity") else None,
         "profit_margins": round(_f("profitMargins", 0) * 100, 2) if _f("profitMargins") else None,
         "operating_margins": round(_f("operatingMargins", 0) * 100, 2) if _f("operatingMargins") else None,
         "debt_to_equity": _f("debtToEquity"),
-        "free_cash_flow_cr": round(_f("freeCashflow", 0) / 1e7, 0) if _f("freeCashflow") else None,
+        "free_cash_flow_cr": (
+            round((_f("freeCashflow") * stmt_fx) / 1e7, 0)
+            if (_f("freeCashflow") and stmt_fx) else None
+        ),
         "week52_high": week52_high,
         "week52_low": week52_low,
         "vwap": vwap,
@@ -759,10 +1027,17 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         "financial_statements": financial_statements,
         "earnings": earnings_hist,
         "earnings_summary": earnings_summary,
+        "consensus": consensus,
         "description": (_f("longBusinessSummary", "")[:600] + "...") if _f("longBusinessSummary") else "",
         "chart": {
             "dates": price_dates,
             "prices": price_values,
+            "sma_50": sma_50_series,
+            "sma_200": sma_200_series,
+            # Real index closes aligned to the same dates, so the Compare tab can plot
+            # a benchmark instead of synthesising one. None on days the index has no
+            # print for a date the stock does.
+            "benchmark": [_nifty.get(d) for d in price_dates] if (_nifty := _nifty_close_series()) else [],
         },
         "timeframes": timeframe_charts,
         "candlesticks": candlesticks,

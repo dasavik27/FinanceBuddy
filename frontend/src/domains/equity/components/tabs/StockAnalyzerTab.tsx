@@ -112,6 +112,22 @@ function fmtPctVal(v?: number | null) {
   return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 }
 
+/** Absent yield renders as a dash, never as "0.0%" — that asserts a fact we lack. */
+function fmtYield(v?: number | null) {
+  if (v === null || v === undefined) return '—'
+  return `${v.toFixed(2)}%`
+}
+
+/** Short local "as of" stamp for the provenance chip. */
+function fmtAsOf(iso?: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 function fmtLargeRev(v?: number | null) {
   if (v === null || v === undefined) return '—'
   if (Math.abs(v) >= 1000) {
@@ -400,8 +416,11 @@ export default function StockAnalyzerTab() {
     if (!stock?.chart) return []
     const dates = stock.chart.dates || []
     const prices = stock.chart.prices || []
-    const sma50 = stock.technicals?.sma_50
-    const sma200 = stock.technicals?.sma_200
+    // Per-point series from the backend, not the single scalar in `technicals`.
+    // Broadcasting that scalar across every point drew the "50 DMA"/"200 DMA"
+    // overlays as flat horizontal lines indistinguishable from real averages.
+    const sma50 = stock.chart.sma_50 || []
+    const sma200 = stock.chart.sma_200 || []
 
     return dates.map((d: string, i: number) => {
       const p = prices[i] ?? null
@@ -410,8 +429,8 @@ export default function StockAnalyzerTab() {
       return {
         date: d,
         price: p,
-        sma_50: sma50,
-        sma_200: sma200,
+        sma_50: sma50[i] ?? null,
+        sma_200: sma200[i] ?? null,
         open: candle?.open ?? p,
         high: candle?.high ?? p,
         low: candle?.low ?? p,
@@ -461,10 +480,17 @@ export default function StockAnalyzerTab() {
         row[comp.symbol] = round(compPct, 2)
       })
 
-      // Optional Benchmark NIFTY 50 curve
+      // Real NIFTY 50 closes from the backend, normalised to the same base as every
+      // other series. This used to be `(i / totalPoints) * stock.year_return * 0.55`
+      // — a straight line derived from the target stock's own return, labelled
+      // "NIFTY 50 (Benchmark)" in the legend. Nothing was fetched for it.
       if (compareBenchmark) {
-        const benchmarkPct = (i / totalPoints) * (stock.year_return ? stock.year_return * 0.55 : 12.4)
-        row['NIFTY 50'] = round(benchmarkPct, 2)
+        const bm = stock.chart?.benchmark || []
+        const bmStart = bm.find((v) => v != null)
+        const bmHere = bm[i]
+        if (bmStart != null && bmHere != null) {
+          row['NIFTY 50'] = round(((bmHere - bmStart) / bmStart) * 100, 2)
+        }
       }
 
       return row
@@ -574,7 +600,7 @@ export default function StockAnalyzerTab() {
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 10, gap: 2 }}>
           <CircularProgress sx={{ color: '#10B981' }} />
           <Typography sx={{ color: '#94A3B8', fontSize: '0.9rem', fontWeight: 600 }}>
-            Fetching real-time market data from NSE & financial models...
+            Fetching market data…
           </Typography>
         </Box>
       )}
@@ -621,7 +647,17 @@ export default function StockAnalyzerTab() {
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center' }}>
                   <Chip label={`NSE: ${stock.symbol}`} size="small" sx={{ background: 'rgba(16,185,129,0.12)', color: '#10B981', fontWeight: 800 }} />
-                  <Chip label="NSE Live Terminal" size="small" sx={{ background: 'rgba(59,130,246,0.12)', color: '#38BDF8', fontWeight: 700 }} />
+                  {/*
+                    Real provenance from the payload. This was a hardcoded "NSE Live
+                    Terminal" chip rendered over data that is normally Yahoo-sourced:
+                    NSE's quote endpoint returns 403 by exchange policy, so `source`
+                    is rarely "NSE".
+                  */}
+                  <Chip
+                    label={stock.as_of ? `${stock.source} · ${fmtAsOf(stock.as_of)}` : stock.source}
+                    size="small"
+                    sx={{ background: 'rgba(59,130,246,0.12)', color: '#38BDF8', fontWeight: 700 }}
+                  />
                   {stock.sector && (
                     <Chip label={stock.sector} size="small" sx={{ background: 'rgba(148,163,184,0.12)', color: '#94A3B8', fontWeight: 600 }} />
                   )}
@@ -829,7 +865,7 @@ export default function StockAnalyzerTab() {
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
                       <StatBox
-                        label="P/E Ratio (NSE)"
+                        label="P/E Ratio"
                         value={stock.pe_ratio ? stock.pe_ratio.toFixed(1) : '-'}
                         subtext={stock.sector_pe ? `Sector P/E: ${stock.sector_pe.toFixed(1)}` : undefined}
                       />
@@ -838,7 +874,7 @@ export default function StockAnalyzerTab() {
                       <StatBox label="P/B Ratio" value={stock.pb_ratio ? stock.pb_ratio.toFixed(2) : '-'} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="Dividend Yield" value={stock.dividend_yield ? `${stock.dividend_yield}%` : '0.0%'} />
+                      <StatBox label="Dividend Yield" value={fmtYield(stock.dividend_yield)} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
                       <StatBox label="EPS (TTM)" value={stock.eps ? `₹${stock.eps.toFixed(2)}` : '-'} />
@@ -847,7 +883,7 @@ export default function StockAnalyzerTab() {
                       <StatBox label="Beta" value={stock.beta ? stock.beta.toFixed(2) : '-'} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="VWAP (NSE)" value={stock.vwap ? fmtINR(stock.vwap) : '-'} />
+                      <StatBox label="VWAP" value={stock.vwap ? fmtINR(stock.vwap) : '-'} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
                       <StatBox label="Delivery %" value={stock.delivery_pct !== null && stock.delivery_pct !== undefined ? `${stock.delivery_pct}%` : '-'} />
@@ -1105,20 +1141,26 @@ export default function StockAnalyzerTab() {
                     subtext={technicals?.rsi_status}
                   />
                 </Grid>
+                {/*
+                  `!= null` rather than `!== null`: the value is `undefined` when the
+                  stock has too little history for the window, and `!== null` let that
+                  fall through to the false branch — so an unknown DMA rendered as a
+                  red "Bearish (<50 DMA)" instead of an absent one.
+                */}
                 <Grid item xs={6} sm={4} md={3}>
                   <StatBox
                     label="50-Day DMA"
                     value={technicals?.sma_50 ? fmtINR(technicals.sma_50) : '-'}
-                    color={technicals?.above_50_dma ? '#10B981' : '#EF4444'}
-                    subtext={technicals?.above_50_dma !== null ? (technicals?.above_50_dma ? 'Bullish (>50 DMA)' : 'Bearish (<50 DMA)') : undefined}
+                    color={technicals?.above_50_dma == null ? '#94A3B8' : technicals.above_50_dma ? '#10B981' : '#EF4444'}
+                    subtext={technicals?.above_50_dma != null ? (technicals.above_50_dma ? 'Bullish (>50 DMA)' : 'Bearish (<50 DMA)') : undefined}
                   />
                 </Grid>
                 <Grid item xs={6} sm={4} md={3}>
                   <StatBox
                     label="200-Day DMA"
                     value={technicals?.sma_200 ? fmtINR(technicals.sma_200) : '-'}
-                    color={technicals?.above_200_dma ? '#10B981' : '#EF4444'}
-                    subtext={technicals?.above_200_dma !== null ? (technicals?.above_200_dma ? 'Above 200 DMA' : 'Below 200 DMA') : undefined}
+                    color={technicals?.above_200_dma == null ? '#94A3B8' : technicals.above_200_dma ? '#10B981' : '#EF4444'}
+                    subtext={technicals?.above_200_dma != null ? (technicals.above_200_dma ? 'Above 200 DMA' : 'Below 200 DMA') : undefined}
                   />
                 </Grid>
                 <Grid item xs={6} sm={4} md={3}>
@@ -1448,7 +1490,7 @@ export default function StockAnalyzerTab() {
                           </td>
                         )
                       })}
-                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#38BDF8', fontWeight: 700 }}>+14.2%</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
 
                     {/* Market Cap */}
@@ -1467,14 +1509,14 @@ export default function StockAnalyzerTab() {
 
                     {/* P/E Ratio */}
                     <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: '#F8FAFC' }}>
-                      <td style={{ padding: '12px 14px', color: '#94A3B8', fontWeight: 600 }}>P/E Ratio (NSE)</td>
+                      <td style={{ padding: '12px 14px', color: '#94A3B8', fontWeight: 600 }}>P/E Ratio</td>
                       <td style={{ padding: '12px 14px', fontWeight: 700 }}>{stock.pe_ratio ? stock.pe_ratio.toFixed(1) : '-'}</td>
                       {compareStocks.map((comp) => (
                         <td key={comp.symbol} style={{ padding: '12px 14px', fontWeight: 700 }}>
                           {comp.pe_ratio ? comp.pe_ratio.toFixed(1) : '-'}
                         </td>
                       ))}
-                      {compareBenchmark && <td style={{ padding: '12px 14px' }}>22.4</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
 
                     {/* P/B Ratio */}
@@ -1486,7 +1528,7 @@ export default function StockAnalyzerTab() {
                           {comp.pb_ratio ? comp.pb_ratio.toFixed(2) : '-'}
                         </td>
                       ))}
-                      {compareBenchmark && <td style={{ padding: '12px 14px' }}>3.2</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
 
                     {/* ROE */}
@@ -1500,19 +1542,19 @@ export default function StockAnalyzerTab() {
                           {comp.roe ? `${comp.roe}%` : '-'}
                         </td>
                       ))}
-                      {compareBenchmark && <td style={{ padding: '12px 14px' }}>14.8%</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
 
                     {/* Dividend Yield */}
                     <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: '#F8FAFC' }}>
                       <td style={{ padding: '12px 14px', color: '#94A3B8', fontWeight: 600 }}>Dividend Yield</td>
-                      <td style={{ padding: '12px 14px', fontWeight: 700 }}>{stock.dividend_yield ? `${stock.dividend_yield}%` : '0.0%'}</td>
+                      <td style={{ padding: '12px 14px', fontWeight: 700 }}>{fmtYield(stock.dividend_yield)}</td>
                       {compareStocks.map((comp) => (
                         <td key={comp.symbol} style={{ padding: '12px 14px', fontWeight: 700 }}>
-                          {comp.dividend_yield ? `${comp.dividend_yield}%` : '0.0%'}
+                          {fmtYield(comp.dividend_yield)}
                         </td>
                       ))}
-                      {compareBenchmark && <td style={{ padding: '12px 14px' }}>1.2%</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
 
                     {/* 52-Week Range */}
@@ -1538,7 +1580,7 @@ export default function StockAnalyzerTab() {
                           {comp.beta ? comp.beta.toFixed(2) : '-'}
                         </td>
                       ))}
-                      {compareBenchmark && <td style={{ padding: '12px 14px' }}>1.00</td>}
+                      {compareBenchmark && <td style={{ padding: '12px 14px', color: '#64748B' }}>—</td>}
                     </tr>
                   </tbody>
                 </table>
@@ -2019,9 +2061,14 @@ export default function StockAnalyzerTab() {
                                 })}
                               </tr>
                               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                <td style={{ padding: '11px 16px', color: '#94A3B8' }}>Price to book</td>
+                                {/*
+                                  Renamed from "Price to book". The backend computes
+                                  total assets / equity, which is the equity multiplier
+                                  — a leverage ratio with no price term in it.
+                                */}
+                                <td style={{ padding: '11px 16px', color: '#94A3B8' }}>Equity multiplier (assets/equity)</td>
                                 {currentPeriodData.map((d, i) => {
-                                  const pb = (d as BalanceSheetItem).price_to_book
+                                  const pb = (d as BalanceSheetItem).equity_multiplier
                                   return (
                                     <td key={i} style={{ padding: '11px 16px', color: '#CBD5E1', textAlign: 'right', fontWeight: 500, fontFamily: 'monospace' }}>
                                       {pb ? pb.toFixed(2) : '—'}
@@ -2104,14 +2151,18 @@ export default function StockAnalyzerTab() {
                   </Box>
                 </Grid>
 
-                {/* 3. EPS / Est. */}
+                {/*
+                  Reported EPS, plus *forward* consensus where a broker covers the name.
+                  This tile used to show a "beat/miss" chip against an estimate the
+                  backend had derived from the reported figure itself, so it always read
+                  "beat". There is no historical consensus for NSE names to compare a
+                  past quarter against, so no surprise is claimed.
+                */}
                 <Grid item xs={12} sm={6} md={3}>
                   {(() => {
                     const sum = stock.earnings_summary
                     const repEps = sum?.reported_eps ?? stock.eps
-                    const estEps = sum?.estimated_eps
-                    const surp = sum?.eps_surprise_pct
-                    const isBeat = surp !== null && surp !== undefined && surp >= 0
+                    const fwd = stock.consensus?.eps?.['+1q']
 
                     return (
                       <Box
@@ -2123,47 +2174,28 @@ export default function StockAnalyzerTab() {
                         }}
                       >
                         <Typography sx={{ color: '#94A3B8', fontSize: '0.78rem', fontWeight: 600, mb: 0.5 }}>
-                          EPS / Est. (INR)
+                          Reported EPS (INR)
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.8, flexWrap: 'wrap' }}>
-                          <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem' }}>
-                            {repEps !== null && repEps !== undefined ? `₹${repEps.toFixed(2)}` : '—'}
+                        <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem' }}>
+                          {repEps !== null && repEps !== undefined ? `₹${repEps.toFixed(2)}` : '—'}
+                        </Typography>
+                        {fwd?.avg != null && (
+                          <Typography sx={{ color: '#64748B', fontSize: '0.72rem', mt: 0.5 }}>
+                            Next Q consensus ₹{fwd.avg.toFixed(2)} · {fwd.analysts} analyst
+                            {fwd.analysts === 1 ? '' : 's'}
                           </Typography>
-                          {estEps !== null && estEps !== undefined && (
-                            <Typography sx={{ color: '#94A3B8', fontWeight: 600, fontSize: '0.95rem' }}>
-                              / ₹{estEps.toFixed(2)}
-                            </Typography>
-                          )}
-                        </Box>
-                        {surp !== null && surp !== undefined && (
-                          <Box sx={{ mt: 1 }}>
-                            <Chip
-                              size="small"
-                              label={`${surp > 0 ? '+' : ''}${surp.toFixed(2)}% ${isBeat ? 'beat ⭡' : 'miss ⭣'}`}
-                              sx={{
-                                height: 22,
-                                fontSize: '0.72rem',
-                                fontWeight: 800,
-                                bgcolor: isBeat ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-                                color: isBeat ? '#10B981' : '#EF4444',
-                                border: isBeat ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(239,68,68,0.3)',
-                              }}
-                            />
-                          </Box>
                         )}
                       </Box>
                     )
                   })()}
                 </Grid>
 
-                {/* 4. Revenue / Est. */}
+                {/* Reported revenue, plus forward consensus where the name is covered. */}
                 <Grid item xs={12} sm={6} md={3}>
                   {(() => {
                     const sum = stock.earnings_summary
                     const repRev = sum?.reported_revenue_cr
-                    const estRev = sum?.estimated_revenue_cr
-                    const surp = sum?.revenue_surprise_pct
-                    const isBeat = surp !== null && surp !== undefined && surp >= 0
+                    const fwd = stock.consensus?.revenue_cr?.['+1q']
 
                     return (
                       <Box
@@ -2175,33 +2207,16 @@ export default function StockAnalyzerTab() {
                         }}
                       >
                         <Typography sx={{ color: '#94A3B8', fontSize: '0.78rem', fontWeight: 600, mb: 0.5 }}>
-                          Revenue / Est. (INR)
+                          Reported revenue (INR)
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.8, flexWrap: 'wrap' }}>
-                          <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem' }}>
-                            {fmtLargeRev(repRev)}
+                        <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem' }}>
+                          {fmtLargeRev(repRev)}
+                        </Typography>
+                        {fwd?.avg != null && (
+                          <Typography sx={{ color: '#64748B', fontSize: '0.72rem', mt: 0.5 }}>
+                            Next Q consensus {fmtLargeRev(fwd.avg)} · {fwd.analysts} analyst
+                            {fwd.analysts === 1 ? '' : 's'}
                           </Typography>
-                          {estRev !== null && estRev !== undefined && (
-                            <Typography sx={{ color: '#94A3B8', fontWeight: 600, fontSize: '0.95rem' }}>
-                              / {fmtLargeRev(estRev)}
-                            </Typography>
-                          )}
-                        </Box>
-                        {surp !== null && surp !== undefined && (
-                          <Box sx={{ mt: 1 }}>
-                            <Chip
-                              size="small"
-                              label={`${surp > 0 ? '+' : ''}${surp.toFixed(2)}% ${isBeat ? 'beat ⭡' : 'miss ⭣'}`}
-                              sx={{
-                                height: 22,
-                                fontSize: '0.72rem',
-                                fontWeight: 800,
-                                bgcolor: isBeat ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-                                color: isBeat ? '#10B981' : '#EF4444',
-                                border: isBeat ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(239,68,68,0.3)',
-                              }}
-                            />
-                          </Box>
                         )}
                       </Box>
                     )
@@ -2223,26 +2238,21 @@ export default function StockAnalyzerTab() {
                           period: e.quarter,
                           date: e.date,
                           reported_eps: e.reported_eps,
-                          estimated_eps: e.estimated_eps,
-                          surprise_pct: e.surprise_pct,
-                          eps_surprise_type: (e.surprise_pct ?? 0) >= 0 ? 'beat' : 'miss',
                           reported_revenue_cr: null,
-                          estimated_revenue_cr: null,
-                          revenue_surprise_pct: null,
-                          revenue_surprise_type: undefined,
                         }))
 
                   if (history.length === 0) {
                     return (
                       <Alert severity="info" sx={{ background: 'rgba(59,130,246,0.1)', borderRadius: '14px' }}>
-                        Quarterly consensus earnings history is not available for {stock.symbol}.
+                        Quarterly earnings history is not available for {stock.symbol}.
                       </Alert>
                     )
                   }
 
                   return (
                     <Box>
-                      {/* EPS Bar Chart (Reported vs Estimated) */}
+                      {/* Reported EPS by quarter. The paired "Estimated EPS" series
+                          was synthesised as reported * 0.97 and has been removed. */}
                       <Box sx={{ height: 270, mb: 4 }}>
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={history} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
@@ -2256,7 +2266,6 @@ export default function StockAnalyzerTab() {
                             />
                             <Legend wrapperStyle={{ fontSize: '0.82rem', paddingTop: '10px' }} />
                             <Bar dataKey="reported_eps" name="Reported EPS" fill="#10B981" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="estimated_eps" name="Estimated EPS" fill="#64748B" radius={[4, 4, 0, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
                       </Box>
@@ -2268,20 +2277,20 @@ export default function StockAnalyzerTab() {
                             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                               <th style={{ padding: '12px 16px', color: '#94A3B8', fontWeight: 600 }}>Period</th>
                               <th style={{ padding: '12px 16px', color: '#94A3B8', fontWeight: 600 }}>Date</th>
+                              {/*
+                                "Estimated EPS", "EPS Surprise" and "Revenue Surprise"
+                                columns removed: there is no historical analyst
+                                consensus for NSE names, so the backend had been
+                                deriving the estimate from the reported figure and
+                                every row rendered a green "beat". Reported actuals
+                                only; forward consensus is shown in the tiles above.
+                              */}
                               <th style={{ padding: '12px 16px', color: '#F8FAFC', fontWeight: 700, textAlign: 'right' }}>Reported EPS</th>
-                              <th style={{ padding: '12px 16px', color: '#94A3B8', fontWeight: 600, textAlign: 'right' }}>Estimated EPS</th>
-                              <th style={{ padding: '12px 16px', color: '#94A3B8', fontWeight: 600, textAlign: 'right' }}>EPS Surprise</th>
                               <th style={{ padding: '12px 16px', color: '#F8FAFC', fontWeight: 700, textAlign: 'right' }}>Reported Revenue</th>
-                              <th style={{ padding: '12px 16px', color: '#94A3B8', fontWeight: 600, textAlign: 'right' }}>Revenue Surprise</th>
                             </tr>
                           </thead>
                           <tbody>
                             {history.map((h, i) => {
-                              const epsSurp = h.surprise_pct
-                              const revSurp = h.revenue_surprise_pct
-                              const isEpsBeat = epsSurp !== null && epsSurp !== undefined && epsSurp >= 0
-                              const isRevBeat = revSurp !== null && revSurp !== undefined && revSurp >= 0
-
                               return (
                                 <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                                   <td style={{ padding: '11px 16px', color: '#F8FAFC', fontWeight: 700 }}>
@@ -2293,45 +2302,8 @@ export default function StockAnalyzerTab() {
                                   <td style={{ padding: '11px 16px', color: '#10B981', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
                                     {h.reported_eps !== null && h.reported_eps !== undefined ? `₹${h.reported_eps.toFixed(2)}` : '—'}
                                   </td>
-                                  <td style={{ padding: '11px 16px', color: '#94A3B8', textAlign: 'right', fontWeight: 500, fontFamily: 'monospace' }}>
-                                    {h.estimated_eps !== null && h.estimated_eps !== undefined ? `₹${h.estimated_eps.toFixed(2)}` : '—'}
-                                  </td>
-                                  <td style={{ padding: '11px 16px', textAlign: 'right' }}>
-                                    {epsSurp !== null && epsSurp !== undefined ? (
-                                      <Chip
-                                        size="small"
-                                        label={`${epsSurp > 0 ? '+' : ''}${epsSurp.toFixed(1)}% ${isEpsBeat ? 'beat ⭡' : 'miss ⭣'}`}
-                                        sx={{
-                                          height: 20,
-                                          fontSize: '0.7rem',
-                                          fontWeight: 800,
-                                          bgcolor: isEpsBeat ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
-                                          color: isEpsBeat ? '#10B981' : '#EF4444',
-                                        }}
-                                      />
-                                    ) : (
-                                      <span style={{ color: '#64748B' }}>—</span>
-                                    )}
-                                  </td>
                                   <td style={{ padding: '11px 16px', color: '#38BDF8', textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
                                     {h.reported_revenue_cr ? fmtCr(h.reported_revenue_cr) : '—'}
-                                  </td>
-                                  <td style={{ padding: '11px 16px', textAlign: 'right' }}>
-                                    {revSurp !== null && revSurp !== undefined ? (
-                                      <Chip
-                                        size="small"
-                                        label={`${revSurp > 0 ? '+' : ''}${revSurp.toFixed(1)}% ${isRevBeat ? 'beat ⭡' : 'miss ⭣'}`}
-                                        sx={{
-                                          height: 20,
-                                          fontSize: '0.7rem',
-                                          fontWeight: 800,
-                                          bgcolor: isRevBeat ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
-                                          color: isRevBeat ? '#10B981' : '#EF4444',
-                                        }}
-                                      />
-                                    ) : (
-                                      <span style={{ color: '#64748B' }}>—</span>
-                                    )}
                                   </td>
                                 </tr>
                               )

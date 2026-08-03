@@ -54,6 +54,20 @@ class NSEClient:
         self._cookie_timestamp: float = 0
         self._master_symbols: list[dict[str, str]] = []
         self._master_loaded: bool = False
+        self._name_index: dict[str, str] = {}
+
+    def name_for(self, symbol: str) -> str | None:
+        """
+        Company name for a symbol, from the master list.
+
+        Indexed on first use rather than scanned: resolving a handful of peer names
+        per analysis was otherwise a linear pass over ~2,400 rows each time.
+        """
+        if not self._name_index:
+            self._name_index = {
+                i["symbol"]: i["name"] for i in self.load_master_symbols()
+            }
+        return self._name_index.get(symbol.upper().strip())
 
     def _refresh_session_cookies(self) -> None:
         """Establish a clean session on NSE to acquire necessary cookies."""
