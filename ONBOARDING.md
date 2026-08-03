@@ -197,7 +197,13 @@ Full migration descriptions are in ARCHITECTURE.md.
 - Framework: Vite
 - Build: npm run build
 - Output: dist
-- Env: VITE_API_URL, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+- Env: `VITE_API_URL` (your Render backend URL, e.g. `https://your-app.onrender.com`),
+  `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+
+`VITE_API_URL` must be the **backend origin**, not `/api`. Public auth helpers
+(`access-status`, `request-access`) call the backend directly in production;
+Vercel only serves static files and cannot proxy POST `/api/*` without a separate
+rewrite to Render.
 
 ---
 

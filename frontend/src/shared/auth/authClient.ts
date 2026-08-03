@@ -16,6 +16,13 @@ import { createClient, type Session, type SupabaseClient } from '@supabase/supab
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? ''
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ''
 
+/** Same base as shared/api/client.ts — required in prod (Vercel) where /api is not proxied. */
+const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+
+function backendUrl(path: string): string {
+  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 export const isConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY)
 
 // Not created when unconfigured: createClient throws on an empty URL, which would
@@ -150,7 +157,7 @@ export const authClient = {
     access_request_status: AccessRequestStatus
     message: string
   }> => {
-    const res = await fetch('/api/auth/access-status', {
+    const res = await fetch(backendUrl('/auth/access-status'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.trim() }),
@@ -169,7 +176,7 @@ export const authClient = {
     investor_type?: string
     notes?: string
   }): Promise<{ status: string; message: string; request_id?: string }> => {
-    const res = await fetch('/api/auth/request-access', {
+    const res = await fetch(backendUrl('/auth/request-access'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
