@@ -27,10 +27,10 @@ const COLLAPSED_W = 72
 const HOME = { label: 'Dashboard', icon: <HomeIcon />, path: '/dashboard' }
 
 const NAV = [
-  { label: 'Mutual Funds',          icon: <DashboardIcon />,     path: '/mutual-funds' },
-  { label: 'Indian Stocks',         icon: <ShowChartIcon />,     path: '/equity' },
-  { label: 'Tax Expert',            icon: <ReceiptIcon />,       path: '/tax-expert' },
-  { label: 'Budget Analyzer',       icon: <LightbulbIcon />,     path: '/budget' },
+  { label: 'Mutual Funds',          icon: <DashboardIcon />,          path: '/mutual-funds' },
+  { label: 'Indian Stocks',         icon: <ShowChartIcon />,          path: '/equity' },
+  { label: 'Tax Expert',            icon: <ReceiptIcon />,            path: '/tax-expert' },
+  { label: 'Budget Analyzer',       icon: <LightbulbIcon />,          path: '/budget' },
 ]
 
 interface SidebarProps {

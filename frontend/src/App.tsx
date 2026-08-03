@@ -5,6 +5,7 @@ import authClient from './shared/auth/authClient'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
 import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
+import PendingAccess from './shared/components/PendingAccess'
 import { TabFallback } from './shared/components/ui'
 
 // The authenticated shell is lazy so an anonymous visitor at "/" does not download
@@ -17,6 +18,7 @@ const Dashboard = lazy(() => import('./shared/components/layout/Dashboard'))
 export default function App() {
   const isAuthenticated = useIsAuthenticated()
   const pan = useAppStore((s) => s.pan)
+  const status = useAppStore((s) => s.status)
   const setIdentity = useAppStore((s) => s.setIdentity)
   const clearIdentity = useAppStore((s) => s.clearIdentity)
 
@@ -36,7 +38,13 @@ export default function App() {
         setIdentity({ userId: user.id, email: user.email })
         try {
           const me = await apiClient.getMe()
-          setIdentity({ userId: user.id, email: user.email, pan: me.pan })
+          setIdentity({
+            userId: user.id,
+            email: user.email,
+            pan: me.pan,
+            status: me.status,
+            role: me.role,
+          })
         } catch (e: unknown) {
           console.error('Failed to fetch profile', e)
         }
@@ -49,6 +57,10 @@ export default function App() {
   }, [setIdentity, clearIdentity])
 
   if (resolvingSession) return <TabFallback />
+
+  if (isAuthenticated && status === 'pending') {
+    return <PendingAccess />
+  }
 
   // If the user has authenticated with Google/Supabase but has not registered a PAN,
   // PAN registration is compulsory before dashboard access is permitted.

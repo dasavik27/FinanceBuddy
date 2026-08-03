@@ -250,7 +250,12 @@ class IdentityMiddleware:
         principal = self._verifier.verify(value[7:].strip())
         if principal is None:
             return None
-        return users.resolve(principal.issuer, principal.subject, email=principal.email)
+        return users.resolve(
+            principal.issuer,
+            principal.subject,
+            email=principal.email,
+            name=principal.name,
+        )
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -264,6 +269,20 @@ class IdentityMiddleware:
             caller = None
 
         with identity_scope(caller):
+            if caller is not None and caller.status == "pending":
+                path = scope.get("path", "")
+                if path not in ("/auth/me", "/auth/logout"):
+                    body = b'{"detail":"Your account is pending approval."}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 403,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    })
+                    await send({"type": "http.response.body", "body": body})
+                    return
             await self.app(scope, receive, send)
 
 

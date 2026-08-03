@@ -89,6 +89,19 @@ def test_email_is_optional(verifier, keypair):
     assert principal.email is None
 
 
+def test_name_claim_extracted_from_google_or_metadata(verifier, keypair):
+    private_key, _ = keypair
+    # Standard Google OIDC token claim
+    principal = verifier.verify(_token(private_key, name="Avik Das"))
+    assert principal is not None
+    assert principal.name == "Avik Das"
+
+    # Supabase user_metadata claim
+    principal_meta = verifier.verify(_token(private_key, user_metadata={"full_name": "Sarah Connor"}))
+    assert principal_meta is not None
+    assert principal_meta.name == "Sarah Connor"
+
+
 # ── rejections, each of which is an attack ────────────────────────────────────
 
 def test_rejects_a_token_signed_by_someone_else(verifier):

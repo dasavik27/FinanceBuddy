@@ -46,6 +46,8 @@ class Caller:
 
     user_id: str
     pan: Optional[str] = None
+    status: str = "active"
+    role: str = "user"
 
 
 # Three states are distinguishable, and the distinction is load-bearing:

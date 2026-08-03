@@ -1,9 +1,20 @@
 import { useState } from 'react'
 import {
   Box, Typography, Button, Alert, CircularProgress, Collapse, GlobalStyles, Paper,
+  TextField, InputAdornment, IconButton, Divider, Chip, Dialog, DialogTitle,
+  DialogContent, DialogActions, MenuItem, Select, FormControl, InputLabel, alpha
 } from '@mui/material'
-import TrendingUpIcon   from '@mui/icons-material/TrendingUp'
-import authClient       from '../auth/authClient'
+import TrendingUpIcon from '@mui/icons-material/TrendingUp'
+import MailOutlineIcon from '@mui/icons-material/MailOutline'
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
+import Visibility from '@mui/icons-material/Visibility'
+import VisibilityOff from '@mui/icons-material/VisibilityOff'
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
+import CloseIcon from '@mui/icons-material/Close'
+import BoltIcon from '@mui/icons-material/Bolt'
+import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
+import authClient from '../auth/authClient'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
 const GoogleMark = () => (
@@ -15,13 +26,15 @@ const GoogleMark = () => (
   </svg>
 )
 
-// The two entrance animations, as CSS. `prefers-reduced-motion` is honoured, which
-// the framer-motion version did not do.
 const landingAnimations = (
   <GlobalStyles styles={{
     '@keyframes fbRiseIn': {
       from: { opacity: 0, transform: 'translateY(20px)' },
       to:   { opacity: 1, transform: 'translateY(0)' },
+    },
+    '@keyframes fbGlowPulse': {
+      '0%, 100%': { opacity: 0.6, transform: 'scale(1)' },
+      '50%': { opacity: 0.9, transform: 'scale(1.04)' },
     },
     '@media (prefers-reduced-motion: reduce)': {
       '*': { animation: 'none !important', transition: 'none !important' },
@@ -30,19 +43,103 @@ const landingAnimations = (
 )
 
 export default function Landing() {
+  // Sign-in state
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleGoogleSignIn = async () => {
-    setLoading(true); setError(null)
+  // Request Access modal state
+  const [requestModalOpen, setRequestModalOpen] = useState(false)
+  const [reqName, setReqName] = useState('')
+  const [reqEmail, setReqEmail] = useState('')
+  const [reqType, setReqType] = useState('individual')
+  const [reqNotes, setReqNotes] = useState('')
+  const [reqLoading, setReqLoading] = useState(false)
+  const [reqError, setReqError] = useState<string | null>(null)
+  const [reqSuccess, setReqSuccess] = useState<string | null>(null)
+
+  // Local Dev convenience check
+  const isLocalDev = Boolean(
+    import.meta.env.DEV &&
+    import.meta.env.VITE_DEV_EMAIL &&
+    import.meta.env.VITE_DEV_PASSWORD
+  )
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!email.trim() || !password) {
+      setError('Please enter both email and password.')
+      return
+    }
+    setLoading(true)
+    setError(null)
     try {
-      // Redirects away; App.tsx picks up the restored session on return and routes
-      // to /dashboard - there is nothing to do here on success.
-      await authClient.signInWithGoogle()
-    } catch (e: any) {
-      setError(e?.message ?? 'Could not start sign-in.')
+      await authClient.signInWithEmail(email.trim(), password)
+      // App.tsx auth listener handles redirect to /dashboard
+    } catch (err: any) {
+      setError(err?.message || 'Invalid email or password.')
       setLoading(false)
     }
+  }
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      await authClient.signInWithGoogle()
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not start Google sign-in.')
+      setLoading(false)
+    }
+  }
+
+  const handleDevSignIn = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      await authClient.signInWithDevAccount()
+    } catch (e: any) {
+      setError(e?.message || 'Local dev sign-in failed.')
+      setLoading(false)
+    }
+  }
+
+  const handleRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!reqName.trim() || !reqEmail.trim()) {
+      setReqError('Please provide both your name and email address.')
+      return
+    }
+    setReqLoading(true)
+    setReqError(null)
+    try {
+      const res = await authClient.submitAccessRequest({
+        name: reqName.trim(),
+        email: reqEmail.trim(),
+        investor_type: reqType,
+        notes: reqNotes.trim(),
+      })
+      setReqSuccess(res.message || 'Access request submitted successfully.')
+    } catch (err: any) {
+      setReqError(err?.message || 'Failed to submit request. Please try again.')
+    } finally {
+      setReqLoading(false)
+    }
+  }
+
+  const handleCloseRequestModal = () => {
+    setRequestModalOpen(false)
+    // Clear request form after transition
+    setTimeout(() => {
+      setReqName('')
+      setReqEmail('')
+      setReqType('individual')
+      setReqNotes('')
+      setReqError(null)
+      setReqSuccess(null)
+    }, 300)
   }
 
   return (
@@ -54,7 +151,7 @@ export default function Landing() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        p: { xs: 2, md: 4 },
+        p: { xs: 2.5, md: 4 },
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -68,18 +165,18 @@ export default function Landing() {
 
       {/* Hero Section */}
       <Box sx={{ zIndex: 1, width: '100%', animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) both' }}>
-        <Box sx={{ textAlign: 'center', mb: 6 }}>
+        <Box sx={{ textAlign: 'center', mb: 4 }}>
           {/* Main App Badge */}
           <Box
             sx={{
-              width: 72, height: 72, borderRadius: '24px', mx: 'auto', mb: 3.5,
+              width: 68, height: 68, borderRadius: '22px', mx: 'auto', mb: 2.5,
               background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: '0 12px 35px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1)',
               border: '1px solid rgba(255,255,255,0.08)',
             }}
           >
-            <TrendingUpIcon sx={{ fontSize: 38, color: '#38BDF8' }} />
+            <TrendingUpIcon sx={{ fontSize: 34, color: '#38BDF8' }} />
           </Box>
 
           <Typography
@@ -89,11 +186,11 @@ export default function Landing() {
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
-              mb: 1.5,
+              mb: 1,
               fontWeight: 900,
               letterSpacing: '-0.02em',
               lineHeight: 1.1,
-              fontSize: { xs: '3rem', md: '4.5rem' }
+              fontSize: { xs: '2.5rem', md: '3.6rem' }
             }}
           >
             Finance Buddy
@@ -106,77 +203,503 @@ export default function Landing() {
               fontWeight: 700,
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
-              mb: 3
+              fontSize: { xs: '0.85rem', md: '1rem' },
+              mb: 1.5
             }}
           >
-            Total Financial Control
+            Smart Wealth Dashboard
           </Typography>
 
-          <Typography variant="body1" sx={{ color: '#94A3B8', maxWidth: 600, mx: 'auto', lineHeight: 1.8, fontSize: '1.1rem' }}>
-            Sign in to unlock your unified wealth dashboard.
-            Experience institutional-grade analytics spanning <strong style={{ color: '#F8FAFC' }}>Indian Stocks, Mutual Funds, and Tax Optimization.</strong>
+          <Typography variant="body2" sx={{ color: '#94A3B8', maxWidth: 540, mx: 'auto', lineHeight: 1.6, fontSize: '0.95rem' }}>
+            Unified analytics & portfolio intelligence spanning <strong style={{ color: '#F8FAFC' }}>Indian Stocks, Mutual Funds, and Tax Advisory.</strong>
           </Typography>
         </Box>
       </Box>
 
-      {/* Sign-in Hub */}
+      {/* Sign-in Hub Card */}
       <Box sx={{
-        zIndex: 1, width: '100%', maxWidth: 540,
-        animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) 150ms both',
+        zIndex: 1, width: '100%', maxWidth: 480,
+        animation: 'fbRiseIn 600ms cubic-bezier(0.16,1,0.3,1) 120ms both',
       }}>
         <Paper
           className="glass"
           sx={{
-            p: { xs: 4, md: 5 }, borderRadius: '32px',
+            p: { xs: 3.5, md: 4 }, 
+            borderRadius: '28px',
             border: '1px solid rgba(255, 255, 255, 0.08)',
-            background: 'rgba(15, 23, 42, 0.6)',
-            backdropFilter: 'blur(20px)',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75), 0 0 60px rgba(56, 189, 248, 0.1)',
-            mb: 8
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(24px)',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75), 0 0 60px rgba(56, 189, 248, 0.08)',
+            mb: 4
           }}
         >
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
-            <Box>
-              <Typography variant="overline" sx={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.1em', display: 'block', mb: 2 }}>
-                SECURE ACCESS
+          <Box component="form" onSubmit={handleEmailSignIn} sx={{ display: 'flex', flexDirection: 'column', gap: 2.2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Typography variant="overline" sx={{ color: '#94A3B8', fontWeight: 800, letterSpacing: '0.12em' }}>
+                SIGN IN
               </Typography>
-
-              <Button
-                fullWidth
-                onClick={handleGoogleSignIn}
-                disabled={loading}
-                startIcon={loading ? undefined : <GoogleMark />}
+              <Chip
+                icon={<ShieldOutlinedIcon sx={{ fontSize: '14px !important', color: '#38BDF8' }} />}
+                label="Private Access"
+                size="small"
                 sx={{
-                  py: 2,
-                  borderRadius: '16px',
-                  bgcolor: '#fff',
-                  color: '#1F2937',
-                  fontSize: '1.05rem',
+                  bgcolor: 'rgba(56, 189, 248, 0.08)',
+                  color: '#38BDF8',
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                  fontSize: '0.68rem',
                   fontWeight: 700,
-                  textTransform: 'none',
-                  '&:hover': { bgcolor: '#F1F5F9' },
-                  '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.4)' },
+                  height: 24,
                 }}
-              >
-                {loading ? <CircularProgress size={26} sx={{ color: '#1F2937' }} /> : 'Continue with Google'}
-              </Button>
+              />
             </Box>
 
-            {/* MUI's own Collapse rather than AnimatePresence: it does the same
-                enter/exit height transition and is already in the bundle, whereas
-                framer-motion was 36.7 KB gzipped in the first-paint graph for this
-                and two fade-ins. */}
+            {/* Email Field */}
+            <TextField
+              fullWidth
+              size="medium"
+              placeholder="Email address"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+              autoComplete="email"
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <MailOutlineIcon sx={{ color: '#64748b', fontSize: 20 }} />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '14px',
+                  backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                  color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  transition: 'all 0.2s ease',
+                  '& fieldset': { border: 'none' },
+                  '&:hover': { backgroundColor: 'rgba(2, 6, 23, 0.7)', borderColor: 'rgba(255,255,255,0.15)' },
+                  '&.Mui-focused': { borderColor: '#38BDF8', boxShadow: '0 0 0 2px rgba(56, 189, 248, 0.2)' },
+                },
+                '& input::placeholder': { color: '#64748B', opacity: 1, fontSize: '0.92rem' }
+              }}
+            />
+
+            {/* Password Field */}
+            <TextField
+              fullWidth
+              size="medium"
+              placeholder="Password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={loading}
+              autoComplete="current-password"
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <LockOutlinedIcon sx={{ color: '#64748b', fontSize: 20 }} />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowPassword(!showPassword)}
+                      edge="end"
+                      sx={{ color: '#64748b', '&:hover': { color: '#94a3b8' } }}
+                    >
+                      {showPassword ? <VisibilityOff sx={{ fontSize: 18 }} /> : <Visibility sx={{ fontSize: 18 }} />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '14px',
+                  backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                  color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  transition: 'all 0.2s ease',
+                  '& fieldset': { border: 'none' },
+                  '&:hover': { backgroundColor: 'rgba(2, 6, 23, 0.7)', borderColor: 'rgba(255,255,255,0.15)' },
+                  '&.Mui-focused': { borderColor: '#38BDF8', boxShadow: '0 0 0 2px rgba(56, 189, 248, 0.2)' },
+                },
+                '& input::placeholder': { color: '#64748B', opacity: 1, fontSize: '0.92rem' }
+              }}
+            />
+
+            {/* Error Message */}
             <Collapse in={!!error} unmountOnExit>
-              <Alert severity="error" sx={{ borderRadius: '12px', bgcolor: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', '& .MuiAlert-icon': { color: '#EF4444' } }}>{error}</Alert>
+              <Alert 
+                severity="error" 
+                sx={{ 
+                  borderRadius: '12px', 
+                  bgcolor: 'rgba(239, 68, 68, 0.1)', 
+                  color: '#EF4444', 
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  fontSize: '0.85rem',
+                  py: 0.5,
+                  '& .MuiAlert-icon': { color: '#EF4444' } 
+                }}
+              >
+                {error}
+              </Alert>
             </Collapse>
+
+            {/* Sign In CTA Button */}
+            <Button
+              fullWidth
+              type="submit"
+              disabled={loading}
+              sx={{
+                py: 1.6,
+                mt: 0.5,
+                borderRadius: '14px',
+                background: 'linear-gradient(135deg, #0284C7 0%, #2563EB 100%)',
+                color: '#fff',
+                fontSize: '0.98rem',
+                fontWeight: 700,
+                textTransform: 'none',
+                boxShadow: '0 4px 20px rgba(2, 132, 199, 0.35)',
+                '&:hover': {
+                  background: 'linear-gradient(135deg, #0369A1 0%, #1D4ED8 100%)',
+                  boxShadow: '0 6px 24px rgba(2, 132, 199, 0.5)',
+                },
+                '&.Mui-disabled': { background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)' },
+              }}
+            >
+              {loading ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : 'Sign In to Dashboard'}
+            </Button>
+
+            {/* Divider */}
+            <Divider sx={{ my: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
+              <Typography sx={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 700, letterSpacing: '0.08em' }}>
+                OR
+              </Typography>
+            </Divider>
+
+            {/* Google Login */}
+            <Button
+              fullWidth
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+              startIcon={loading ? undefined : <GoogleMark />}
+              sx={{
+                py: 1.4,
+                borderRadius: '14px',
+                bgcolor: 'rgba(255,255,255,0.04)',
+                color: '#E2E8F0',
+                border: '1px solid rgba(255,255,255,0.1)',
+                fontSize: '0.92rem',
+                fontWeight: 600,
+                textTransform: 'none',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.2)' },
+              }}
+            >
+              Continue with Google
+            </Button>
+
+            {/* Local Dev Auto-Login (Isolated strictly to local dev) */}
+            {isLocalDev && (
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={handleDevSignIn}
+                disabled={loading}
+                startIcon={<BoltIcon sx={{ color: '#38BDF8' }} />}
+                sx={{
+                  py: 1.2,
+                  borderRadius: '14px',
+                  borderColor: 'rgba(56, 189, 248, 0.35)',
+                  color: '#38BDF8',
+                  backgroundColor: 'rgba(56, 189, 248, 0.05)',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  textTransform: 'none',
+                  '&:hover': {
+                    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                    borderColor: '#38BDF8',
+                  }
+                }}
+              >
+                ⚡ 1-Click Dev Sign-In
+              </Button>
+            )}
+
+            {/* Invite-Only Notice & Request Access CTA */}
+            <Box sx={{ mt: 1.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.06)', textAlign: 'center' }}>
+              <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 0.8 }}>
+                Don't have an authorized account?
+              </Typography>
+              <Button
+                variant="text"
+                onClick={() => setRequestModalOpen(true)}
+                endIcon={<ArrowForwardIcon sx={{ fontSize: 16 }} />}
+                sx={{
+                  color: '#38BDF8',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  textTransform: 'none',
+                  p: 0,
+                  '&:hover': { color: '#7dd3fc', bgcolor: 'transparent' }
+                }}
+              >
+                Request Early Access
+              </Button>
+            </Box>
           </Box>
         </Paper>
       </Box>
 
       {/* Footer */}
-      <Typography variant="caption" display="block" textAlign="center" sx={{ mt: 8, mb: 2, color: '#475569', zIndex: 1, fontWeight: 600 }}>
-        Finance Buddy v8.0 · SEBI CSCRF 2025 Compliant
+      <Typography variant="caption" display="block" textAlign="center" sx={{ color: '#475569', zIndex: 1, fontWeight: 600 }}>
+        Finance Buddy v8.0 · SEBI CSCRF 2025 Compliant · Private Beta
       </Typography>
+
+      {/* Request Access Glass Modal */}
+      <Dialog
+        open={requestModalOpen}
+        onClose={handleCloseRequestModal}
+        maxWidth="xs"
+        fullWidth
+        slotProps={{
+          backdrop: {
+            sx: {
+              backdropFilter: 'blur(12px)',
+              backgroundColor: 'rgba(2, 6, 23, 0.7)',
+            }
+          }
+        }}
+        PaperProps={{
+          sx: {
+            borderRadius: '24px',
+            background: 'linear-gradient(180deg, #0F172A 0%, #0B132B 100%)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8)',
+            p: 1.5,
+            color: '#fff',
+          }
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pb: 1 }}>
+          <Box>
+            <Typography sx={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>
+              Request Access
+            </Typography>
+            <Typography sx={{ fontSize: '0.8rem', color: '#94A3B8', mt: 0.2 }}>
+              Join the private wealth intelligence beta
+            </Typography>
+          </Box>
+          <IconButton size="small" onClick={handleCloseRequestModal} sx={{ color: '#64748B', '&:hover': { color: '#fff' } }}>
+            <CloseIcon sx={{ fontSize: 20 }} />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent sx={{ pt: '12px !important' }}>
+          {reqSuccess ? (
+            <Box sx={{ py: 3, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <Box sx={{
+                width: 60, height: 60, borderRadius: '50%',
+                bgcolor: 'rgba(78, 222, 147, 0.15)',
+                border: '1px solid rgba(78, 222, 147, 0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <CheckCircleOutlineIcon sx={{ fontSize: 34, color: '#4EDE93' }} />
+              </Box>
+              <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff' }}>
+                Request Submitted
+              </Typography>
+              <Typography sx={{ fontSize: '0.88rem', color: '#94A3B8', lineHeight: 1.6, maxWidth: 320 }}>
+                {reqSuccess}
+              </Typography>
+              <Button
+                variant="outlined"
+                onClick={handleCloseRequestModal}
+                sx={{
+                  mt: 1.5,
+                  borderRadius: '12px',
+                  borderColor: 'rgba(255,255,255,0.15)',
+                  color: '#fff',
+                  px: 4,
+                  '&:hover': { borderColor: '#38BDF8', bgcolor: 'rgba(56,189,248,0.1)' }
+                }}
+              >
+                Back to Sign In
+              </Button>
+            </Box>
+          ) : (
+            <Box component="form" onSubmit={handleRequestSubmit} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {/* Full Name */}
+              <Box>
+                <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.6 }}>
+                  FULL NAME *
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="e.g. Rahul Sharma"
+                  value={reqName}
+                  onChange={(e) => setReqName(e.target.value)}
+                  disabled={reqLoading}
+                  required
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: '12px',
+                      backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      '& fieldset': { border: 'none' },
+                      '&:hover': { borderColor: 'rgba(255,255,255,0.15)' },
+                      '&.Mui-focused': { borderColor: '#38BDF8' },
+                    },
+                    '& input::placeholder': { color: '#64748B', opacity: 1 }
+                  }}
+                />
+              </Box>
+
+              {/* Email */}
+              <Box>
+                <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.6 }}>
+                  WORK OR PERSONAL EMAIL *
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="email"
+                  placeholder="name@example.com"
+                  value={reqEmail}
+                  onChange={(e) => setReqEmail(e.target.value)}
+                  disabled={reqLoading}
+                  required
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: '12px',
+                      backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      '& fieldset': { border: 'none' },
+                      '&:hover': { borderColor: 'rgba(255,255,255,0.15)' },
+                      '&.Mui-focused': { borderColor: '#38BDF8' },
+                    },
+                    '& input::placeholder': { color: '#64748B', opacity: 1 }
+                  }}
+                />
+              </Box>
+
+              {/* Investor Profile */}
+              <Box>
+                <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.6 }}>
+                  INVESTOR PROFILE
+                </Typography>
+                <FormControl fullWidth size="small">
+                  <Select
+                    value={reqType}
+                    onChange={(e) => setReqType(e.target.value)}
+                    disabled={reqLoading}
+                    sx={{
+                      borderRadius: '12px',
+                      backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      '& fieldset': { border: 'none' },
+                      '&:hover': { borderColor: 'rgba(255,255,255,0.15)' },
+                      '&.Mui-focused': { borderColor: '#38BDF8' },
+                      '& .MuiSvgIcon-root': { color: '#94a3b8' }
+                    }}
+                    MenuProps={{
+                      PaperProps: {
+                        sx: {
+                          bgcolor: '#0f172a',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: '#fff',
+                          '& .MuiMenuItem-root:hover': { bgcolor: 'rgba(56,189,248,0.12)' },
+                          '& .MuiMenuItem-root.Mui-selected': { bgcolor: 'rgba(56,189,248,0.2)' }
+                        }
+                      }
+                    }}
+                  >
+                    <MenuItem value="individual">Individual Investor</MenuItem>
+                    <MenuItem value="hni">High Net-Worth Individual (HNI)</MenuItem>
+                    <MenuItem value="advisor">Financial Advisor / Wealth Manager</MenuItem>
+                    <MenuItem value="tax_pro">CA / Tax Professional</MenuItem>
+                    <MenuItem value="corporate">Corporate Treasury</MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+
+              {/* Optional Notes */}
+              <Box>
+                <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.6 }}>
+                  PRIMARY INTEREST (OPTIONAL)
+                </Typography>
+                <TextField
+                  fullWidth
+                  size="small"
+                  multiline
+                  rows={2}
+                  placeholder="e.g. Looking for unified stocks & mutual fund capital gains tracking"
+                  value={reqNotes}
+                  onChange={(e) => setReqNotes(e.target.value)}
+                  disabled={reqLoading}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: '12px',
+                      backgroundColor: 'rgba(2, 6, 23, 0.5)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      '& fieldset': { border: 'none' },
+                      '&:hover': { borderColor: 'rgba(255,255,255,0.15)' },
+                      '&.Mui-focused': { borderColor: '#38BDF8' },
+                    },
+                    '& textarea::placeholder': { color: '#64748B', opacity: 1 }
+                  }}
+                />
+              </Box>
+
+              {/* Error Message */}
+              <Collapse in={!!reqError} unmountOnExit>
+                <Alert 
+                  severity="error" 
+                  sx={{ 
+                    borderRadius: '10px', 
+                    bgcolor: 'rgba(239, 68, 68, 0.1)', 
+                    color: '#EF4444', 
+                    fontSize: '0.82rem',
+                    py: 0.2,
+                    '& .MuiAlert-icon': { color: '#EF4444' } 
+                  }}
+                >
+                  {reqError}
+                </Alert>
+              </Collapse>
+
+              {/* Submit CTA */}
+              <Button
+                fullWidth
+                type="submit"
+                disabled={reqLoading}
+                sx={{
+                  mt: 1,
+                  py: 1.4,
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #0284C7 0%, #2563EB 100%)',
+                  color: '#fff',
+                  fontWeight: 700,
+                  fontSize: '0.92rem',
+                  textTransform: 'none',
+                  boxShadow: '0 4px 16px rgba(2, 132, 199, 0.3)',
+                  '&:hover': {
+                    background: 'linear-gradient(135deg, #0369A1 0%, #1D4ED8 100%)',
+                  }
+                }}
+              >
+                {reqLoading ? <CircularProgress size={20} sx={{ color: '#fff' }} /> : 'Submit Access Request'}
+              </Button>
+            </Box>
+          )}
+        </DialogContent>
+      </Dialog>
     </Box>
   )
 }

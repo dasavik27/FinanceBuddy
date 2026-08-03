@@ -3,13 +3,14 @@ import MenuIcon from '@mui/icons-material/Menu'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import SyncIcon from '@mui/icons-material/Sync'
 import SecurityIcon from '@mui/icons-material/Security'
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useLastSynced, useRefreshTrigger, usePan, useLogout, useIsAuthenticated, useAppStore } from '../../store/appStore'
+import { useLastSynced, useRefreshTrigger, usePan, useLogout, useIsAuthenticated, useAppStore, useUserRole } from '../../store/appStore'
 import ProfilePanDialog from '../ProfilePanDialog'
 import BadgeIcon from '@mui/icons-material/Badge'
 import { apiClient } from '../../api/client'
@@ -24,6 +25,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const queryClient = useQueryClient()
   const pan = usePan()
   const email = useAppStore((s) => s.email)
+  const role = useUserRole()
   const isAuthenticated = useIsAuthenticated()
   const [panDialogOpen, setPanDialogOpen] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -288,7 +290,9 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                   </Box>
                   <Box>
                     <Typography sx={{ fontWeight: 800, fontSize: '0.875rem', color: '#F8FAFC', lineHeight: 1.2 }}>{accountLabel}</Typography>
-                    <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>ACTIVE ACCOUNT</Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: '#38BDF8', fontWeight: 800, letterSpacing: '0.1em', mt: 0.5 }}>
+                      {role === 'admin' ? 'ADMIN' : 'ACTIVE ACCOUNT'}
+                    </Typography>
                   </Box>
                 </Box>
 
@@ -313,6 +317,18 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                     <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Account</Typography>
                   </Box>
                 </MenuItem>
+
+                {role === 'admin' && (
+                <MenuItem 
+                  onClick={() => { setProfileAnchor(null); navigate('/admin'); }}
+                  sx={{ color: '#F8FAFC' }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
+                    <AdminPanelSettingsIcon sx={{ fontSize: 18, color: '#38BDF8' }} />
+                    <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Admin Console</Typography>
+                  </Box>
+                </MenuItem>
+                )}
 
                 <MenuItem 
                   onClick={() => { 

@@ -29,7 +29,15 @@ interface AppState {
   /** The account id the server issued. Null when signed out. */
   userId: string | null
   email: string | null
-  setIdentity: (identity: { userId: string | null; email?: string | null; pan?: string | null }) => void
+  status: 'pending' | 'active' | 'suspended' | null
+  role: 'user' | 'admin' | null
+  setIdentity: (identity: {
+    userId: string | null
+    email?: string | null
+    pan?: string | null
+    status?: 'pending' | 'active' | 'suspended' | null
+    role?: 'user' | 'admin' | null
+  }) => void
   clearIdentity: () => void
 
   taxSlab: number
@@ -70,11 +78,15 @@ export const useAppStore = create<AppState>()(
 
       userId: null,
       email: null,
-      setIdentity: ({ userId, email, pan }) =>
+      status: null,
+      role: null,
+      setIdentity: ({ userId, email, pan, status, role }) =>
         set((state) => ({
           userId,
           email: email !== undefined ? email : state.email,
           pan: pan !== undefined ? pan : state.pan,
+          status: status !== undefined ? status : state.status,
+          role: role !== undefined ? role : state.role,
         })),
 
       /**
@@ -88,6 +100,8 @@ export const useAppStore = create<AppState>()(
           userId: null,
           email: null,
           pan: null,
+          status: null,
+          role: null,
           mfSessionId: null,
           taxSessionId: null,
           equitySessionId: null,
@@ -197,6 +211,8 @@ export const useAppStore = create<AppState>()(
           userId: null,
           email: null,
           pan: null,
+          status: null,
+          role: null,
           mfSessionId: null,
           taxSessionId: null,
           equitySessionId: null,
@@ -249,6 +265,8 @@ export const useLastSynced = () => useAppStore((s) => s.lastSynced)
 export const useRefreshTrigger = () => useAppStore((s) => s.triggerRefresh)
 export const usePan = () => useAppStore((s) => s.pan)
 export const useUserId = () => useAppStore((s) => s.userId)
+export const useUserRole = () => useAppStore((s) => s.role)
+export const useUserStatus = () => useAppStore((s) => s.status)
 /** Signed in either way - provider token or the legacy PAN. */
 export const useIsAuthenticated = () => useAppStore((s) => Boolean(s.userId || s.pan))
 export const useLogout = () => useAppStore(s => s.logout)

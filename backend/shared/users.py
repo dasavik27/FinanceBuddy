@@ -74,8 +74,93 @@ def invalidate(user_id: Optional[str] = None) -> None:
             _cache.pop(key, None)
 
 
+def _admin_emails() -> set:
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+    admin_env = (os.getenv("FINANCEBUDDY_ADMIN_EMAILS") or os.getenv("ADMIN_EMAILS") or "").strip()
+    return {e.strip().lower() for e in admin_env.split(",") if e.strip()}
+
+
+def _has_approved_access(conn, email: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM access_requests WHERE LOWER(email) = %s AND status = 'approved' LIMIT 1",
+        (email.strip().lower(),),
+    ).fetchone()
+    return row is not None
+
+
+def _initial_account_flags(conn, email: Optional[str]) -> tuple:
+    """(status, role) for a newly provisioned account."""
+    role = "user"
+    status = "pending"
+    if not email:
+        return status, role
+    email_lower = email.strip().lower()
+    if email_lower in _admin_emails():
+        return "active", "admin"
+    if _has_approved_access(conn, email_lower):
+        return "active", role
+    return status, role
+
+
+def _sync_account_flags(conn, user_id, email: Optional[str]) -> tuple:
+    """
+    Load status/role and promote accounts when access has been approved or the
+    caller is an configured administrator.
+    Returns (status, role).
+    """
+    row = conn.execute(
+        "SELECT status, role FROM users WHERE id = %s", (user_id,)
+    ).fetchone()
+    if not row:
+        return "pending", "user"
+    status, role = row[0], row[1]
+    if not email:
+        return status, role
+
+    email_lower = email.strip().lower()
+    new_status, new_role = status, role
+    if email_lower in _admin_emails():
+        new_status, new_role = "active", "admin"
+    elif status == "pending" and _has_approved_access(conn, email_lower):
+        new_status = "active"
+
+    if new_status != status or new_role != role:
+        conn.execute(
+            "UPDATE users SET status = %s, role = %s WHERE id = %s",
+            (new_status, new_role, user_id),
+        )
+        invalidate(str(user_id))
+        return new_status, new_role
+    return status, role
+
+
+def activate_by_email(email: str) -> None:
+    """Promote a pending account to active when an access request is approved."""
+    email_lower = email.strip().lower()
+    if not email_lower:
+        return
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.id FROM users u
+            JOIN identities i ON i.user_id = u.id
+            WHERE LOWER(i.email) = %s AND u.status = 'pending'
+            """,
+            (email_lower,),
+        ).fetchall()
+        for (user_id,) in rows:
+            conn.execute(
+                "UPDATE users SET status = 'active' WHERE id = %s", (user_id,)
+            )
+            invalidate(str(user_id))
+
+
 def resolve(issuer: str, subject: str, email: Optional[str] = None,
-            pan: Optional[str] = None) -> Optional[Caller]:
+            pan: Optional[str] = None,
+            name: Optional[str] = None) -> Optional[Caller]:
     """
     The account for (issuer, subject), creating it on first sight.
 
@@ -103,8 +188,10 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
             ).fetchone()
 
             if row is None:
+                status, role = _initial_account_flags(conn, email)
                 user_id = conn.execute(
-                    "INSERT INTO users DEFAULT VALUES RETURNING id"
+                    "INSERT INTO users (status, role) VALUES (%s, %s) RETURNING id",
+                    (status, role),
                 ).fetchone()[0]
                 conn.execute(
                     """
@@ -123,12 +210,25 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                     (issuer, subject),
                 ).fetchone()
                 user_id = winner[0] if winner else user_id
-                logger.info("[AUTH] provisioned account for issuer=%s", issuer)
+                logger.info(
+                    "[AUTH] provisioned account for issuer=%s status=%s role=%s",
+                    issuer, status, role,
+                )
             else:
                 user_id = row[0]
                 conn.execute(
                     "UPDATE users SET last_seen_at = now() WHERE id = %s", (user_id,)
                 )
+                if email:
+                    conn.execute(
+                        """
+                        UPDATE identities SET email = COALESCE(email, %s)
+                        WHERE issuer = %s AND subject = %s
+                        """,
+                        (email, issuer, subject),
+                    )
+
+            status, role = _sync_account_flags(conn, user_id, email)
 
             # PAN comes from the profile, not from the caller, so a request cannot
             # assert someone else's. The legacy path passes one in only because it
@@ -151,7 +251,19 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                 )
                 stored_pan = pan
 
-        caller = Caller(user_id=str(user_id), pan=stored_pan)
+            if name and isinstance(name, str) and name.strip():
+                clean_name = name.strip()
+                conn.execute(
+                    """
+                    INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO UPDATE
+                        SET display_name = COALESCE(profiles.display_name, EXCLUDED.display_name),
+                            updated_at = now()
+                    """,
+                    (user_id, clean_name),
+                )
+
+        caller = Caller(user_id=str(user_id), pan=stored_pan, status=status, role=role)
         _cache_put(key, caller)
         return caller
     except Exception as e:

@@ -55,6 +55,44 @@ export const authClient = {
     if (error) throw error
   },
 
+  /** Sign in with Email and Password. */
+  signInWithEmail: async (email: string, password: string): Promise<AuthUser> => {
+    if (!supabase) throw new Error('Sign-in is not configured.')
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
+    const user = toUser(data.session)
+    if (!user) throw new Error('Could not establish session.')
+    return user
+  },
+
+  /** Fast 1-click login for local development if dev credentials exist in .env.local */
+  signInWithDevAccount: async (): Promise<AuthUser> => {
+    if (!supabase) throw new Error('Sign-in is not configured.')
+    const email = import.meta.env.VITE_DEV_EMAIL
+    const password = import.meta.env.VITE_DEV_PASSWORD
+    if (!email || !password) throw new Error('Dev credentials (VITE_DEV_EMAIL, VITE_DEV_PASSWORD) are not set in .env.local')
+    return authClient.signInWithEmail(email, password)
+  },
+
+  /** Submit an early access request for prospective users */
+  submitAccessRequest: async (payload: {
+    name: string
+    email: string
+    investor_type?: string
+    notes?: string
+  }): Promise<{ status: string; message: string; request_id?: string }> => {
+    const res = await fetch('/api/auth/request-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Could not submit access request.')
+    }
+    return res.json()
+  },
+
   signOut: async (): Promise<void> => {
     if (!supabase) return
     await supabase.auth.signOut()

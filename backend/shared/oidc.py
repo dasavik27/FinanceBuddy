@@ -58,6 +58,7 @@ class Principal:
     issuer: str
     subject: str
     email: Optional[str] = None
+    name: Optional[str] = None
 
     @property
     def identity_key(self) -> tuple:
@@ -145,10 +146,22 @@ class OidcJwtVerifier:
         if not subject:
             return None
 
+        raw_meta = claims.get("user_metadata")
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
+        extracted_name = (
+            claims.get("name")
+            or claims.get("full_name")
+            or meta.get("full_name")
+            or meta.get("name")
+            or meta.get("user_name")
+        )
+        clean_name = extracted_name.strip() if isinstance(extracted_name, str) and extracted_name.strip() else None
+
         return Principal(
             issuer=claims.get("iss", self.issuer),
             subject=str(subject),
             email=claims.get("email"),
+            name=clean_name,
         )
 
 

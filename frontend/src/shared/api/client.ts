@@ -261,7 +261,12 @@ export const apiClient = {
   },
 
   /** The signed-in account, or 401. */
-  getMe: async (): Promise<{ user_id: string; pan: string | null }> => {
+  getMe: async (): Promise<{
+    user_id: string
+    pan: string | null
+    status: 'pending' | 'active' | 'suspended'
+    role: 'user' | 'admin'
+  }> => {
     const { data } = await api.get('/auth/me')
     return data
   },
@@ -649,6 +654,45 @@ export const apiClient = {
   /** The match types the server accepts, so the dropdown cannot drift from them. */
   getBudgetMatchTypes: async (): Promise<BudgetMatchTypes> => {
     const { data } = await api.get<BudgetMatchTypes>('/budget/rules/match-types')
+    return data
+  },
+
+  // ── Access Control Admin ──────────────────────────────────────────────────
+  getProvisioningStatus: async (): Promise<{
+    supabase_url_configured: boolean
+    service_role_key_configured: boolean
+    can_auto_provision: boolean
+  }> => {
+    const { data } = await api.get('/auth/provisioning-status')
+    return data
+  },
+
+  getAccessRequests: async (): Promise<{
+    requests: Array<{
+      id: string
+      email: string
+      name: string
+      investor_type: string
+      notes: string
+      status: 'pending' | 'approved' | 'rejected'
+      created_at: string | null
+      reviewed_at: string | null
+    }>
+  }> => {
+    const { data } = await api.get('/auth/access-requests')
+    return data
+  },
+
+  approveAccessRequest: async (
+    requestId: string,
+    payload: { method?: 'invite' | 'create'; password?: string } = { method: 'invite' }
+  ): Promise<{ status: string; message: string; supabase_provisioned: boolean }> => {
+    const { data } = await api.post(`/auth/access-requests/${requestId}/approve`, payload)
+    return data
+  },
+
+  rejectAccessRequest: async (requestId: string): Promise<{ status: string; message: string }> => {
+    const { data } = await api.post(`/auth/access-requests/${requestId}/reject`)
     return data
   },
 }
