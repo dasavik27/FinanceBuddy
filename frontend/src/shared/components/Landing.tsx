@@ -86,8 +86,7 @@ export default function Landing() {
 
     const run = async () => {
       const notice = readAuthNotice()
-      const hadOAuthError = consumeOAuthErrorFromUrl() !== null
-      const emailHint = (notice?.email || email.trim()).trim()
+      const oauthMessage = consumeOAuthErrorFromUrl()
 
       if (notice) {
         if (cancelled) return
@@ -98,18 +97,34 @@ export default function Landing() {
         return
       }
 
-      if (hadOAuthError && emailHint) {
+      if (!oauthMessage) return
+
+      let emailHint = email.trim()
+      if (!emailHint) {
+        try {
+          const u = await authClient.getUser()
+          emailHint = (u?.email || '').trim()
+          if (emailHint && !cancelled) setEmail(emailHint)
+        } catch {
+          // No Supabase session — rely on oauthMessage below.
+        }
+      }
+
+      if (emailHint) {
         try {
           await applyAccessStatus(emailHint)
         } catch {
           if (!cancelled) {
             setAccessRequestStatus('none')
-            setError(REQUEST_ACCESS_MESSAGE)
+            setError(oauthMessage)
           }
-        } finally {
-          if (!cancelled) setLoading(false)
         }
+      } else if (!cancelled) {
+        setAccessRequestStatus('none')
+        setError(oauthMessage)
       }
+
+      if (!cancelled) setLoading(false)
     }
 
     void run()

@@ -157,10 +157,16 @@ class OidcJwtVerifier:
         )
         clean_name = extracted_name.strip() if isinstance(extracted_name, str) and extracted_name.strip() else None
 
+        raw_email = claims.get("email")
+        if not raw_email and isinstance(meta, dict):
+            meta_email = meta.get("email")
+            if isinstance(meta_email, str) and meta_email.strip():
+                raw_email = meta_email.strip()
+
         return Principal(
             issuer=claims.get("iss", self.issuer),
             subject=str(subject),
-            email=claims.get("email"),
+            email=raw_email if isinstance(raw_email, str) and raw_email.strip() else None,
             name=clean_name,
         )
 
