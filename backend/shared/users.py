@@ -212,17 +212,17 @@ def message_for_access_status(status: Optional[str]) -> str:
     """User-facing copy keyed off access_requests.status."""
     if status == "pending":
         return (
-            "Your access request is already submitted and pending admin approval. "
-            "Please wait for an administrator to approve and invite you."
+            "Request pending. Your access request is waiting for admin approval. "
+            "You will get an invite once it is approved."
         )
     if status == "approved":
         return (
-            "Your access has been approved. Check your email for an invite, "
-            "or try signing in again once your account is provisioned."
+            "Access approved. Check your email for an invite, "
+            "then sign in again once your account is ready."
         )
     return (
-        "You do not have access yet. Please submit an access request and wait "
-        "for an administrator to approve you."
+        "Access required. You do not have access yet. "
+        "Raise a request, or check status with the email you already submitted."
     )
 
 

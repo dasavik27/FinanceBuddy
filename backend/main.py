@@ -101,6 +101,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("[STARTUP] database pool unavailable: %s", e)
 
+    # Apply any pending schema migrations on boot (all *.sql files, not one-off).
+    try:
+        from migrations import migrate as schema_migrate
+        rc = schema_migrate.upgrade()
+        if rc != 0:
+            logger.error("[STARTUP] schema migrations returned %s", rc)
+        else:
+            logger.info("[STARTUP] schema migrations ok")
+    except Exception as e:
+        logger.error("[STARTUP] schema migrations FAILED: %s", e)
+
     # Start the periodic sweep. Each domain registers its own purge at import (see
     # shared/janitor.py); this only starts the thread. It lives here rather than as an
     # import side effect so that importing a domain module - in a test, a script, or a

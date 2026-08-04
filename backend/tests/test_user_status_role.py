@@ -48,12 +48,13 @@ def test_assert_admin_allows_role_admin(monkeypatch):
 
 def test_message_for_access_status_pending():
     msg = users.message_for_access_status("pending")
-    assert "already submitted" in msg.lower()
+    assert "pending" in msg.lower()
+    assert "admin" in msg.lower()
 
 
 def test_message_for_access_status_none():
     msg = users.message_for_access_status(None)
-    assert "submit an access request" in msg.lower()
+    assert "access required" in msg.lower() or "raise a request" in msg.lower()
 
 
 @requires_db

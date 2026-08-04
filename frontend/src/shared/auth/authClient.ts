@@ -44,13 +44,24 @@ export interface AuthUser {
   email: string | null
 }
 
+export type AccessRequestStatus = 'none' | 'pending' | 'approved'
+
+/** Structured banner shown on the landing sign-in card. */
+export interface AuthBanner {
+  title: string
+  detail: string
+  /** Drives Raise request / Check status actions. */
+  access_request_status: AccessRequestStatus | null
+  severity: 'info' | 'error'
+}
+
 /** Shown when the email has no row in access_requests. */
 export const REQUEST_ACCESS_MESSAGE =
   'You do not have access yet. Please submit an access request and wait for an administrator to approve you.'
 
 /** OAuth/sign-up disabled bounce — no Supabase Auth user; guide to request or status check. */
 export const OAUTH_NO_ACCOUNT_MESSAGE =
-  'No login account yet. Raise an access request, or enter your request email in the field above and tap Check status.'
+  'No login account yet. Raise an access request, or enter your request email above and tap Check status.'
 
 const OAUTH_ERROR_KEY = 'fb_oauth_error_msg'
 
@@ -71,22 +82,54 @@ export function normalizeAuthMessage(raw: string | null | undefined): string | n
   return msg
 }
 
-export type AccessRequestStatus = 'none' | 'pending' | 'approved'
-
-export function messageForAccessStatus(status: AccessRequestStatus | string | null | undefined): string {
+export function bannerForAccessStatus(
+  status: AccessRequestStatus | string | null | undefined,
+): AuthBanner {
   if (status === 'pending') {
-    return (
-      'Your access request is already submitted and pending admin approval. ' +
-      'Please wait for an administrator to approve and invite you.'
-    )
+    return {
+      title: 'Request pending',
+      detail: 'Your access request is waiting for admin approval. You will get an invite once it is approved.',
+      access_request_status: 'pending',
+      severity: 'info',
+    }
   }
   if (status === 'approved') {
-    return (
-      'Your access has been approved. Check your email for an invite, ' +
-      'or try signing in again once your account is provisioned.'
-    )
+    return {
+      title: 'Access approved',
+      detail: 'Check your email for an invite, then sign in again once your account is ready.',
+      access_request_status: 'approved',
+      severity: 'info',
+    }
   }
-  return REQUEST_ACCESS_MESSAGE
+  return {
+    title: 'Access required',
+    detail: 'You do not have access yet. Raise a request, or enter your email above and check status if you already submitted one.',
+    access_request_status: 'none',
+    severity: 'info',
+  }
+}
+
+export function bannerForOAuthNoAccount(): AuthBanner {
+  return {
+    title: 'No login account',
+    detail: 'Raise an access request if you are new. Already requested? Enter that email above and tap Check status.',
+    access_request_status: 'none',
+    severity: 'info',
+  }
+}
+
+export function bannerForError(message: string): AuthBanner {
+  return {
+    title: 'Sign-in failed',
+    detail: normalizeAuthMessage(message) || 'Please try again.',
+    access_request_status: null,
+    severity: 'error',
+  }
+}
+
+export function messageForAccessStatus(status: AccessRequestStatus | string | null | undefined): string {
+  const banner = bannerForAccessStatus(status)
+  return `${banner.title}. ${banner.detail}`
 }
 
 /**

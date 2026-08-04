@@ -15,10 +15,12 @@ import CloseIcon from '@mui/icons-material/Close'
 import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined'
 import authClient, {
   type AccessRequestStatus,
+  type AuthBanner,
+  bannerForAccessStatus,
+  bannerForError,
+  bannerForOAuthNoAccount,
   consumeOAuthErrorFromUrl,
   lookupAccessNoticeForEmails,
-  normalizeAuthMessage,
-  OAUTH_NO_ACCOUNT_MESSAGE,
 } from '../auth/authClient'
 import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
 
@@ -54,8 +56,7 @@ export default function Landing() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [accessRequestStatus, setAccessRequestStatus] = useState<AccessRequestStatus | null>(null)
+  const [banner, setBanner] = useState<AuthBanner | null>(null)
 
   // Request Access modal state
   const [requestModalOpen, setRequestModalOpen] = useState(false)
@@ -67,11 +68,11 @@ export default function Landing() {
   const [reqError, setReqError] = useState<string | null>(null)
   const [reqSuccess, setReqSuccess] = useState<string | null>(null)
 
+  const accessRequestStatus = banner?.access_request_status ?? null
   const showRaiseRequest = accessRequestStatus === 'none'
   const isPendingNotice = accessRequestStatus === 'pending'
-  const showAccessInfo = showRaiseRequest || isPendingNotice || accessRequestStatus === 'approved'
-  // Offer both actions until we know they are pending/approved.
   const showCheckStatus = showRaiseRequest
+  const showAccessInfo = banner?.severity === 'info'
 
   const openRequestAccess = () => {
     if (email.trim()) setReqEmail(email.trim())
@@ -80,25 +81,26 @@ export default function Landing() {
 
   const applyAccessStatus = async (emailTrim: string) => {
     const st = await authClient.checkAccessStatus(emailTrim)
-    setAccessRequestStatus(st.access_request_status)
-    setError(normalizeAuthMessage(st.message))
+    setBanner(bannerForAccessStatus(st.access_request_status))
   }
 
-  const showAuthMessage = (
-    message: string,
-    status: AccessRequestStatus | null,
+  const showStatusBanner = (
+    status: AccessRequestStatus | null | undefined,
     emailValue?: string,
   ) => {
-    setAccessRequestStatus(status)
-    setError(normalizeAuthMessage(message))
+    setBanner(bannerForAccessStatus(status))
     if (emailValue) setEmail(emailValue)
   }
 
   const handleCheckStatus = async () => {
     const trimmed = email.trim()
     if (!trimmed) {
-      setError('Enter the email you used for your access request, then check status.')
-      setAccessRequestStatus('none')
+      setBanner({
+        title: 'Email needed',
+        detail: 'Enter the email you used for your access request, then tap Check status.',
+        access_request_status: 'none',
+        severity: 'info',
+      })
       return
     }
     rememberAccessRequestEmail(trimmed)
@@ -106,8 +108,7 @@ export default function Landing() {
     try {
       await applyAccessStatus(trimmed)
     } catch {
-      setError('Could not check status. Please try again.')
-      setAccessRequestStatus(null)
+      setBanner(bannerForError('Could not check status. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -133,8 +134,7 @@ export default function Landing() {
               storedEmail,
             ])
             if (refreshed.access_request_status !== 'none') {
-              showAuthMessage(
-                refreshed.message,
+              showStatusBanner(
                 refreshed.access_request_status,
                 refreshed.email || notice.email || undefined,
               )
@@ -145,8 +145,7 @@ export default function Landing() {
             // Fall back to stored notice below.
           }
         }
-        showAuthMessage(
-          notice.message,
+        showStatusBanner(
           notice.access_request_status,
           notice.email || storedEmail || undefined,
         )
@@ -156,7 +155,8 @@ export default function Landing() {
 
       // Google failed (no Supabase Auth user) — keep it simple; user raises or checks by email.
       if (oauthFailed && !cancelled) {
-        showAuthMessage(OAUTH_NO_ACCOUNT_MESSAGE, 'none', storedEmail || undefined)
+        setBanner(bannerForOAuthNoAccount())
+        if (storedEmail) setEmail(storedEmail)
       }
 
       if (!cancelled) setLoading(false)
@@ -171,12 +171,11 @@ export default function Landing() {
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email.trim() || !password) {
-      setError('Please enter both email and password.')
+      setBanner(bannerForError('Please enter both email and password.'))
       return
     }
     setLoading(true)
-    setError(null)
-    setAccessRequestStatus(null)
+    setBanner(null)
     try {
       await authClient.signInWithEmail(email.trim(), password)
       // App.tsx auth listener handles redirect to /dashboard
@@ -184,8 +183,7 @@ export default function Landing() {
       try {
         await applyAccessStatus(email.trim())
       } catch {
-        setError('Invalid email or password.')
-        setAccessRequestStatus(null)
+        setBanner(bannerForError('Invalid email or password.'))
       }
       setLoading(false)
     }
@@ -193,14 +191,13 @@ export default function Landing() {
 
   const handleGoogleSignIn = async () => {
     setLoading(true)
-    setError(null)
-    setAccessRequestStatus(null)
+    setBanner(null)
     const emailTrim = email.trim()
     if (emailTrim) rememberAccessRequestEmail(emailTrim)
     try {
       await authClient.signInWithGoogle(emailTrim || undefined)
     } catch {
-      showAuthMessage(OAUTH_NO_ACCOUNT_MESSAGE, 'none')
+      setBanner(bannerForOAuthNoAccount())
       setLoading(false)
     }
   }
@@ -437,50 +434,91 @@ export default function Landing() {
             />
 
             {/* Access status / error message */}
-            <Collapse in={!!error} unmountOnExit>
+            <Collapse in={!!banner} unmountOnExit>
               <Alert
                 severity={showAccessInfo ? 'info' : 'error'}
-                action={
-                  showRaiseRequest || showCheckStatus ? (
-                    <Box sx={{ display: 'flex', gap: 0.5, flexShrink: 0 }}>
-                      {showCheckStatus && (
-                        <Button
-                          color="inherit"
-                          size="small"
-                          onClick={() => void handleCheckStatus()}
-                          disabled={loading}
-                          sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
-                        >
-                          Check status
-                        </Button>
-                      )}
-                      {showRaiseRequest && (
-                        <Button
-                          color="inherit"
-                          size="small"
-                          onClick={openRequestAccess}
-                          sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
-                        >
-                          Raise request
-                        </Button>
-                      )}
-                    </Box>
-                  ) : undefined
-                }
                 sx={{
                   borderRadius: '12px',
                   bgcolor: showAccessInfo ? 'rgba(56, 189, 248, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  color: showAccessInfo ? '#7DD3FC' : '#EF4444',
+                  color: showAccessInfo ? '#E0F2FE' : '#FECACA',
                   border: showAccessInfo
                     ? '1px solid rgba(56, 189, 248, 0.25)'
                     : '1px solid rgba(239, 68, 68, 0.2)',
-                  fontSize: '0.85rem',
-                  py: 0.5,
-                  alignItems: 'center',
-                  '& .MuiAlert-icon': { color: showAccessInfo ? '#38BDF8' : '#EF4444' },
+                  py: 1,
+                  alignItems: 'flex-start',
+                  '& .MuiAlert-message': { width: '100%', py: 0.25 },
+                  '& .MuiAlert-icon': {
+                    color: showAccessInfo ? '#38BDF8' : '#EF4444',
+                    mt: 0.25,
+                  },
                 }}
               >
-                {error}
+                <Typography
+                  sx={{
+                    fontWeight: 800,
+                    fontSize: '0.88rem',
+                    color: showAccessInfo ? '#7DD3FC' : '#FCA5A5',
+                    lineHeight: 1.3,
+                    mb: 0.4,
+                  }}
+                >
+                  {banner?.title}
+                </Typography>
+                <Typography
+                  sx={{
+                    fontSize: '0.82rem',
+                    color: showAccessInfo ? '#BAE6FD' : '#FECACA',
+                    lineHeight: 1.5,
+                    fontWeight: 500,
+                  }}
+                >
+                  {banner?.detail}
+                </Typography>
+                {(showRaiseRequest || showCheckStatus) && (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.25 }}>
+                    {showCheckStatus && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => void handleCheckStatus()}
+                        disabled={loading}
+                        sx={{
+                          fontWeight: 700,
+                          textTransform: 'none',
+                          borderColor: 'rgba(125, 211, 252, 0.45)',
+                          color: '#7DD3FC',
+                          borderRadius: '10px',
+                          px: 1.5,
+                          '&:hover': {
+                            borderColor: '#7DD3FC',
+                            bgcolor: 'rgba(56, 189, 248, 0.12)',
+                          },
+                        }}
+                      >
+                        Check status
+                      </Button>
+                    )}
+                    {showRaiseRequest && (
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={openRequestAccess}
+                        sx={{
+                          fontWeight: 700,
+                          textTransform: 'none',
+                          bgcolor: '#38BDF8',
+                          color: '#0F172A',
+                          borderRadius: '10px',
+                          px: 1.5,
+                          boxShadow: 'none',
+                          '&:hover': { bgcolor: '#7DD3FC', boxShadow: 'none' },
+                        }}
+                      >
+                        Raise request
+                      </Button>
+                    )}
+                  </Box>
+                )}
               </Alert>
             </Collapse>
 
