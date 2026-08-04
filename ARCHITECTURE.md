@@ -422,7 +422,7 @@ admin approval without a full page reload.
 | `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
 | `PendingAccess.tsx` | Signed in, `status=pending` |
 | `SuspendedAccess.tsx` | Signed in, `status=suspended` |
-| `AccountSetupPrompt` | First-time only: one panel with password and/or PAN (whichever still missing) |
+| `AccountSetupPrompt` | First-time only: one panel — both fields, or password-only, or PAN-only |
 | `ProfilePage.tsx` | Route `/profile` (badge → Profile); display name, PAN, password; link to data vault |
 | `AccountsDashboard` | Route `/accounts` (badge → Data vault); export / delete account data |
 | `AdminConsole.tsx` | Route `/admin`; admin-only actions |

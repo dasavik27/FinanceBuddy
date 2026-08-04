@@ -22,10 +22,8 @@ type Props = {
 }
 
 /**
- * First-time setup in a single panel.
- *
- * Shows password and/or PAN depending on what is still missing (invite → often
- * both; later visits → only the missing piece). Profile edits later go to /profile.
+ * First-time setup in a single panel — only the fields still needed:
+ * both, password-only, or PAN-only. Later edits go to /profile.
  */
 export default function AccountSetupPrompt({
   requirePassword,
@@ -97,9 +95,8 @@ export default function AccountSetupPrompt({
 
     setLoading(true)
     try {
-      // Password first (keeps the session valid for the PAN API call). Clear the
-      // password-setup flag only after the whole submit succeeds — otherwise App
-      // remounts this form mid-flight as "PAN only" and drops the in-progress save.
+      // One submit for whatever fields are on this panel. Clear the password-setup
+      // flag only after PAN is stored too, so App never flips to a second panel.
       if (requirePassword) {
         await authClient.updatePassword(password)
       }

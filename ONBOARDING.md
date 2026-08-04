@@ -101,9 +101,9 @@ flowchart LR
 4. **Unapproved sign-in** — No `users` row is created; middleware returns
    `403 not_authorized`. The landing page calls `POST /auth/access-status` to
    show “already submitted” vs “raise request”.
-5. **After active** — One setup panel collects whatever is still missing
-   (password and/or PAN). Later edits (display name, PAN, password) are on
-   **Profile** (`/profile`, badge menu). Data export/delete stay on **Data vault**
+5. **After active** — One setup panel shows only what is still missing
+   (password + PAN, or password only, or PAN only). Later edits are on
+   **Profile** (`/profile`). Data export/delete stay on **Data vault**
    (`/accounts`). Admins see **Admin Console** in the badge menu (`role=admin`).
 
 **Admin Console** (`/admin`, visible when `GET /auth/me` returns `role: admin`):

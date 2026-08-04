@@ -88,14 +88,17 @@ def whoami():
         raise HTTPException(status_code=401, detail="Not signed in.")
     display_name = users.find_display_name(caller.user_id)
     email = users.primary_email(caller.user_id)
+    # Read PAN from the profile row, not only the middleware Caller cache — a
+    # request that started just before PUT /profile/pan can still hold pan=None.
+    pan = users.find_pan(caller.user_id) or caller.pan
     logger.info(
         "[AUTH] GET /auth/me → 200 user_id=%s status=%s role=%s pan_set=%s",
-        caller.user_id, caller.status, caller.role, bool(caller.pan),
+        caller.user_id, caller.status, caller.role, bool(pan),
     )
     return {
         "user_id": caller.user_id,
         "email": email,
-        "pan": caller.pan,
+        "pan": pan,
         "display_name": display_name,
         "status": caller.status,
         "role": caller.role,

@@ -71,11 +71,16 @@ export default function App() {
         try {
           const me = await apiClient.getMe()
           if (cancelled) return
+          // Never replace a PAN we already have with null from a stale /auth/me
+          // (e.g. in-flight resolve that started before PUT /auth/profile/pan).
+          const prev = useAppStore.getState()
+          const keepPan =
+            me.pan ?? (prev.userId === user.id || prev.userId === null ? prev.pan : null)
           setIdentity({
             userId: user.id,
             email: me.email ?? user.email,
             displayName: me.display_name,
-            pan: me.pan,
+            pan: keepPan,
             status: me.status,
             role: me.role,
           })
@@ -120,16 +125,15 @@ export default function App() {
     return <TabFallback />
   }
 
+  // Single setup panel (AccountSetupPrompt). Fields shown depend on what is
+  // still missing — both together, or only password, or only PAN. No second screen.
   const requirePassword = isAuthenticated && needsPasswordSetup
-  // PAN only when the account can call PUT /auth/profile/pan (active).
-  const requirePan =
-    isAuthenticated && status === 'active' && !pan
+  const requirePan = isAuthenticated && status === 'active' && !pan
 
   if (isAuthenticated && status === 'suspended') {
     return <SuspendedAccess />
   }
 
-  // One setup panel: password only, PAN only, or both — whichever is still needed.
   if (requirePassword || requirePan) {
     return (
       <AccountSetupPrompt

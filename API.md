@@ -235,4 +235,7 @@ There is no PAN-based API authentication.
 | **Display name** | `PUT /auth/profile` with Bearer token | Optional; shown on the topbar badge. Empty string clears. |
 | **PAN** | `PUT /auth/profile/pan` with Bearer token | Stored encrypted in `profiles`. Required for CAS unlock / AIS match. Middleware allows this only when `status=active` (not pending/suspended). Edited on **Profile** (`/profile`) after onboarding — there is no separate PAN dialog in the badge menu. |
 
-First-time setup (`AccountSetupPrompt`) is **one panel**: password only, PAN only, or both when the account is active and both are still missing. Later edits use the Profile page (badge → **Profile**). Data export / delete stay on `/accounts` (Data vault).
+First-time setup (`AccountSetupPrompt`) is **one panel** that shows only what is
+still missing: password + PAN together, or password only, or PAN only. Later edits
+use the Profile page (badge → **Profile**). Data export / delete stay on `/accounts`
+(Data vault).

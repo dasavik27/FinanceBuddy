@@ -361,8 +361,10 @@ export const authClient = {
   /**
    * Fires on sign-in, sign-out, and session restore. Returns an unsubscribe function.
    *
-   * TOKEN_REFRESHED is ignored so the app does not re-hit `/auth/me` on every
-   * background refresh (the Bearer interceptor already refreshes the access token).
+   * TOKEN_REFRESHED and USER_UPDATED are ignored so the app does not re-hit
+   * `/auth/me` on background refresh or password change. A password update during
+   * account setup used to race a stale `/auth/me` (pan still null) and force a
+   * second "Link your PAN" screen after the user had just saved both.
    */
   onAuthStateChange: (handler: (user: AuthUser | null) => void): (() => void) => {
     if (!supabase) return () => {}
@@ -370,7 +372,7 @@ export const authClient = {
     consumePasswordSetupIntentFromUrl()
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') markPasswordSetupRequired()
-      if (event === 'TOKEN_REFRESHED') return
+      if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') return
       handler(toUser(session))
     })
     return () => data.subscription.unsubscribe()
