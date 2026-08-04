@@ -578,3 +578,110 @@ def update_app_user(user_id: str, req: UpdateUserPayload):
     return {"status": "success", "user": updated}
 
 
+def _delete_in_supabase(email: str) -> tuple:
+    """Best-effort hard-delete of the Supabase Auth user. Returns (ok, message)."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from dotenv import load_dotenv
+
+    load_dotenv(override=True)
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
+    ).strip()
+    if not supabase_url or not service_role_key:
+        return False, "Supabase service role not configured; app data deleted only."
+
+    headers = {
+        "Authorization": f"Bearer {service_role_key}",
+        "apikey": service_role_key,
+        "Content-Type": "application/json",
+    }
+    try:
+        list_url = f"{supabase_url}/auth/v1/admin/users?page=1&per_page=200"
+        req = urllib.request.Request(list_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        users_list = payload.get("users") if isinstance(payload, dict) else payload
+        if not isinstance(users_list, list):
+            users_list = []
+        match = next(
+            (u for u in users_list if (u.get("email") or "").strip().lower() == email),
+            None,
+        )
+        if not match:
+            return False, "No Supabase Auth user found for that email; app data deleted."
+        auth_user_id = match.get("id")
+        del_url = f"{supabase_url}/auth/v1/admin/users/{auth_user_id}"
+        del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
+        with urllib.request.urlopen(del_req, timeout=10) as resp:
+            resp.read()
+        return True, f"Deleted Supabase Auth user {email}."
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8", errors="replace")
+        logger.error("[AUTH] Supabase delete HTTP %d: %s", e.code, err_msg)
+        return False, f"App data deleted; Supabase delete failed ({e.code})."
+    except Exception as e:
+        logger.exception("[AUTH] Supabase delete exception: %s", e)
+        return False, f"App data deleted; Supabase delete failed: {e}"
+
+
+@router.delete("/users/{user_id}")
+def delete_app_user(user_id: str):
+    """
+    Admin: permanently delete an app account and all cascaded data.
+
+    Same purge model as DELETE /accounts/me: evict resident sessions, delete the
+    users row (cascades identities/profiles/sessions/payloads/budget prefs), remove
+    access_requests for the email, and best-effort delete the Supabase Auth user.
+    """
+    from shared import storage
+
+    caller = identity.current_caller()
+    _assert_admin(caller)
+
+    if str(caller.user_id) == str(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot delete your own account from the Admin Console.",
+        )
+
+    account = users.get_account(user_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    email = (account.get("email") or "").strip().lower() or None
+
+    # Memory first — same ordering as self-service purge.
+    session_stores.evict_user(user_id)
+    deleted_sessions = storage.delete_all_for_user(user_id)
+    users.invalidate(user_id)
+    removed_requests = users.delete_access_requests_for_email(email) if email else 0
+
+    supabase_deleted = False
+    supabase_msg = "No email on account; skipped Supabase Auth delete."
+    if email:
+        supabase_deleted, supabase_msg = _delete_in_supabase(email)
+
+    logger.info(
+        "[AUTH] deleted user %s email=%s by admin %s sessions=%s access_requests=%s supabase=%s",
+        user_id, email, caller.user_id, deleted_sessions, removed_requests, supabase_deleted,
+    )
+    return {
+        "status": "success",
+        "message": (
+            f"Permanently deleted account"
+            f"{f' for {email}' if email else ''} "
+            f"({deleted_sessions} session(s), {removed_requests} access request(s)). "
+            f"{supabase_msg}"
+        ),
+        "user_id": user_id,
+        "email": email,
+        "deleted_sessions": deleted_sessions,
+        "deleted_access_requests": removed_requests,
+        "supabase_deleted": supabase_deleted,
+    }
+
+

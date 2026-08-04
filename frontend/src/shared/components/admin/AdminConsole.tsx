@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, type FormEvent } from 'react'
 import {
   Box, Typography, Paper, Grid, TextField, InputAdornment, Button,
   Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  IconButton, Tooltip,
+  IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions,
   CircularProgress, Alert, Snackbar, Tabs, Tab, alpha, useTheme
 } from '@mui/material'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
@@ -18,6 +18,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import PersonIcon from '@mui/icons-material/Person'
 import PersonAddAlt1Icon from '@mui/icons-material/PersonAddAlt1'
 import { apiClient } from '../../api/client'
+import { useAppStore } from '../../store/appStore'
 
 interface AccessRequest {
   id: string
@@ -69,9 +70,13 @@ const adminFieldSx = {
 
 export default function AdminConsole() {
   const theme = useTheme()
+  const myUserId = useAppStore((s) => s.userId)
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AppUser | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved'>('all')
@@ -314,6 +319,41 @@ export default function AdminConsole() {
       })
     } finally {
       setSavingUserId(null)
+    }
+  }
+
+  const openDeleteUser = (user: AppUser) => {
+    setDeleteTarget(user)
+    setDeleteConfirm('')
+  }
+
+  const handleConfirmDeleteUser = async () => {
+    if (!deleteTarget) return
+    const expected = (deleteTarget.email || deleteTarget.user_id).trim().toLowerCase()
+    if (deleteConfirm.trim().toLowerCase() !== expected) {
+      setSnackbarMsg({
+        text: 'Type the user email (or id) exactly to confirm permanent delete.',
+        severity: 'error',
+      })
+      return
+    }
+    setDeleteLoading(true)
+    try {
+      const res = await apiClient.deleteAppUser(deleteTarget.user_id)
+      setSnackbarMsg({
+        text: res.message || `Deleted ${deleteTarget.email || deleteTarget.user_id}`,
+        severity: 'success',
+      })
+      setDeleteTarget(null)
+      setDeleteConfirm('')
+      await Promise.all([fetchAccounts(true), fetchRequests(true)])
+    } catch (err: any) {
+      setSnackbarMsg({
+        text: err?.response?.data?.detail || err?.message || 'Failed to delete user.',
+        severity: 'error',
+      })
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -1031,6 +1071,25 @@ export default function AdminConsole() {
                           >
                             {isSaving ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : 'Save'}
                           </Button>
+                          <Tooltip
+                            title={
+                              user.user_id === myUserId
+                                ? 'You cannot delete your own account here'
+                                : 'Permanently delete account and all data'
+                            }
+                            arrow
+                          >
+                            <span>
+                              <IconButton
+                                size="small"
+                                onClick={() => openDeleteUser(user)}
+                                disabled={isSaving || deleteLoading || user.user_id === myUserId}
+                                sx={{ color: '#64748B', '&:hover': { color: '#EF4444' } }}
+                              >
+                                <DeleteOutlineIcon sx={{ fontSize: 18 }} />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -1041,6 +1100,81 @@ export default function AdminConsole() {
           </Table>
         </TableContainer>
       </Box>
+
+      {/* Permanent delete confirmation */}
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={() => !deleteLoading && setDeleteTarget(null)}
+        maxWidth="xs"
+        fullWidth
+        slotProps={{
+          backdrop: { sx: { backdropFilter: 'blur(12px)', bgcolor: 'rgba(2, 6, 23, 0.7)' } },
+        }}
+        PaperProps={{
+          sx: {
+            borderRadius: '22px',
+            background: 'linear-gradient(180deg, #0F172A 0%, #0B132B 100%)',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
+            p: 1.5,
+            color: '#fff',
+          },
+        }}
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#FCA5A5' }}>
+            Delete user permanently
+          </Typography>
+          <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mt: 0.5, lineHeight: 1.5 }}>
+            This removes the app account, sessions, portfolios, budget data, access requests,
+            and the Supabase login for{' '}
+            <strong style={{ color: '#F8FAFC' }}>{deleteTarget?.email || deleteTarget?.user_id}</strong>.
+            This cannot be undone.
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ pt: '12px !important' }}>
+          <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.8 }}>
+            TYPE EMAIL TO CONFIRM
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.target.value)}
+            disabled={deleteLoading}
+            placeholder={deleteTarget?.email || deleteTarget?.user_id || ''}
+            sx={adminFieldSx}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setDeleteTarget(null)}
+            disabled={deleteLoading}
+            sx={{ color: '#94A3B8', textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleConfirmDeleteUser()}
+            disabled={
+              deleteLoading ||
+              !deleteTarget ||
+              deleteConfirm.trim().toLowerCase() !==
+                (deleteTarget.email || deleteTarget.user_id).trim().toLowerCase()
+            }
+            sx={{
+              borderRadius: '12px',
+              bgcolor: '#EF4444',
+              fontWeight: 700,
+              textTransform: 'none',
+              px: 2.5,
+              '&:hover': { bgcolor: '#DC2626' },
+            }}
+          >
+            {deleteLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Delete forever'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Snackbar notification */}
       <Snackbar

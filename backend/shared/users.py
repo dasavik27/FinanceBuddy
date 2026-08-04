@@ -335,6 +335,54 @@ def activate_by_email(email: str) -> None:
             invalidate(str(user_id))
 
 
+def get_account(user_id: str) -> Optional[dict]:
+    """Single app account summary for admin actions, or None if missing."""
+    if not user_id:
+        return None
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.status, u.role, u.created_at, u.last_seen_at,
+                   (
+                     SELECT i.email FROM identities i
+                     WHERE i.user_id = u.id AND i.email IS NOT NULL
+                     ORDER BY i.created_at ASC
+                     LIMIT 1
+                   ) AS email
+            FROM users u
+            WHERE u.id = %s
+            """,
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "user_id": str(row[0]),
+        "status": row[1],
+        "role": row[2],
+        "created_at": row[3].isoformat() if row[3] else None,
+        "last_seen_at": row[4].isoformat() if row[4] else None,
+        "email": row[5],
+    }
+
+
+def delete_access_requests_for_email(email: Optional[str]) -> int:
+    """Remove allowlist rows for an email (not FK-linked to users)."""
+    email_lower = (email or "").strip().lower()
+    if not email_lower:
+        return 0
+    with db.connect() as conn:
+        before = conn.execute(
+            "SELECT COUNT(*) FROM access_requests WHERE LOWER(email) = %s",
+            (email_lower,),
+        ).fetchone()[0]
+        conn.execute(
+            "DELETE FROM access_requests WHERE LOWER(email) = %s",
+            (email_lower,),
+        )
+        return int(before or 0)
+
+
 def suspend_by_email(email: str) -> Optional[str]:
     """
     Set status=suspended for every account linked to this email.

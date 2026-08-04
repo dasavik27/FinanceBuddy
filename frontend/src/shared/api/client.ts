@@ -745,6 +745,20 @@ export const apiClient = {
     const { data } = await api.patch(`/auth/users/${userId}`, payload)
     return data
   },
+
+  /** Admin: permanently delete an app account and cascaded data. */
+  deleteAppUser: async (userId: string): Promise<{
+    status: string
+    message: string
+    user_id: string
+    email: string | null
+    deleted_sessions: number
+    deleted_access_requests: number
+    supabase_deleted: boolean
+  }> => {
+    const { data } = await api.delete(`/auth/users/${userId}`)
+    return data
+  },
 }
 
 export default api
