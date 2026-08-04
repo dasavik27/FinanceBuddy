@@ -38,6 +38,11 @@ export function readAccessRequestEmail(): string | null {
   return sessionStorage.getItem(ACCESS_REQUEST_EMAIL_KEY)
 }
 
+export function clearAccessRequestEmail(): void {
+  sessionStorage.removeItem(ACCESS_REQUEST_EMAIL_KEY)
+}
+
 export function clearAuthLandingCache(): void {
   clearOAuthErrorCache()
+  clearAccessRequestEmail()
 }

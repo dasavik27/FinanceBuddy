@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box, Typography, Paper, TextField, Button, Alert, CircularProgress,
   InputAdornment, IconButton, Stack,
@@ -40,6 +40,15 @@ export default function AccountSetupPrompt({
   const [pan, setPan] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Always start blank on (re)mount — do not keep typed values across reload.
+  useEffect(() => {
+    setPassword('')
+    setConfirm('')
+    setShowPassword(false)
+    setPan('')
+    setError(null)
+  }, [])
 
   const title =
     requirePassword && requirePan

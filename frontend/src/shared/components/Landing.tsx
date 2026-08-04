@@ -22,7 +22,12 @@ import authClient, {
   consumeOAuthErrorFromUrl,
   lookupAccessNoticeForEmails,
 } from '../auth/authClient'
-import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
+import {
+  readAuthNotice,
+  readAccessRequestEmail,
+  rememberAccessRequestEmail,
+  clearAccessRequestEmail,
+} from '../auth/authNotice'
 
 /** Google's mark, inline so it needs no network request and no extra package. */
 const GoogleMark = () => (
@@ -84,12 +89,8 @@ export default function Landing() {
     setBanner(bannerForAccessStatus(st.access_request_status))
   }
 
-  const showStatusBanner = (
-    status: AccessRequestStatus | null | undefined,
-    emailValue?: string,
-  ) => {
+  const showStatusBanner = (status: AccessRequestStatus | null | undefined) => {
     setBanner(bannerForAccessStatus(status))
-    if (emailValue) setEmail(emailValue)
   }
 
   const handleCheckStatus = async () => {
@@ -103,7 +104,6 @@ export default function Landing() {
       })
       return
     }
-    rememberAccessRequestEmail(trimmed)
     setLoading(true)
     try {
       await applyAccessStatus(trimmed)
@@ -114,13 +114,24 @@ export default function Landing() {
     }
   }
 
-  // After sign-out (403): show access notice. After Google OAuth bounce: generic guidance.
+  // After sign-out (403) or OAuth bounce: show banner only — never pre-fill form fields.
   useEffect(() => {
     let cancelled = false
 
     const run = async () => {
+      // Fresh reload: leave email/password empty (ignore any previously remembered email).
+      setEmail('')
+      setPassword('')
+      setShowPassword(false)
+      setReqName('')
+      setReqEmail('')
+      setReqType('individual')
+      setReqNotes('')
+      setReqError(null)
+      setReqSuccess(null)
+
       const storedEmail = (readAccessRequestEmail() || '').trim()
-      if (storedEmail) setEmail((current) => current.trim() || storedEmail)
+      clearAccessRequestEmail()
 
       const notice = readAuthNotice()
       const oauthFailed = Boolean(consumeOAuthErrorFromUrl())
@@ -134,10 +145,7 @@ export default function Landing() {
               storedEmail,
             ])
             if (refreshed.access_request_status !== 'none') {
-              showStatusBanner(
-                refreshed.access_request_status,
-                refreshed.email || notice.email || undefined,
-              )
+              showStatusBanner(refreshed.access_request_status)
               setLoading(false)
               return
             }
@@ -145,18 +153,13 @@ export default function Landing() {
             // Fall back to stored notice below.
           }
         }
-        showStatusBanner(
-          notice.access_request_status,
-          notice.email || storedEmail || undefined,
-        )
+        showStatusBanner(notice.access_request_status)
         setLoading(false)
         return
       }
 
-      // Google failed (no Supabase Auth user) — keep it simple; user raises or checks by email.
       if (oauthFailed && !cancelled) {
         setBanner(bannerForOAuthNoAccount())
-        if (storedEmail) setEmail(storedEmail)
       }
 
       if (!cancelled) setLoading(false)
@@ -195,6 +198,7 @@ export default function Landing() {
     setLoading(true)
     setBanner(null)
     const emailTrim = email.trim()
+    // Remember only for this OAuth round-trip (cleared again when Landing remounts).
     if (emailTrim) rememberAccessRequestEmail(emailTrim)
     try {
       await authClient.signInWithGoogle(emailTrim || undefined)
@@ -235,7 +239,6 @@ export default function Landing() {
       } else {
         setReqSuccess(res.message || 'Access request submitted successfully.')
       }
-      rememberAccessRequestEmail(reqEmail.trim())
     } catch (err: any) {
       setReqError(err?.message || 'Failed to submit request. Please try again.')
     } finally {
@@ -376,7 +379,8 @@ export default function Landing() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
-              autoComplete="email"
+              autoComplete="off"
+              name="fb-signin-email"
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -408,7 +412,8 @@ export default function Landing() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
-              autoComplete="current-password"
+              autoComplete="off"
+              name="fb-signin-password"
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">

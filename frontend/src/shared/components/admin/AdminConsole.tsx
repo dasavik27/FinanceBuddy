@@ -88,6 +88,14 @@ export default function AdminConsole() {
   const [suspendEmail, setSuspendEmail] = useState('')
   const [suspendLoading, setSuspendLoading] = useState(false)
 
+  // Fresh page load: keep invite/suspend fields empty (avoid browser/session leftovers).
+  useEffect(() => {
+    setInviteName('')
+    setInviteEmail('')
+    setSuspendEmail('')
+    setAccountSearch('')
+  }, [])
+
   // User accounts
   const [accounts, setAccounts] = useState<AppUser[]>([])
   const [accountsLoading, setAccountsLoading] = useState(true)
