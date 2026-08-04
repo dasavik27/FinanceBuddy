@@ -226,6 +226,30 @@ def message_for_access_status(status: Optional[str]) -> str:
     )
 
 
+def _provision_deny_reason(conn, email: Optional[str]) -> str:
+    """Short reason for logs when first-time provisioning is denied."""
+    if _open_provision():
+        return "open_provision_enabled"  # should not deny
+    if not email:
+        return "no_email_on_token_or_supabase"
+    email_lower = email.strip().lower()
+    admins = _admin_emails()
+    if not admins:
+        admin_note = "FINANCEBUDDY_ADMIN_EMAILS_empty"
+    elif email_lower in admins:
+        return "is_admin_email"  # should not deny
+    else:
+        admin_note = "not_in_FINANCEBUDDY_ADMIN_EMAILS"
+    req = lookup_access_request_status(conn, email_lower)
+    if req == "approved":
+        return "has_approved_access"  # should not deny
+    if req == "pending":
+        return "has_pending_access"  # should not deny
+    if req:
+        return f"access_request_status={req};{admin_note}"
+    return f"no_access_request;{admin_note}"
+
+
 def _may_provision(conn, email: Optional[str]) -> bool:
     """True when a brand-new identity is allowed to create an app account."""
     if _open_provision():
@@ -449,19 +473,21 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
 
             if row is None:
                 if not _may_provision(conn, effective_email):
-                    has_pending = bool(
-                        effective_email and _has_pending_access(conn, effective_email)
-                    )
-                    logger.warning(
-                        "[AUTH] denied provisioning issuer=%s subject=%s email=%s pending_row=%s",
-                        issuer, subject, effective_email, has_pending,
-                    )
+                    deny_reason = _provision_deny_reason(conn, effective_email)
                     req_status = lookup_access_request_status(conn, effective_email)
+                    logger.warning(
+                        "[AUTH] denied provisioning reason=%s issuer=%s subject=%s "
+                        "email=%s access_request_status=%s admin_emails_configured=%s",
+                        deny_reason, issuer, subject, effective_email or "<none>",
+                        req_status or "none", bool(_admin_emails()),
+                    )
                     raise NotAuthorizedError(
                         message_for_access_status(req_status),
                         access_request_status=req_status or "none",
                     )
                 status, role = _initial_account_flags(conn, effective_email)
+                provision_why = _provision_deny_reason(conn, effective_email)
+                # _provision_deny_reason returns allow reasons too (is_admin_email, etc.)
                 user_id = conn.execute(
                     "INSERT INTO users (status, role) VALUES (%s, %s) RETURNING id",
                     (status, role),
@@ -484,8 +510,8 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                 ).fetchone()
                 user_id = winner[0] if winner else user_id
                 logger.info(
-                    "[AUTH] provisioned account for issuer=%s status=%s role=%s",
-                    issuer, status, role,
+                    "[AUTH] provisioned account why=%s email=%s user_id=%s status=%s role=%s",
+                    provision_why, effective_email or "<none>", user_id, status, role,
                 )
             else:
                 user_id = row[0]

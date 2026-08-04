@@ -52,7 +52,15 @@ def whoami():
     """The current account. The frontend uses this to decide if a session is live."""
     caller = identity.current_caller()
     if caller is None:
+        logger.warning(
+            "[AUTH] GET /auth/me → 401 Not signed in "
+            "(JWT missing/invalid — check reason=jwt_verify_failed or missing_authorization_header above)"
+        )
         raise HTTPException(status_code=401, detail="Not signed in.")
+    logger.info(
+        "[AUTH] GET /auth/me → 200 user_id=%s status=%s role=%s pan_set=%s",
+        caller.user_id, caller.status, caller.role, bool(caller.pan),
+    )
     return {
         "user_id": caller.user_id,
         "pan": caller.pan,

@@ -48,9 +48,9 @@ export interface AuthUser {
 export const REQUEST_ACCESS_MESSAGE =
   'You do not have access yet. Please submit an access request and wait for an administrator to approve you.'
 
-/** OAuth/sign-up disabled bounce — pending request may still exist. */
+/** OAuth/sign-up disabled bounce — no Supabase Auth user; guide to request or status check. */
 export const OAUTH_NO_ACCOUNT_MESSAGE =
-  'No login account exists yet. Enter your access-request email below to check status, or wait for an admin invite.'
+  'No login account yet. Raise an access request, or enter your request email in the field above and tap Check status.'
 
 const OAUTH_ERROR_KEY = 'fb_oauth_error_msg'
 

@@ -233,24 +233,52 @@ class IdentityMiddleware:
     def __init__(self, app):
         self.app = app
         self._verifier = oidc.from_env()
+        if self._verifier is None:
+            logger.warning(
+                "[AUTH] IdentityMiddleware started with no JWT verifier — "
+                "all /auth/me calls will be anonymous (401). Set SUPABASE_URL."
+            )
 
     def _caller(self, scope):
+        path = scope.get("path", "")
         if self._verifier is None:
+            if path.startswith("/auth/"):
+                logger.warning(
+                    "[AUTH] path=%s reason=no_verifier "
+                    "(SUPABASE_URL / AUTH_* not configured on this host)",
+                    path,
+                )
             return None
 
         headers = dict(scope.get("headers", []))
         raw_auth = headers.get(b"authorization")
         if not raw_auth:
+            if path == "/auth/me":
+                logger.info("[AUTH] path=/auth/me reason=missing_authorization_header → 401")
             return None
 
         value = raw_auth.decode("latin-1")
         if not value.lower().startswith("bearer "):
+            logger.warning(
+                "[AUTH] path=%s reason=authorization_not_bearer",
+                path,
+            )
             return None
 
         principal = self._verifier.verify(value[7:].strip())
         if principal is None:
-            logger.info("[AUTH] bearer token present but JWT verification failed")
+            logger.warning(
+                "[AUTH] path=%s reason=jwt_verify_failed "
+                "(see JWKS/HS256 rejection lines above)",
+                path,
+            )
             return None
+
+        if path.startswith("/auth/"):
+            logger.info(
+                "[AUTH] path=%s jwt_ok sub=%s email=%s → resolving app account",
+                path, principal.subject, principal.email or "<none>",
+            )
         return users.resolve(
             principal.issuer,
             principal.subject,
@@ -262,10 +290,15 @@ class IdentityMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
+        path = scope.get("path", "")
         try:
             caller = self._caller(scope)
         except users.NotAuthorizedError as exc:
             import json
+            logger.warning(
+                "[AUTH] path=%s reason=not_authorized access_request_status=%s message=%s",
+                path, exc.access_request_status, str(exc),
+            )
             body = json.dumps({
                 "detail": "not_authorized",
                 "message": str(exc) or users.message_for_access_status(None),
@@ -287,9 +320,12 @@ class IdentityMiddleware:
             caller = None
 
         with identity_scope(caller):
-            path = scope.get("path", "")
             if caller is not None and caller.status == "pending":
                 if path not in ("/auth/me", "/auth/logout"):
+                    logger.info(
+                        "[AUTH] path=%s reason=account_pending user_id=%s → 403",
+                        path, caller.user_id,
+                    )
                     body = b'{"detail":"Your account is pending approval."}'
                     await send({
                         "type": "http.response.start",
@@ -303,6 +339,10 @@ class IdentityMiddleware:
                     return
             if caller is not None and caller.status == "suspended":
                 if path not in ("/auth/me", "/auth/logout"):
+                    logger.info(
+                        "[AUTH] path=%s reason=account_suspended user_id=%s → 403",
+                        path, caller.user_id,
+                    )
                     body = b'{"detail":"Your account has been suspended."}'
                     await send({
                         "type": "http.response.start",

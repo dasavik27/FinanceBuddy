@@ -116,6 +116,17 @@ class OidcJwtVerifier:
             return None
 
         try:
+            alg = jwt.get_unverified_header(token).get("alg")
+        except jwt.PyJWTError:
+            alg = None
+        if alg == "HS256":
+            logger.warning(
+                "[AUTH] received HS256 token but verifier is JWKS-only — "
+                "set SUPABASE_JWT_SECRET on the backend (Supabase JWT Secret)"
+            )
+            return None
+
+        try:
             signing_key = self._jwks.get_signing_key_from_jwt(token)
         except Exception as e:
             # Unknown kid, unreachable JWKS, malformed header.
@@ -139,11 +150,15 @@ class OidcJwtVerifier:
                 },
             )
         except jwt.PyJWTError as e:
-            logger.info("[AUTH] token rejected: %s", type(e).__name__)
+            logger.warning(
+                "[AUTH] JWKS token rejected reason=%s expected_iss=%s expected_aud=%s",
+                type(e).__name__, self.issuer, self.audience,
+            )
             return None
 
         subject = claims.get("sub")
         if not subject:
+            logger.warning("[AUTH] JWKS token missing sub claim")
             return None
 
         return _principal_from_claims(claims, self.issuer)
@@ -228,7 +243,11 @@ class Hs256JwtVerifier:
                 },
             )
         except jwt.PyJWTError as e:
-            logger.info("[AUTH] HS256 token rejected: %s", type(e).__name__)
+            logger.warning(
+                "[AUTH] HS256 token rejected reason=%s expected_iss=%s expected_aud=%s "
+                "(check SUPABASE_JWT_SECRET matches Supabase JWT Secret)",
+                type(e).__name__, self.issuer, self.audience,
+            )
             return None
         return _principal_from_claims(claims, self.issuer)
 
@@ -253,17 +272,32 @@ class CompositeAuthVerifier:
         if not token:
             return None
         try:
-            alg = jwt.get_unverified_header(token).get("alg")
-        except jwt.PyJWTError:
+            header = jwt.get_unverified_header(token)
+            alg = header.get("alg")
+            kid = header.get("kid")
+        except jwt.PyJWTError as e:
+            logger.warning("[AUTH] malformed JWT header: %s", type(e).__name__)
             return None
 
-        if alg == "HS256" and self._hs256 is not None:
+        if alg == "HS256":
+            if self._hs256 is None:
+                logger.warning(
+                    "[AUTH] token alg=HS256 but SUPABASE_JWT_SECRET not set — "
+                    "cannot verify legacy Supabase JWT; set secret or rotate to asymmetric keys"
+                )
+                return None
             principal = self._hs256.verify(token)
-            if principal is not None:
-                return principal
+            if principal is None:
+                logger.warning("[AUTH] HS256 verify failed alg=%s kid=%s", alg, kid)
+            return principal
 
         if self._jwks is not None:
-            return self._jwks.verify(token)
+            principal = self._jwks.verify(token)
+            if principal is None:
+                logger.warning("[AUTH] JWKS verify failed alg=%s kid=%s", alg, kid)
+            return principal
+
+        logger.warning("[AUTH] no verifier for token alg=%s kid=%s", alg, kid)
         return None
 
 
@@ -309,6 +343,15 @@ def from_env(env: Optional[dict] = None) -> Optional[AuthVerifier]:
     hs256_verifier = Hs256JwtVerifier(jwt_secret, issuer, audience) if jwt_secret else None
 
     if hs256_verifier is not None:
-        logger.info("[AUTH] JWT verification: JWKS + legacy HS256 secret configured")
+        logger.info(
+            "[AUTH] JWT verification ready mode=jwks+hs256 issuer=%s audience=%s jwks=%s",
+            issuer, audience, jwks_url,
+        )
         return CompositeAuthVerifier(jwks_verifier, hs256_verifier)
+
+    logger.info(
+        "[AUTH] JWT verification ready mode=jwks-only issuer=%s audience=%s jwks=%s "
+        "(set SUPABASE_JWT_SECRET if tokens are still HS256)",
+        issuer, audience, jwks_url,
+    )
     return jwks_verifier

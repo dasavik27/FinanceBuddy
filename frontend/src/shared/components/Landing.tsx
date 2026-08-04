@@ -18,7 +18,7 @@ import authClient, {
   consumeOAuthErrorFromUrl,
   lookupAccessNoticeForEmails,
   normalizeAuthMessage,
-  REQUEST_ACCESS_MESSAGE,
+  OAUTH_NO_ACCOUNT_MESSAGE,
 } from '../auth/authClient'
 import { readAuthNotice, readAccessRequestEmail, rememberAccessRequestEmail } from '../auth/authNotice'
 
@@ -70,6 +70,8 @@ export default function Landing() {
   const showRaiseRequest = accessRequestStatus === 'none'
   const isPendingNotice = accessRequestStatus === 'pending'
   const showAccessInfo = showRaiseRequest || isPendingNotice || accessRequestStatus === 'approved'
+  // Offer both actions until we know they are pending/approved.
+  const showCheckStatus = showRaiseRequest
 
   const openRequestAccess = () => {
     if (email.trim()) setReqEmail(email.trim())
@@ -92,18 +94,26 @@ export default function Landing() {
     if (emailValue) setEmail(emailValue)
   }
 
-  const handleEmailBlur = async () => {
+  const handleCheckStatus = async () => {
     const trimmed = email.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      setError('Enter the email you used for your access request, then check status.')
+      setAccessRequestStatus('none')
+      return
+    }
     rememberAccessRequestEmail(trimmed)
+    setLoading(true)
     try {
       await applyAccessStatus(trimmed)
     } catch {
-      // Keep existing message if lookup fails (offline / misconfigured API).
+      setError('Could not check status. Please try again.')
+      setAccessRequestStatus(null)
+    } finally {
+      setLoading(false)
     }
   }
 
-  // After sign-out (403) or OAuth bounce: show message from access_requests lookup.
+  // After sign-out (403): show access notice. After Google OAuth bounce: generic guidance.
   useEffect(() => {
     let cancelled = false
 
@@ -112,7 +122,7 @@ export default function Landing() {
       if (storedEmail) setEmail((current) => current.trim() || storedEmail)
 
       const notice = readAuthNotice()
-      const oauthMessage = consumeOAuthErrorFromUrl()
+      const oauthFailed = Boolean(consumeOAuthErrorFromUrl())
 
       if (notice) {
         if (cancelled) return
@@ -144,28 +154,9 @@ export default function Landing() {
         return
       }
 
-      const emailHint = storedEmail
-      if (oauthMessage || emailHint) {
-        if (emailHint) {
-          try {
-            const refreshed = await lookupAccessNoticeForEmails([emailHint, storedEmail])
-            if (!cancelled) {
-              showAuthMessage(
-                refreshed.access_request_status !== 'none'
-                  ? refreshed.message
-                  : oauthMessage || refreshed.message,
-                refreshed.access_request_status !== 'none' ? refreshed.access_request_status : 'none',
-                refreshed.email || emailHint,
-              )
-            }
-          } catch {
-            if (!cancelled && oauthMessage) {
-              showAuthMessage(oauthMessage, 'none', emailHint)
-            }
-          }
-        } else if (!cancelled && oauthMessage) {
-          showAuthMessage(oauthMessage, 'none')
-        }
+      // Google failed (no Supabase Auth user) — keep it simple; user raises or checks by email.
+      if (oauthFailed && !cancelled) {
+        showAuthMessage(OAUTH_NO_ACCOUNT_MESSAGE, 'none', storedEmail || undefined)
       }
 
       if (!cancelled) setLoading(false)
@@ -209,16 +200,7 @@ export default function Landing() {
     try {
       await authClient.signInWithGoogle(emailTrim || undefined)
     } catch {
-      if (emailTrim) {
-        try {
-          await applyAccessStatus(emailTrim)
-        } catch {
-          setError('Could not start Google sign-in.')
-          setAccessRequestStatus(null)
-        }
-      } else {
-        setError('Could not start Google sign-in.')
-      }
+      showAuthMessage(OAUTH_NO_ACCOUNT_MESSAGE, 'none')
       setLoading(false)
     }
   }
@@ -386,7 +368,6 @@ export default function Landing() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onBlur={() => void handleEmailBlur()}
               disabled={loading}
               autoComplete="email"
               InputProps={{
@@ -460,15 +441,30 @@ export default function Landing() {
               <Alert
                 severity={showAccessInfo ? 'info' : 'error'}
                 action={
-                  showRaiseRequest ? (
-                    <Button
-                      color="inherit"
-                      size="small"
-                      onClick={openRequestAccess}
-                      sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
-                    >
-                      Raise request
-                    </Button>
+                  showRaiseRequest || showCheckStatus ? (
+                    <Box sx={{ display: 'flex', gap: 0.5, flexShrink: 0 }}>
+                      {showCheckStatus && (
+                        <Button
+                          color="inherit"
+                          size="small"
+                          onClick={() => void handleCheckStatus()}
+                          disabled={loading}
+                          sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
+                        >
+                          Check status
+                        </Button>
+                      )}
+                      {showRaiseRequest && (
+                        <Button
+                          color="inherit"
+                          size="small"
+                          onClick={openRequestAccess}
+                          sx={{ fontWeight: 700, textTransform: 'none', whiteSpace: 'nowrap' }}
+                        >
+                          Raise request
+                        </Button>
+                      )}
+                    </Box>
                   ) : undefined
                 }
                 sx={{
