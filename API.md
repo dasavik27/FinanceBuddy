@@ -32,32 +32,88 @@ Authorization: Bearer <supabase_access_token>
 ### Which token
 
 Use the Supabase session **`access_token`** (JWT), not a refresh token and not a
-custom API key.
+custom API key / service role key.
 
 | Client | How to get it |
 |---|---|
-| Web app | `authClient.getAccessToken()` → Axios interceptor sets the header (`frontend/src/shared/api/client.ts`) |
-| Manual / curl | Sign in (app or Supabase), copy `session.access_token` from the browser session, or mint via Supabase Auth APIs |
-| OpenAPI “Try it out” | Authorize with the same Bearer JWT |
+| Web app | `authClient.getAccessToken()` → Axios interceptor sets the header |
+| curl / Postman | Mint via Supabase password grant (below), or copy from a signed-in browser |
+| Swagger (`/docs`) | **Authorize** → paste the JWT (no `Bearer ` prefix) |
 
 The backend verifies the JWT against Supabase JWKS (`shared/oidc.py`; asymmetric
 ES256/RS256), then resolves or creates the app account via `users.resolve()`.
 
-### Public routes (no token)
+The account email must be **allowlisted** (approved invite / access request, or
+admin email). A valid JWT for an unknown email returns `403 not_authorized`.
 
-These work **without** `Authorization`:
+---
 
-- `POST /auth/access-status`
-- `POST /auth/request-access`
-- `GET /health`
+## How to generate a token (API-only testing)
 
-Sending a token on public routes is ignored for authz; they do not create a
-session by themselves.
+There is no FinanceBuddy “login” endpoint that returns a JWT. Tokens come from
+**Supabase Auth**. Use an invitee account that already has a password.
 
-### Example: who am I
+### 1) Password grant (recommended for curl / Swagger)
+
+Use your Supabase project URL and the **anon / publishable** key
+(`VITE_SUPABASE_ANON_KEY` — never the service role key in the browser or docs examples):
 
 ```bash
-# After you have a Supabase access_token for an allowlisted user:
+# Windows PowerShell: $env:SUPABASE_URL, $env:SUPABASE_ANON_KEY
+export SUPABASE_URL="https://YOUR_REF.supabase.co"
+export SUPABASE_ANON_KEY="your-anon-key"
+
+curl -s "$SUPABASE_URL/auth/v1/token?grant_type=password" \
+  -H "apikey: $SUPABASE_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"your-password"}'
+```
+
+Response includes:
+
+```json
+{
+  "access_token": "eyJhbGciOi…",
+  "refresh_token": "…",
+  "expires_in": 3600,
+  "token_type": "bearer"
+}
+```
+
+Copy **`access_token`** only:
+
+```bash
+export ACCESS_TOKEN="eyJhbGciOi…"   # paste access_token value
+```
+
+Tokens expire (`expires_in`, often ~1 hour). Mint a new one when calls start
+returning `401`.
+
+### 2) From a signed-in browser session
+
+1. Sign in to the web app with the same allowlisted user.
+2. DevTools → Application → Local Storage → key like `sb-<ref>-auth-token`.
+3. Open the JSON and copy `access_token`.
+
+Or in the browser console on the app origin (if the client is loaded):
+
+```js
+const raw = localStorage.getItem(
+  Object.keys(localStorage).find((k) => k.includes('-auth-token'))
+)
+JSON.parse(raw).access_token
+```
+
+### 3) Use the token in Swagger
+
+1. Open `http://localhost:8000/docs` (or your Render `/docs`).
+2. Click **Authorize**.
+3. Paste the **access_token** JWT only (Swagger adds `Bearer `).
+4. **Try it out** on e.g. `GET /auth/me`.
+
+### 4) Use the token with curl
+
+```bash
 curl -s http://localhost:8000/auth/me \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
@@ -67,18 +123,28 @@ Example response:
 ```json
 {
   "user_id": "…",
+  "email": "you@example.com",
   "pan": "ABCDE1234F",
+  "display_name": null,
   "status": "active",
   "role": "admin"
 }
 ```
 
-### Example: domain call
+Domain example:
 
 ```bash
 curl -s "http://localhost:8000/mutual-funds/overview/$SESSION_ID/summary" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
+
+### Public routes (no token)
+
+These work **without** `Authorization`:
+
+- `POST /auth/access-status`
+- `POST /auth/request-access`
+- `GET /health`
 
 ### Common status codes
 

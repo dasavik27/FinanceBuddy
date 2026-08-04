@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from shared import db, identity, janitor, oidc, session_stores, users
 from shared.identity import identity_scope
@@ -139,12 +140,33 @@ async def lifespan(app: FastAPI):
     db.close_pool()
 
 
+_API_DESCRIPTION = """
+Smart Wealth Dashboard, Mutual Fund Portfolio Analytics, and Tax Expert Engine.
+
+## Authentication (Swagger)
+
+Most routes need a Supabase **`access_token` JWT**.
+
+1. Mint a token (email/password) — see **API.md → How to generate a token**
+2. Click **Authorize** (top right) and paste the JWT only (no `Bearer ` prefix)
+3. Use **Try it out** — Swagger sends `Authorization: Bearer <token>`
+
+Public (no token): `GET /health`, `POST /auth/access-status`, `POST /auth/request-access`.
+"""
+
 app = FastAPI(
     title="Finance Buddy API",
-    description="Smart Wealth Dashboard, Mutual Fund Portfolio Analytics, and Tax Expert Engine",
+    description=_API_DESCRIPTION,
     version="8.1.0",
     lifespan=lifespan,
 )
+
+# Paths that stay callable without Authorize in Swagger (still work with a token).
+_OPENAPI_PUBLIC = {
+    ("get", "/health"),
+    ("post", "/auth/access-status"),
+    ("post", "/auth/request-access"),
+}
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -501,3 +523,51 @@ def health_cache():
     if not identity.current_user_id():
         raise HTTPException(status_code=401, detail="Authentication required.")
     return cache_stats()
+
+
+def custom_openapi():
+    """
+    Expose HTTP Bearer in OpenAPI so Swagger UI gets an Authorize button.
+
+    Auth is enforced by IdentityMiddleware (not FastAPI Depends), so without this
+    the schema has no securitySchemes and Try it out cannot send a token.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    components = schema.setdefault("components", {})
+    components["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": (
+                "Supabase session **access_token** (JWT). "
+                "Paste the raw token — Swagger adds the `Bearer ` prefix. "
+                "Generate via Supabase password grant or copy from a signed-in browser session "
+                "(see API.md)."
+            ),
+        }
+    }
+    # Default: require Bearer. Public ops override to security: [] so Authorize is optional.
+    schema["security"] = [{"BearerAuth": []}]
+    for path, path_item in schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if method.startswith("x-") or not isinstance(operation, dict):
+                continue
+            if (method.lower(), path) in _OPENAPI_PUBLIC:
+                operation["security"] = []
+            else:
+                operation.setdefault("security", [{"BearerAuth": []}])
+
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
