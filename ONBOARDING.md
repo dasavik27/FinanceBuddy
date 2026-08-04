@@ -101,8 +101,8 @@ flowchart LR
 4. **Unapproved sign-in** — No `users` row is created; middleware returns
    `403 not_authorized`. The landing page calls `POST /auth/access-status` to
    show “already submitted” vs “raise request”.
-5. **After active** — User completes password/PAN setup if missing
-   (`AccountSetupPrompt`), then reaches the dashboard. Later edits (display name,
+5. **After active** — Invite/recovery users set a **password** first (one screen),
+   then **PAN** if missing (a separate one-time screen). Later edits (display name,
    PAN, password) are on **Profile** (`/profile`, badge menu). Data export/delete
    stay on **Data vault** (`/accounts`). Admins see **Admin Console** in the
    badge menu (`role=admin`).
@@ -111,9 +111,9 @@ flowchart LR
 
 | Section | Purpose |
 |---|---|
-| Access requests | Review leads, approve (invite email), reject |
+| Access requests | Review leads; approve (invite email); delete request (no suspend on this list) |
 | Invite user | Direct allowlist + Supabase invite without a prior request |
-| Suspend user | Set `users.status = suspended` and ban in Supabase when configured |
+| Suspend user | Separate control for existing app accounts (`users.status = suspended`) |
 | User accounts | List accounts; set status/role; permanent delete |
 
 API catalog and Bearer token usage: **[API.md](API.md)**.  

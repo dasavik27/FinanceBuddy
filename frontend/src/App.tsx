@@ -114,27 +114,32 @@ export default function App() {
 
   if (resolvingSession) return <TabFallback />
 
-  const requirePassword = isAuthenticated && needsPasswordSetup
-  // PAN only after we know the account is usable (not pending/suspended).
-  const requirePan =
-    isAuthenticated && Boolean(status) && status !== 'pending' && status !== 'suspended' && !pan
-
-  // Profile (status/role) is loaded after the Supabase session; wait unless we only
-  // need a password from an invite link (that can run before /auth/me finishes).
-  if (isAuthenticated && !status && !requirePassword) {
+  // Wait for /auth/me before any setup gate. Showing password before status/pan
+  // arrives used to mean: password (+PAN) screen, then a second PAN-only screen.
+  if (isAuthenticated && !status) {
     return <TabFallback />
   }
+
+  const requirePassword = isAuthenticated && needsPasswordSetup
+  // Single PAN gate — only after password setup (if any) and only when active.
+  const requirePan =
+    isAuthenticated &&
+    !requirePassword &&
+    status !== 'pending' &&
+    status !== 'suspended' &&
+    !pan
 
   if (isAuthenticated && status === 'suspended') {
     return <SuspendedAccess />
   }
 
-  // One setup screen: password and/or PAN — only the sections this user still needs.
-  if (requirePassword || requirePan) {
+  // Password first (invite/recovery), then PAN alone if still missing — never both
+  // on one screen, and never PAN twice.
+  if (requirePassword) {
     return (
       <AccountSetupPrompt
-        requirePassword={requirePassword}
-        requirePan={requirePan}
+        requirePassword
+        requirePan={false}
         onPasswordComplete={() => setNeedsPasswordSetup(false)}
       />
     )
@@ -142,6 +147,16 @@ export default function App() {
 
   if (isAuthenticated && status === 'pending') {
     return <PendingAccess />
+  }
+
+  if (requirePan) {
+    return (
+      <AccountSetupPrompt
+        requirePassword={false}
+        requirePan
+        onPasswordComplete={() => setNeedsPasswordSetup(false)}
+      />
+    )
   }
 
   // A skeleton fallback rather than null: `null` renders a blank white screen for

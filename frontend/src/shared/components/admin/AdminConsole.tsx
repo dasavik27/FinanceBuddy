@@ -252,25 +252,6 @@ export default function AdminConsole() {
     }
   }
 
-  const handleSuspendFromRow = async (email: string) => {
-    setActionLoading(true)
-    try {
-      const res = await apiClient.suspendUser(email)
-      setSnackbarMsg({
-        text: res.message || `Suspended ${email}`,
-        severity: res.supabase_banned ? 'success' : 'warning',
-      })
-      await fetchAccounts(true)
-    } catch (err: any) {
-      setSnackbarMsg({
-        text: err?.response?.data?.detail || err?.message || 'Failed to suspend user.',
-        severity: 'error',
-      })
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
   const handleSaveAccount = async (userId: string) => {
     const draft = accountDrafts[userId]
     const original = accounts.find((a) => a.user_id === userId)
@@ -782,17 +763,7 @@ export default function AdminConsole() {
                                 Re-invite
                               </Button>
                             </Tooltip>
-                            <Tooltip title="Suspend app access" arrow>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleSuspendFromRow(req.email)}
-                                disabled={actionLoading}
-                                sx={{ color: '#64748B', '&:hover': { color: '#F87171' } }}
-                              >
-                                <BlockIcon sx={{ fontSize: 18 }} />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete record" arrow>
+                            <Tooltip title="Delete request record" arrow>
                               <IconButton size="small" onClick={() => handleReject(req)} disabled={actionLoading} sx={{ color: '#64748B', '&:hover': { color: '#EF4444' } }}>
                                 <DeleteOutlineIcon sx={{ fontSize: 18 }} />
                               </IconButton>

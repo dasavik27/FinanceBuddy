@@ -420,7 +420,7 @@ admin approval without a full page reload.
 | `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
 | `PendingAccess.tsx` | Signed in, `status=pending` |
 | `SuspendedAccess.tsx` | Signed in, `status=suspended` |
-| `AccountSetupPrompt` | Signed in, active; first-time password setup and/or missing PAN |
+| `AccountSetupPrompt` | First-time only: password screen (invite/recovery), then PAN-only if still missing |
 | `ProfilePage.tsx` | Route `/profile` (badge → Profile); display name, PAN, password; link to data vault |
 | `AccountsDashboard` | Route `/accounts` (badge → Data vault); export / delete account data |
 | `AdminConsole.tsx` | Route `/admin`; admin-only actions |

@@ -22,7 +22,10 @@ type Props = {
 }
 
 /**
- * Single setup screen: only shows password and/or PAN sections the user still needs.
+ * First-time setup for one concern at a time.
+ *
+ * App shows password (invite/recovery) first, then a separate PAN-only screen if
+ * the account is active and still has no PAN. Profile edits later go to /profile.
  */
 export default function AccountSetupPrompt({
   requirePassword,
