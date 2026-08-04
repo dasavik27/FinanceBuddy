@@ -55,6 +55,9 @@ _CACHE_TTL_SECONDS = 300
 _CACHE_MAX_ENTRIES = 512
 _cache: "OrderedDict[Tuple[str, str], Tuple[float, Caller]]" = OrderedDict()
 _cache_lock = threading.RLock()
+# Throttle last_seen_at writes — cache hits already skip DB; this caps writes on miss.
+_last_seen_written: dict = {}
+_LAST_SEEN_MIN_INTERVAL = 120.0
 
 
 def _cache_get(key: Tuple[str, str]) -> Optional[Caller]:
@@ -88,13 +91,21 @@ def invalidate(user_id: Optional[str] = None) -> None:
             _cache.pop(key, None)
 
 
-def _admin_emails() -> set:
-    import os
-    from dotenv import load_dotenv
+# Memoized — resolve() hits this on cache miss; do not re-read .env from disk.
+_admin_emails_cache: Optional[frozenset] = None
 
-    load_dotenv(override=True)
+
+def _admin_emails() -> set:
+    global _admin_emails_cache
+    if _admin_emails_cache is not None:
+        return set(_admin_emails_cache)
+    import os
+
     admin_env = (os.getenv("FINANCEBUDDY_ADMIN_EMAILS") or os.getenv("ADMIN_EMAILS") or "").strip()
-    return {e.strip().lower() for e in admin_env.split(",") if e.strip()}
+    _admin_emails_cache = frozenset(
+        e.strip().lower() for e in admin_env.split(",") if e.strip()
+    )
+    return set(_admin_emails_cache)
 
 
 def _has_approved_access(conn, email: str) -> bool:
@@ -123,20 +134,35 @@ def _identity_email(conn, issuer: str, subject: str) -> Optional[str]:
     return None
 
 
+# subject -> (expires_at, email|None). Avoids a Supabase Admin RTT on every
+# Google login when the JWT omits email but we already looked it up.
+_supabase_email_cache: dict = {}
+_SUPABASE_EMAIL_TTL_SECONDS = 300.0
+
+
 def _email_from_supabase(subject: str) -> Optional[str]:
     """Resolve email from Supabase Auth when the access token omits the claim (common with Google)."""
     import json
     import os
-    import urllib.error
     import urllib.request
+
+    if not subject:
+        return None
+
+    cached = _supabase_email_cache.get(subject)
+    if cached is not None:
+        expires_at, email = cached
+        if expires_at > time.time():
+            return email
 
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_role_key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
     ).strip()
-    if not supabase_url or not service_role_key or not subject:
+    if not supabase_url or not service_role_key:
         return None
 
+    email: Optional[str] = None
     try:
         req = urllib.request.Request(
             f"{supabase_url}/auth/v1/admin/users/{subject}",
@@ -151,19 +177,19 @@ def _email_from_supabase(subject: str) -> Optional[str]:
         if isinstance(data, dict):
             nested = data.get("user")
             if isinstance(nested, dict):
-                email = (nested.get("email") or "").strip().lower()
+                email = (nested.get("email") or "").strip().lower() or None
             else:
-                email = (data.get("email") or "").strip().lower()
-        else:
-            email = ""
+                email = (data.get("email") or "").strip().lower() or None
         if email:
             logger.info("[AUTH] resolved email from Supabase admin for subject=%s", subject)
-            return email
-        logger.warning("[AUTH] Supabase admin user %s has no email in response", subject)
-        return None
+        else:
+            logger.warning("[AUTH] Supabase admin user %s has no email in response", subject)
     except Exception as exc:
         logger.warning("[AUTH] Supabase admin user lookup failed for %s: %s", subject, exc)
-        return None
+        email = None
+
+    _supabase_email_cache[subject] = (time.time() + _SUPABASE_EMAIL_TTL_SECONDS, email)
+    return email
 
 
 def _resolve_email(
@@ -547,9 +573,13 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
                 )
             else:
                 user_id = row[0]
-                conn.execute(
-                    "UPDATE users SET last_seen_at = now() WHERE id = %s", (user_id,)
-                )
+                uid_key = str(user_id)
+                now = time.time()
+                if now - float(_last_seen_written.get(uid_key, 0)) >= _LAST_SEEN_MIN_INTERVAL:
+                    conn.execute(
+                        "UPDATE users SET last_seen_at = now() WHERE id = %s", (user_id,)
+                    )
+                    _last_seen_written[uid_key] = now
                 if email:
                     conn.execute(
                         """
@@ -645,12 +675,89 @@ def find_pan(user_id: str) -> Optional[str]:
         return None
 
 
+def find_display_name(user_id: str) -> Optional[str]:
+    """Preferred name shown in the app, if the user has set one."""
+    try:
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT display_name FROM profiles WHERE user_id = %s", (user_id,)
+            ).fetchone()
+        if not row or not row[0]:
+            return None
+        name = str(row[0]).strip()
+        return name or None
+    except Exception as e:
+        logger.error("[AUTH] display_name lookup failed: %s", e)
+        return None
+
+
+def primary_email(user_id: str) -> Optional[str]:
+    """First linked identity email for the account, if any."""
+    try:
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT email FROM identities
+                WHERE user_id = %s AND email IS NOT NULL AND BTRIM(email) <> ''
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+        return str(row[0]).strip().lower() if row and row[0] else None
+    except Exception as e:
+        logger.error("[AUTH] email lookup failed: %s", e)
+        return None
+
+
+def set_display_name(user_id: str, raw_name: str) -> Optional[str]:
+    """
+    Set or clear the profile display name.
+
+    Empty / whitespace clears it (returns None). Max length 64 after strip.
+    """
+    if raw_name is None:
+        return None
+    clean = str(raw_name).strip()
+    if len(clean) > 64:
+        clean = clean[:64].rstrip()
+    with db.connect() as conn:
+        if not clean:
+            conn.execute(
+                """
+                INSERT INTO profiles (user_id, display_name) VALUES (%s, NULL)
+                ON CONFLICT (user_id) DO UPDATE
+                    SET display_name = NULL, updated_at = now()
+                """,
+                (user_id,),
+            )
+            return None
+        conn.execute(
+            """
+            INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
+            ON CONFLICT (user_id) DO UPDATE
+                SET display_name = EXCLUDED.display_name, updated_at = now()
+            """,
+            (user_id, clean),
+        )
+    return clean
+
+
 def set_pan(user_id: str, raw_pan: str) -> Optional[str]:
     """Attach a PAN to an account. Returns the normalized value, or None if invalid."""
     pan = identity.normalize_pan(raw_pan)
     if not pan:
         return None
     with db.connect() as conn:
+        existing = conn.execute(
+            "SELECT pan_encrypted FROM profiles WHERE user_id = %s",
+            (user_id,),
+        ).fetchone()
+        if existing and existing[0]:
+            current = _decrypt_pan(existing[0], user_id)
+            if current == pan:
+                # No ciphertext rewrite / cache bust when the value is unchanged.
+                return pan
         conn.execute(
             """
             INSERT INTO profiles (user_id, pan_encrypted) VALUES (%s, %s)

@@ -5,14 +5,13 @@ import SyncIcon from '@mui/icons-material/Sync'
 import SecurityIcon from '@mui/icons-material/Security'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import LogoutIcon from '@mui/icons-material/Logout'
+import PersonOutlineIcon from '@mui/icons-material/PersonOutline'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useLastSynced, useRefreshTrigger, usePan, useLogout, useIsAuthenticated, useAppStore, useUserRole } from '../../store/appStore'
-import ProfilePanDialog from '../ProfilePanDialog'
-import BadgeIcon from '@mui/icons-material/Badge'
 import { apiClient } from '../../api/client'
 
 interface TopbarProps {
@@ -25,14 +24,14 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
   const queryClient = useQueryClient()
   const pan = usePan()
   const email = useAppStore((s) => s.email)
+  const displayName = useAppStore((s) => s.displayName)
   const role = useUserRole()
   const isAuthenticated = useIsAuthenticated()
-  const [panDialogOpen, setPanDialogOpen] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const logout = useLogout()
 
-  const accountLabel = pan ?? email ?? 'Account'
-  const avatarInitials = (pan ?? email ?? '?').substring(0, 2).toUpperCase()
+  const accountLabel = displayName || pan || email || 'Account'
+  const avatarInitials = (displayName || pan || email || '?').substring(0, 2).toUpperCase()
   const navigate = useNavigate()
   const location = useLocation()
   const lastSynced = useLastSynced()
@@ -297,14 +296,12 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                 </Box>
 
                 <MenuItem
-                  onClick={() => { setProfileAnchor(null); setPanDialogOpen(true); }}
+                  onClick={() => { setProfileAnchor(null); navigate('/profile'); }}
                   sx={{ color: '#F8FAFC' }}
                 >
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
-                    <BadgeIcon sx={{ fontSize: 18, color: pan ? '#38BDF8' : '#FBBF24' }} />
-                    <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>
-                      {pan ? 'Update PAN' : 'Add your PAN'}
-                    </Typography>
+                    <PersonOutlineIcon sx={{ fontSize: 18, color: '#38BDF8' }} />
+                    <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Profile</Typography>
                   </Box>
                 </MenuItem>
 
@@ -314,7 +311,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                 >
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
                     <SecurityIcon sx={{ fontSize: 18, color: '#4EDE93' }} />
-                    <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Account</Typography>
+                    <Typography sx={{ fontWeight: 700, fontSize: '0.875rem' }}>Data vault</Typography>
                   </Box>
                 </MenuItem>
 
@@ -351,12 +348,6 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
           )}
         </Stack>
       </Toolbar>
-
-      {/* Profile PAN update dialog accessible from account menu */}
-      <ProfilePanDialog
-        open={panDialogOpen}
-        onClose={() => setPanDialogOpen(false)}
-      />
     </AppBar>
   )
 }

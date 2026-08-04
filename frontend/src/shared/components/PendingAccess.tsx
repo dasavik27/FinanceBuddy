@@ -12,9 +12,11 @@ export default function PendingAccess() {
   const userId = useAppStore((s) => s.userId)
 
   // Poll so the user lands in the app shortly after an admin approves, without a full reload.
+  // Skip ticks while the tab is hidden to avoid burning auth/me on background tabs.
   useEffect(() => {
     let cancelled = false
     const tick = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return
       try {
         const me = await apiClient.getMe()
         if (cancelled) return
@@ -31,10 +33,15 @@ export default function PendingAccess() {
       }
     }
     const id = window.setInterval(tick, 15000)
+    const onVisible = () => {
+      if (!document.hidden) void tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     void tick()
     return () => {
       cancelled = true
       window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [setIdentity, userId])
 

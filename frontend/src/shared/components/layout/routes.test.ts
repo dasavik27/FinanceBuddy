@@ -26,6 +26,7 @@ const ROUTES = [
   { path: 'tax-expert/*' },
   { path: 'budget/*' },
   { path: 'accounts' },
+  { path: 'profile' },
   { path: 'admin' },
   { path: 'dashboard/*' },
   { path: 'holdings' },
@@ -58,6 +59,7 @@ describe('top-level domain routes', () => {
     ['/budget', 'budget/*'],
     ['/budget/anything/deep', 'budget/*'],
     ['/accounts', 'accounts'],
+    ['/profile', 'profile'],
     ['/admin', 'admin'],
   ])('%s resolves to %s', (pathname, expected) => {
     expect(matched(pathname)).toBe(expected)

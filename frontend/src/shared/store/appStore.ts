@@ -29,11 +29,13 @@ interface AppState {
   /** The account id the server issued. Null when signed out. */
   userId: string | null
   email: string | null
+  displayName: string | null
   status: 'pending' | 'active' | 'suspended' | null
   role: 'user' | 'admin' | null
   setIdentity: (identity: {
     userId: string | null
     email?: string | null
+    displayName?: string | null
     pan?: string | null
     status?: 'pending' | 'active' | 'suspended' | null
     role?: 'user' | 'admin' | null
@@ -78,12 +80,14 @@ export const useAppStore = create<AppState>()(
 
       userId: null,
       email: null,
+      displayName: null,
       status: null,
       role: null,
-      setIdentity: ({ userId, email, pan, status, role }) =>
+      setIdentity: ({ userId, email, displayName, pan, status, role }) =>
         set((state) => ({
           userId,
           email: email !== undefined ? email : state.email,
+          displayName: displayName !== undefined ? displayName : state.displayName,
           pan: pan !== undefined ? pan : state.pan,
           status: status !== undefined ? status : state.status,
           role: role !== undefined ? role : state.role,
@@ -99,6 +103,7 @@ export const useAppStore = create<AppState>()(
         set({
           userId: null,
           email: null,
+          displayName: null,
           pan: null,
           status: null,
           role: null,
@@ -216,6 +221,7 @@ export const useAppStore = create<AppState>()(
         set({
           userId: null,
           email: null,
+          displayName: null,
           pan: null,
           status: null,
           role: null,
@@ -244,6 +250,7 @@ export const useAppStore = create<AppState>()(
         // Not the access token - the auth client owns that, including refresh.
         userId: state.userId,
         email: state.email,
+        displayName: state.displayName,
         pan: state.pan, 
         taxRegime: state.taxRegime, 
         taxSessionId: state.taxSessionId,

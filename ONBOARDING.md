@@ -79,7 +79,7 @@ flowchart LR
   B -->|Admin approve| C
   C -->|Supabase invite email| D[Supabase Auth user]
   D -->|First sign-in| E[users row created]
-  E -->|status active| F[PAN prompt then dashboard]
+  E -->|status active| F[Account setup then dashboard]
   E -->|status pending| G[PendingAccess screen]
   G -->|Admin activates| F
 ```
@@ -101,8 +101,11 @@ flowchart LR
 4. **Unapproved sign-in** — No `users` row is created; middleware returns
    `403 not_authorized`. The landing page calls `POST /auth/access-status` to
    show “already submitted” vs “raise request”.
-5. **After active** — User completes mandatory PAN if missing, then reaches the
-   dashboard. Admins see **Admin Console** in the profile menu (`role=admin`).
+5. **After active** — User completes password/PAN setup if missing
+   (`AccountSetupPrompt`), then reaches the dashboard. Later edits (display name,
+   PAN, password) are on **Profile** (`/profile`, badge menu). Data export/delete
+   stay on **Data vault** (`/accounts`). Admins see **Admin Console** in the
+   badge menu (`role=admin`).
 
 **Admin Console** (`/admin`, visible when `GET /auth/me` returns `role: admin`):
 

@@ -60,25 +60,28 @@ export default function App() {
   useEffect(() => {
     if (!authClient.isConfigured) return
 
-    // Fires once on mount with the restored session (or null), then on every
-    // sign-in, sign-out and token refresh.
+    // Fires once on mount with the restored session (or null), then on sign-in /
+    // sign-out (token refresh is ignored in authClient — no extra /auth/me).
+    let cancelled = false
     const unsubscribe = authClient.onAuthStateChange(async (user) => {
       setNeedsPasswordSetup(isPasswordSetupRequired())
       if (user) {
-        const profile = (await authClient.getUser()) ?? user
-        setIdentity({ userId: profile.id, email: profile.email })
+        // Session already has id/email — skip authClient.getUser() (extra Supabase RTT).
+        setIdentity({ userId: user.id, email: user.email })
         try {
           const me = await apiClient.getMe()
+          if (cancelled) return
           setIdentity({
-            userId: profile.id,
-            email: profile.email,
+            userId: user.id,
+            email: me.email ?? user.email,
+            displayName: me.display_name,
             pan: me.pan,
             status: me.status,
             role: me.role,
           })
         } catch (e: unknown) {
+          if (cancelled) return
           let notice = await lookupAccessNoticeForEmails([
-            profile.email,
             user.email,
             readAccessRequestEmail(),
           ])
@@ -88,7 +91,7 @@ export default function App() {
               notice = {
                 message: unauthorized.message,
                 access_request_status: unauthorized.access_request_status,
-                email: profile.email ?? user.email,
+                email: user.email,
               }
             } else {
               notice = { ...notice, message: unauthorized.message }
@@ -96,14 +99,17 @@ export default function App() {
           }
           writeAuthNotice(notice)
           await authClient.signOut()
-          clearIdentity()
+          if (!cancelled) clearIdentity()
         }
-      } else {
+      } else if (!cancelled) {
         clearIdentity()
       }
-      setResolvingSession(false)
+      if (!cancelled) setResolvingSession(false)
     })
-    return unsubscribe
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [setIdentity, clearIdentity])
 
   if (resolvingSession) return <TabFallback />

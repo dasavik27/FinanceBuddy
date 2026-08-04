@@ -37,6 +37,12 @@ class ProfileRequest(BaseModel):
     pan: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    """Optional fields the signed-in user may edit on /profile."""
+
+    display_name: Optional[str] = None
+
+
 class AccessRequestPayload(BaseModel):
     name: str
     email: str
@@ -80,16 +86,43 @@ def whoami():
             "(no caller — check JWT verify logs, or identity resolve / schema migration errors above)"
         )
         raise HTTPException(status_code=401, detail="Not signed in.")
+    display_name = users.find_display_name(caller.user_id)
+    email = users.primary_email(caller.user_id)
     logger.info(
         "[AUTH] GET /auth/me → 200 user_id=%s status=%s role=%s pan_set=%s",
         caller.user_id, caller.status, caller.role, bool(caller.pan),
     )
     return {
         "user_id": caller.user_id,
+        "email": email,
         "pan": caller.pan,
+        "display_name": display_name,
         "status": caller.status,
         "role": caller.role,
     }
+
+
+@router.put("/profile")
+def update_profile(req: ProfileUpdateRequest):
+    """
+    Update editable profile fields (display name today).
+
+    PAN stays on PUT /auth/profile/pan so the onboarding dialog and CAS flow keep a
+    narrow, validated contract. Password is changed via Supabase Auth on the client.
+    """
+    caller = identity.current_caller()
+    if caller is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if caller.status != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="Profile updates are available after your account is active.",
+        )
+
+    out: dict = {"status": "success"}
+    if req.display_name is not None:
+        out["display_name"] = users.set_display_name(caller.user_id, req.display_name)
+    return out
 
 
 @router.put("/profile/pan")
@@ -192,19 +225,25 @@ class ApproveAccessRequestPayload(BaseModel):
     password: Optional[str] = None
 
 
+_supabase_admin_cached: Optional[tuple] = None  # (url, key) or (None, None)
+
+
 def _supabase_admin_config():
     """Returns (supabase_url, service_role_key) or (None, None) if not configured."""
+    global _supabase_admin_cached
+    if _supabase_admin_cached is not None:
+        return _supabase_admin_cached
     import os
-    from dotenv import load_dotenv
 
-    load_dotenv(override=True)
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_role_key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
     ).strip()
     if not supabase_url or not service_role_key:
-        return None, None
-    return supabase_url, service_role_key
+        _supabase_admin_cached = (None, None)
+    else:
+        _supabase_admin_cached = (supabase_url, service_role_key)
+    return _supabase_admin_cached
 
 
 def _supabase_admin_headers(service_role_key: str) -> dict:
@@ -351,12 +390,7 @@ def _assert_admin(caller) -> None:
     if getattr(caller, "role", None) == "admin":
         return
 
-    import os
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-
-    admin_env = (os.getenv("FINANCEBUDDY_ADMIN_EMAILS") or os.getenv("ADMIN_EMAILS") or "").strip()
-    admin_emails = {e.strip().lower() for e in admin_env.split(",") if e.strip()}
+    admin_emails = users._admin_emails()
     if not admin_emails:
         raise HTTPException(
             status_code=403,

@@ -39,6 +39,23 @@ const supabase: SupabaseClient | null = isConfigured
     })
   : null
 
+/** Soft cache for Bearer tokens — avoid getSession() on every Axios call. */
+let _accessTokenCache: { token: string; freshUntilMs: number } | null = null
+
+function _tokenFreshUntilMs(token: string, nowMs: number): number {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return nowMs + 30_000
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    const expSec = typeof json?.exp === 'number' ? json.exp : 0
+    if (!expSec) return nowMs + 30_000
+    // Refresh a minute before expiry so we never send a near-dead token.
+    return Math.max(nowMs, expSec * 1000 - 60_000)
+  } catch {
+    return nowMs + 30_000
+  }
+}
+
 export interface AuthUser {
   id: string
   email: string | null
@@ -285,6 +302,7 @@ export const authClient = {
   },
 
   signOut: async (): Promise<void> => {
+    _accessTokenCache = null
     if (!supabase) return
     clearPasswordSetupRequired()
     await supabase.auth.signOut()
@@ -298,19 +316,36 @@ export const authClient = {
     const { error } = await supabase.auth.updateUser({ password: trimmed })
     if (error) throw error
     clearPasswordSetupRequired()
+    // updateUser may rotate the session — drop soft-cache and reload once for PAN/API calls.
+    _accessTokenCache = null
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token ?? null
+    if (token) {
+      _accessTokenCache = {
+        token,
+        freshUntilMs: _tokenFreshUntilMs(token, Date.now()),
+      }
+    }
   },
 
   /**
    * A valid access token, or null.
    *
-   * getSession() refreshes when the token is close to expiry, so this is called per
-   * request rather than cached - a cached token is the one that expires mid-session
-   * and logs the user out for no visible reason.
+   * Soft-cached until ~60s before JWT exp so bursts of API calls (admin console,
+   * dashboards) do not each await getSession(). Cleared on signOut.
    */
   getAccessToken: async (): Promise<string | null> => {
     if (!supabase) return null
+    const now = Date.now()
+    if (_accessTokenCache && _accessTokenCache.freshUntilMs > now) {
+      return _accessTokenCache.token
+    }
     const { data } = await supabase.auth.getSession()
-    return data.session?.access_token ?? null
+    const token = data.session?.access_token ?? null
+    _accessTokenCache = token
+      ? { token, freshUntilMs: _tokenFreshUntilMs(token, now) }
+      : null
+    return token
   },
 
   getUser: async (): Promise<AuthUser | null> => {
@@ -323,13 +358,19 @@ export const authClient = {
     return { id: data.user.id, email: extractEmail(data.user) }
   },
 
-  /** Fires on sign-in, sign-out and token refresh. Returns an unsubscribe function. */
+  /**
+   * Fires on sign-in, sign-out, and session restore. Returns an unsubscribe function.
+   *
+   * TOKEN_REFRESHED is ignored so the app does not re-hit `/auth/me` on every
+   * background refresh (the Bearer interceptor already refreshes the access token).
+   */
   onAuthStateChange: (handler: (user: AuthUser | null) => void): (() => void) => {
     if (!supabase) return () => {}
     // Capture invite/recovery type before the client strips the URL hash.
     consumePasswordSetupIntentFromUrl()
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') markPasswordSetupRequired()
+      if (event === 'TOKEN_REFRESHED') return
       handler(toUser(session))
     })
     return () => data.subscription.unsubscribe()
@@ -402,23 +443,22 @@ export async function lookupAccessNoticeForEmails(
   access_request_status: AccessRequestStatus
   email: string | null
 }> {
+  const unique: string[] = []
   const seen = new Set<string>()
-  let fallback: { message: string; access_request_status: AccessRequestStatus; email: string | null } = {
-    message: REQUEST_ACCESS_MESSAGE,
-    access_request_status: 'none',
-    email: null,
-  }
   for (const raw of emails) {
     const trimmed = (raw || '').trim()
     if (!trimmed) continue
     const key = trimmed.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    const notice = await lookupAccessNotice(trimmed)
-    if (notice.access_request_status !== 'none') return notice
-    fallback = notice
+    unique.push(trimmed)
   }
-  return fallback
+  if (unique.length === 0) {
+    return { message: REQUEST_ACCESS_MESSAGE, access_request_status: 'none', email: null }
+  }
+  const results = await Promise.all(unique.map((email) => lookupAccessNotice(email)))
+  const hit = results.find((r) => r.access_request_status !== 'none')
+  return hit ?? results[results.length - 1]!
 }
 
 export default authClient

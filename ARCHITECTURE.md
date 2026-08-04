@@ -399,7 +399,7 @@ Full method/path catalog, rate limits, and curl examples:
 **[API.md](API.md)** (single source of truth — do not duplicate the table here).
 
 Summary: public `access-status` / `request-access`; signed-in `me` / `logout` /
-`profile/pan`; admin access-requests, invites, users (including hard delete).
+`profile` / `profile/pan`; admin access-requests, invites, users (including hard delete).
 
 ### Middleware gates (`main.py` → `IdentityMiddleware`)
 
@@ -420,7 +420,9 @@ admin approval without a full page reload.
 | `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
 | `PendingAccess.tsx` | Signed in, `status=pending` |
 | `SuspendedAccess.tsx` | Signed in, `status=suspended` |
-| `MandatoryPanPrompt` / `AccountSetupPrompt` | Signed in, active; password setup and/or missing PAN |
+| `AccountSetupPrompt` | Signed in, active; first-time password setup and/or missing PAN |
+| `ProfilePage.tsx` | Route `/profile` (badge → Profile); display name, PAN, password; link to data vault |
+| `AccountsDashboard` | Route `/accounts` (badge → Data vault); export / delete account data |
 | `AdminConsole.tsx` | Route `/admin`; admin-only actions |
 | `AdminOnly` (`Dashboard.tsx`) | UI gate: non-admins hitting `/admin` redirect to `/dashboard` (APIs still enforce admin) |
 

@@ -99,9 +99,10 @@ This table is the **only** place endpoints are listed in full. Other docs link h
 |---|---|---|---|
 | Public | `POST` | `/auth/access-status` | Lookup access-request status by email (landing messaging). Rate limit: **20/min** per **IP+email** key → `429` (in-process; keep `--workers 1`) |
 | Public | `POST` | `/auth/request-access` | Submit early-access form. Same rate limit as above |
-| Signed-in | `GET` | `/auth/me` | Current `user_id`, PAN, `status`, `role` |
+| Signed-in | `GET` | `/auth/me` | Current `user_id`, `email`, PAN, `display_name`, `status`, `role` |
 | Signed-in | `POST` | `/auth/logout` | Evict resident in-memory sessions. Frontend **awaits** this before Supabase `signOut` |
-| Signed-in, **active** | `PUT` | `/auth/profile/pan` | Attach PAN (`{"pan":"…"}`). Blocked when pending/suspended |
+| Signed-in, **active** | `PUT` | `/auth/profile` | Update profile fields (`{"display_name":"…"}`; empty string clears). Password is client-side via Supabase |
+| Signed-in, **active** | `PUT` | `/auth/profile/pan` | Attach/update PAN (`{"pan":"ABCDE1234F"}`). Blocked when pending/suspended. Idempotent if unchanged |
 | Admin | `GET` | `/auth/access-requests` | List access requests |
 | Admin | `POST` | `/auth/access-requests/{id}/approve` | Send Supabase **invite** email, then mark approved. Body: `{"method":"invite"}`. `method=create` is rejected |
 | Admin | `POST` | `/auth/access-requests/{id}/reject` | Reject and delete the request row |
@@ -156,6 +157,16 @@ Reference* (design notes); OpenAPI remains authoritative for schemas.
 1. User signs in via Supabase (`authClient`).
 2. Every Axios call gets `Authorization: Bearer <access_token>` from the interceptor.
 3. First authenticated request runs `users.resolve()` on the backend.
-4. `GET /auth/me` drives pending / suspended / PAN / admin UI gates.
+4. `GET /auth/me` drives pending / suspended / PAN / display name / admin UI gates.
 
 There is no PAN-based API authentication.
+
+### Password vs PAN (account setup & profile)
+
+| Concern | How it works | Notes |
+|---|---|---|
+| **Password** | Supabase client only — `supabase.auth.updateUser({ password })` via `authClient.updatePassword` | **No backend `/auth` password endpoint.** Used after invite/recovery links and on **Profile** (`/profile`). Min 8 chars. |
+| **Display name** | `PUT /auth/profile` with Bearer token | Optional; shown on the topbar badge. Empty string clears. |
+| **PAN** | `PUT /auth/profile/pan` with Bearer token | Stored encrypted in `profiles`. Required for CAS unlock / AIS match. Middleware allows this only when `status=active` (not pending/suspended). Edited on **Profile** (`/profile`) after onboarding — there is no separate PAN dialog in the badge menu. |
+
+Combined setup UI (`AccountSetupPrompt`) runs **password then PAN** when both are needed on first active sign-in — password first so the session stays valid for the PAN call. Later edits use the Profile page (badge → **Profile**). Data export / delete stay on `/accounts` (Data vault).

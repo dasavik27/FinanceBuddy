@@ -12,6 +12,7 @@ const MutualFundsDashboard = lazy(() => import('../../../domains/mutual-funds/co
 const IndianStocksDashboard = lazy(() => import('../../../domains/equity/components/IndianStocksDashboard'))
 const TaxExpertDashboard = lazy(() => import('../../../domains/tax-expert/components/TaxExpertDashboard'))
 const AccountsDashboard = lazy(() => import('../dashboard/AccountsDashboard'))
+const ProfilePage = lazy(() => import('../ProfilePage'))
 const DashboardHub = lazy(() => import('../dashboard/DashboardHub'))
 const BudgetDashboard = lazy(() => import('../../../domains/budget/components/BudgetDashboard'))
 const AdminConsole = lazy(() => import('../admin/AdminConsole'))
@@ -65,6 +66,7 @@ export default function Dashboard() {
           <Route path="tax-expert/*"     element={<ErrorBoundary fallbackMessage="Tax Expert section encountered an error."><TaxExpertDashboard /></ErrorBoundary>} />
           <Route path="budget/*"         element={<ErrorBoundary fallbackMessage="Budget Analyzer section encountered an error."><BudgetDashboard /></ErrorBoundary>} />
           <Route path="accounts"         element={<ErrorBoundary fallbackMessage="Accounts Vault encountered an error."><AccountsDashboard /></ErrorBoundary>} />
+          <Route path="profile"          element={<ErrorBoundary fallbackMessage="Profile encountered an error."><ProfilePage /></ErrorBoundary>} />
           <Route path="admin"            element={<AdminOnly />} />
 
           {/* Legacy /dashboard/<domain> URLs. Ranked below the static "dashboard"

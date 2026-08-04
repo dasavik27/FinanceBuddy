@@ -24,9 +24,7 @@ const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
 /**
  * Attach the signed-in user's bearer token.
  *
- * Async because the token comes from the auth client's getSession(), which
- * refreshes it when it is close to expiry - caching it here would reintroduce the
- * expired-token logout. There is no PAN fallback: Google is the only credential.
+ * Token soft-cache lives in authClient.getAccessToken (until near JWT exp).
  */
 api.interceptors.request.use(async (config) => {
   const token = await authClient.getAccessToken()
@@ -263,11 +261,22 @@ export const apiClient = {
   /** The signed-in account, or 401. */
   getMe: async (): Promise<{
     user_id: string
+    email: string | null
     pan: string | null
+    display_name: string | null
     status: 'pending' | 'active' | 'suspended'
     role: 'user' | 'admin'
   }> => {
     const { data } = await api.get('/auth/me')
+    return data
+  },
+
+  /** Update editable profile fields (display name). */
+  updateProfile: async (payload: { display_name?: string | null }): Promise<{
+    status: string
+    display_name?: string | null
+  }> => {
+    const { data } = await api.put('/auth/profile', payload)
     return data
   },
 
