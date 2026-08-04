@@ -22,10 +22,10 @@ type Props = {
 }
 
 /**
- * First-time setup for one concern at a time.
+ * First-time setup in a single panel.
  *
- * App shows password (invite/recovery) first, then a separate PAN-only screen if
- * the account is active and still has no PAN. Profile edits later go to /profile.
+ * Shows password and/or PAN depending on what is still missing (invite → often
+ * both; later visits → only the missing piece). Profile edits later go to /profile.
  */
 export default function AccountSetupPrompt({
   requirePassword,
@@ -97,13 +97,18 @@ export default function AccountSetupPrompt({
 
     setLoading(true)
     try {
+      // Password first (keeps the session valid for the PAN API call). Clear the
+      // password-setup flag only after the whole submit succeeds — otherwise App
+      // remounts this form mid-flight as "PAN only" and drops the in-progress save.
       if (requirePassword) {
         await authClient.updatePassword(password)
-        onPasswordComplete()
       }
       if (requirePan) {
         const data = await apiClient.setProfilePan(panValue)
         setIdentity({ userId, email, pan: data.pan })
+      }
+      if (requirePassword) {
+        onPasswordComplete()
       }
     } catch (err: unknown) {
       const msg =

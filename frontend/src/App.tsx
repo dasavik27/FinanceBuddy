@@ -114,32 +114,27 @@ export default function App() {
 
   if (resolvingSession) return <TabFallback />
 
-  // Wait for /auth/me before any setup gate. Showing password before status/pan
-  // arrives used to mean: password (+PAN) screen, then a second PAN-only screen.
+  // Wait for /auth/me so we know status + whether PAN is already set. Showing
+  // password before that loaded caused a second PAN-only screen after submit.
   if (isAuthenticated && !status) {
     return <TabFallback />
   }
 
   const requirePassword = isAuthenticated && needsPasswordSetup
-  // Single PAN gate — only after password setup (if any) and only when active.
+  // PAN only when the account can call PUT /auth/profile/pan (active).
   const requirePan =
-    isAuthenticated &&
-    !requirePassword &&
-    status !== 'pending' &&
-    status !== 'suspended' &&
-    !pan
+    isAuthenticated && status === 'active' && !pan
 
   if (isAuthenticated && status === 'suspended') {
     return <SuspendedAccess />
   }
 
-  // Password first (invite/recovery), then PAN alone if still missing — never both
-  // on one screen, and never PAN twice.
-  if (requirePassword) {
+  // One setup panel: password only, PAN only, or both — whichever is still needed.
+  if (requirePassword || requirePan) {
     return (
       <AccountSetupPrompt
-        requirePassword
-        requirePan={false}
+        requirePassword={requirePassword}
+        requirePan={requirePan}
         onPasswordComplete={() => setNeedsPasswordSetup(false)}
       />
     )
@@ -147,16 +142,6 @@ export default function App() {
 
   if (isAuthenticated && status === 'pending') {
     return <PendingAccess />
-  }
-
-  if (requirePan) {
-    return (
-      <AccountSetupPrompt
-        requirePassword={false}
-        requirePan
-        onPasswordComplete={() => setNeedsPasswordSetup(false)}
-      />
-    )
   }
 
   // A skeleton fallback rather than null: `null` renders a blank white screen for
