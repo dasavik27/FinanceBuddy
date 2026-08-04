@@ -398,6 +398,8 @@ Otherwise `NotAuthorizedError` → `403 not_authorized` (no `users` row inserted
 Full method/path catalog, rate limits, and curl examples:
 **[API.md](API.md)** (single source of truth — do not duplicate the table here).
 
+Future move off Supabase Auth/DB (OIDC + open source): **[MIGRATION_OIDC.md](MIGRATION_OIDC.md)**.
+
 Summary: public `access-status` / `request-access`; signed-in `me` / `logout` /
 `profile` / `profile/pan`; admin access-requests, invites, users (including hard delete).
 
