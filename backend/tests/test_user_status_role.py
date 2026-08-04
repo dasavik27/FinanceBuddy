@@ -187,7 +187,7 @@ def test_access_status_endpoint(truncate_access_requests, client):
     assert res.status_code == 200
     body = res.json()
     assert body["access_request_status"] == "pending"
-    assert "already submitted" in body["message"].lower()
+    assert "pending" in body["message"].lower()
 
     res2 = client.post("/auth/access-status", json={"email": "unknown@example.test"})
     assert res2.status_code == 200

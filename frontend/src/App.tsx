@@ -3,12 +3,13 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAppStore, useIsAuthenticated } from './shared/store/appStore'
 import authClient, {
   type AccessRequestStatus,
+  isPasswordSetupRequired,
   lookupAccessNoticeForEmails,
 } from './shared/auth/authClient'
-import { readAuthNotice, writeAuthNotice, readAccessRequestEmail } from './shared/auth/authNotice'
+import { writeAuthNotice, readAccessRequestEmail } from './shared/auth/authNotice'
 import { apiClient } from './shared/api/client'
 import Landing   from './shared/components/Landing'
-import MandatoryPanPrompt from './shared/components/MandatoryPanPrompt'
+import AccountSetupPrompt from './shared/components/AccountSetupPrompt'
 import PendingAccess from './shared/components/PendingAccess'
 import SuspendedAccess from './shared/components/SuspendedAccess'
 import { TabFallback } from './shared/components/ui'
@@ -54,6 +55,7 @@ export default function App() {
   // bounce a returning user to the landing page for a frame before redirecting them
   // back - and on a slow load, long enough to click something.
   const [resolvingSession, setResolvingSession] = useState(authClient.isConfigured)
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(() => isPasswordSetupRequired())
 
   useEffect(() => {
     if (!authClient.isConfigured) return
@@ -61,6 +63,7 @@ export default function App() {
     // Fires once on mount with the restored session (or null), then on every
     // sign-in, sign-out and token refresh.
     const unsubscribe = authClient.onAuthStateChange(async (user) => {
+      setNeedsPasswordSetup(isPasswordSetupRequired())
       if (user) {
         const profile = (await authClient.getUser()) ?? user
         setIdentity({ userId: profile.id, email: profile.email })
@@ -105,9 +108,14 @@ export default function App() {
 
   if (resolvingSession) return <TabFallback />
 
-  // Profile (status/role) is loaded after the Supabase session; wait so we do not
-  // flash the dashboard before pending / not_authorized / PAN gates apply.
-  if (isAuthenticated && !status) {
+  const requirePassword = isAuthenticated && needsPasswordSetup
+  // PAN only after we know the account is usable (not pending/suspended).
+  const requirePan =
+    isAuthenticated && Boolean(status) && status !== 'pending' && status !== 'suspended' && !pan
+
+  // Profile (status/role) is loaded after the Supabase session; wait unless we only
+  // need a password from an invite link (that can run before /auth/me finishes).
+  if (isAuthenticated && !status && !requirePassword) {
     return <TabFallback />
   }
 
@@ -115,14 +123,19 @@ export default function App() {
     return <SuspendedAccess />
   }
 
-  if (isAuthenticated && status === 'pending') {
-    return <PendingAccess />
+  // One setup screen: password and/or PAN — only the sections this user still needs.
+  if (requirePassword || requirePan) {
+    return (
+      <AccountSetupPrompt
+        requirePassword={requirePassword}
+        requirePan={requirePan}
+        onPasswordComplete={() => setNeedsPasswordSetup(false)}
+      />
+    )
   }
 
-  // If the user has authenticated with Google/Supabase but has not registered a PAN,
-  // PAN registration is compulsory before dashboard access is permitted.
-  if (isAuthenticated && !pan) {
-    return <MandatoryPanPrompt />
+  if (isAuthenticated && status === 'pending') {
+    return <PendingAccess />
   }
 
   // A skeleton fallback rather than null: `null` renders a blank white screen for

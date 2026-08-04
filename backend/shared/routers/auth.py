@@ -300,10 +300,17 @@ def list_access_requests():
 @router.post("/access-requests/{request_id}/approve")
 def approve_access_request(request_id: str, req: ApproveAccessRequestPayload):
     """
-    Approve an access request and provision the account in Supabase.
+    Approve an access request and send a Supabase invite email.
+    The user sets their own password after opening the invite link.
     """
     caller = identity.current_caller()
     _assert_admin(caller)
+
+    if (req.method or "invite").strip().lower() == "create":
+        raise HTTPException(
+            status_code=400,
+            detail="Admin password provisioning is disabled. Use invite email; the user sets their own password.",
+        )
 
     with db.connect() as conn:
         row = conn.execute(
@@ -316,12 +323,12 @@ def approve_access_request(request_id: str, req: ApproveAccessRequestPayload):
 
         req_id, email, name = row
 
-        # Provision in Supabase if configured
+        # Invite-only: Supabase emails a link; user creates their password in-app.
         provisioned, prov_msg = _provision_in_supabase(
             email=email,
             name=name,
-            method=req.method,
-            password=req.password,
+            method="invite",
+            password=None,
         )
 
         conn.execute(
@@ -392,8 +399,11 @@ def invite_user(req: InviteUserPayload):
         raise HTTPException(status_code=400, detail="A valid email address is required.")
     if not name:
         raise HTTPException(status_code=400, detail="Name is required.")
-    if req.method == "create" and not (req.password or "").strip():
-        raise HTTPException(status_code=400, detail="Password is required when method is 'create'.")
+    if (req.method or "invite").strip().lower() == "create":
+        raise HTTPException(
+            status_code=400,
+            detail="Admin password provisioning is disabled. Use invite email; the user sets their own password.",
+        )
 
     investor_type = (req.investor_type or "individual").strip()
     notes = (req.notes or "Admin invite").strip()
@@ -426,8 +436,8 @@ def invite_user(req: InviteUserPayload):
     provisioned, prov_msg = _provision_in_supabase(
         email=email,
         name=name,
-        method=req.method,
-        password=req.password,
+        method="invite",
+        password=None,
     )
     users.activate_by_email(email)
 

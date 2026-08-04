@@ -95,8 +95,9 @@ export function bannerForAccessStatus(
   }
   if (status === 'approved') {
     return {
-      title: 'Access approved',
-      detail: 'Check your email for an invite, then sign in again once your account is ready.',
+      title: 'Password not set yet',
+      detail:
+        'Your access is approved. Open the invite email we sent, create your password there, then sign in here with that password.',
       access_request_status: 'approved',
       severity: 'info',
     }
@@ -285,7 +286,18 @@ export const authClient = {
 
   signOut: async (): Promise<void> => {
     if (!supabase) return
+    clearPasswordSetupRequired()
     await supabase.auth.signOut()
+  },
+
+  /** Set / replace password for the current session (invite or recovery links). */
+  updatePassword: async (password: string): Promise<void> => {
+    if (!supabase) throw new Error('Sign-in is not configured.')
+    const trimmed = password.trim()
+    if (trimmed.length < 8) throw new Error('Password must be at least 8 characters.')
+    const { error } = await supabase.auth.updateUser({ password: trimmed })
+    if (error) throw error
+    clearPasswordSetupRequired()
   },
 
   /**
@@ -314,11 +326,50 @@ export const authClient = {
   /** Fires on sign-in, sign-out and token refresh. Returns an unsubscribe function. */
   onAuthStateChange: (handler: (user: AuthUser | null) => void): (() => void) => {
     if (!supabase) return () => {}
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Capture invite/recovery type before the client strips the URL hash.
+    consumePasswordSetupIntentFromUrl()
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') markPasswordSetupRequired()
       handler(toUser(session))
     })
     return () => data.subscription.unsubscribe()
   },
+}
+
+const PASSWORD_SETUP_KEY = 'fb_must_set_password'
+
+/** Invite / recovery links land with type=invite|recovery in the hash or query. */
+export function consumePasswordSetupIntentFromUrl(): boolean {
+  if (typeof window === 'undefined') return false
+  const fromSearch = new URLSearchParams(window.location.search)
+  const hash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  const fromHash = new URLSearchParams(hash)
+  const type = (fromSearch.get('type') || fromHash.get('type') || '').toLowerCase()
+  if (type === 'invite' || type === 'recovery' || type === 'signup') {
+    markPasswordSetupRequired()
+    return true
+  }
+  return isPasswordSetupRequired()
+}
+
+export function markPasswordSetupRequired(): void {
+  sessionStorage.setItem(PASSWORD_SETUP_KEY, '1')
+}
+
+export function clearPasswordSetupRequired(): void {
+  sessionStorage.removeItem(PASSWORD_SETUP_KEY)
+}
+
+export function isPasswordSetupRequired(): boolean {
+  return sessionStorage.getItem(PASSWORD_SETUP_KEY) === '1'
+}
+
+// Capture invite/recovery type as soon as this module loads, before the Supabase
+// client strips tokens from the URL hash.
+if (typeof window !== 'undefined' && isConfigured) {
+  consumePasswordSetupIntentFromUrl()
 }
 
 /** Prefer access_requests lookup over backend deny copy when we know the user's email. */

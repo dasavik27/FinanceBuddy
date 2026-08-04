@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, type FormEvent } from 'react'
 import {
   Box, Typography, Paper, Grid, TextField, InputAdornment, Button,
   Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions,
+  IconButton, Tooltip,
   CircularProgress, Alert, Snackbar, Tabs, Tab, alpha, useTheme
 } from '@mui/material'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
@@ -10,7 +10,6 @@ import SearchIcon from '@mui/icons-material/Search'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import CheckIcon from '@mui/icons-material/Check'
 import SendIcon from '@mui/icons-material/Send'
-import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import BlockIcon from '@mui/icons-material/Block'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -78,17 +77,11 @@ export default function AdminConsole() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved'>('all')
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
-  // Password provisioning modal
-  const [passModalOpen, setPassModalOpen] = useState(false)
-  const [activeRequest, setActiveRequest] = useState<AccessRequest | null>(null)
-  const [customPassword, setCustomPassword] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
-  // Direct invite form
+  // Direct invite form (invite email only — user sets their own password)
   const [inviteName, setInviteName] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteMethod, setInviteMethod] = useState<'invite' | 'create'>('invite')
-  const [invitePassword, setInvitePassword] = useState('Welcome@2026')
   const [inviteLoading, setInviteLoading] = useState(false)
 
   // Suspend form
@@ -157,43 +150,13 @@ export default function AdminConsole() {
     try {
       const res = await apiClient.approveAccessRequest(req.id, { method: 'invite' })
       setSnackbarMsg({
-        text: res.message || `Invitation processed for ${req.email}`,
+        text: res.message || `Invite sent to ${req.email}. They will set their own password.`,
         severity: res.supabase_provisioned ? 'success' : 'warning',
       })
       await fetchRequests(true)
     } catch (err: any) {
       setSnackbarMsg({
         text: err?.response?.data?.detail || err?.message || 'Failed to approve request.',
-        severity: 'error',
-      })
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleOpenPasswordModal = (req: AccessRequest) => {
-    setActiveRequest(req)
-    setCustomPassword('Welcome@2026')
-    setPassModalOpen(true)
-  }
-
-  const handleCreateWithPassword = async () => {
-    if (!activeRequest || !customPassword.trim()) return
-    setActionLoading(true)
-    try {
-      const res = await apiClient.approveAccessRequest(activeRequest.id, {
-        method: 'create',
-        password: customPassword.trim(),
-      })
-      setSnackbarMsg({
-        text: res.message || `Account created for ${activeRequest.email}`,
-        severity: res.supabase_provisioned ? 'success' : 'warning',
-      })
-      setPassModalOpen(false)
-      await fetchRequests(true)
-    } catch (err: any) {
-      setSnackbarMsg({
-        text: err?.response?.data?.detail || err?.message || 'Failed to provision user.',
         severity: 'error',
       })
     } finally {
@@ -226,26 +189,20 @@ export default function AdminConsole() {
       setSnackbarMsg({ text: 'Name and email are required to invite a user.', severity: 'error' })
       return
     }
-    if (inviteMethod === 'create' && !invitePassword.trim()) {
-      setSnackbarMsg({ text: 'Password is required when creating credentials directly.', severity: 'error' })
-      return
-    }
     setInviteLoading(true)
     try {
       const res = await apiClient.inviteUser({
         name: inviteName.trim(),
         email: inviteEmail.trim(),
-        method: inviteMethod,
-        password: inviteMethod === 'create' ? invitePassword.trim() : undefined,
+        method: 'invite',
         notes: 'Admin invite',
       })
       setSnackbarMsg({
-        text: res.message || `Invite processed for ${inviteEmail.trim()}`,
+        text: res.message || `Invite email sent to ${inviteEmail.trim()}. They will set their own password.`,
         severity: res.supabase_provisioned ? 'success' : 'warning',
       })
       setInviteName('')
       setInviteEmail('')
-      setInviteMethod('invite')
       await fetchRequests(true)
     } catch (err: any) {
       setSnackbarMsg({
@@ -453,7 +410,7 @@ export default function AdminConsole() {
               <Typography sx={{ fontWeight: 700, color: '#F8FAFC' }}>Invite user</Typography>
             </Box>
             <Grid container spacing={1.5}>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={5}>
                 <TextField
                   size="small"
                   fullWidth
@@ -463,7 +420,7 @@ export default function AdminConsole() {
                   sx={adminFieldSx}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={5}>
                 <TextField
                   size="small"
                   fullWidth
@@ -474,34 +431,7 @@ export default function AdminConsole() {
                   sx={adminFieldSx}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  size="small"
-                  fullWidth
-                  select
-                  label="Method"
-                  value={inviteMethod}
-                  onChange={(e) => setInviteMethod(e.target.value as 'invite' | 'create')}
-                  SelectProps={{ native: true }}
-                  sx={adminFieldSx}
-                >
-                  <option value="invite">Send invite email</option>
-                  <option value="create">Set password</option>
-                </TextField>
-              </Grid>
-              {inviteMethod === 'create' && (
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    size="small"
-                    fullWidth
-                    label="Initial password"
-                    value={invitePassword}
-                    onChange={(e) => setInvitePassword(e.target.value)}
-                    sx={adminFieldSx}
-                  />
-                </Grid>
-              )}
-              <Grid item xs={12} sm={inviteMethod === 'create' ? 6 : 12} sx={{ display: 'flex', alignItems: 'center' }}>
+              <Grid item xs={12} sm={2} sx={{ display: 'flex', alignItems: 'center' }}>
                 <Button
                   type="submit"
                   variant="contained"
@@ -509,8 +439,13 @@ export default function AdminConsole() {
                   startIcon={inviteLoading ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
                   sx={{ borderRadius: '12px', textTransform: 'none', fontWeight: 700, bgcolor: '#38BDF8', color: '#0F172A', '&:hover': { bgcolor: '#7DD3FC' } }}
                 >
-                  Invite & allowlist
+                  Send invite
                 </Button>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography sx={{ fontSize: '0.78rem', color: '#64748B' }}>
+                  Sends a Supabase invite email. The user sets their own password after opening the link.
+                </Typography>
               </Grid>
             </Grid>
           </Paper>
@@ -817,7 +752,7 @@ export default function AdminConsole() {
                           </>
                         ) : (
                           <>
-                            <Tooltip title="Send Supabase automated invitation email" arrow>
+                            <Tooltip title="Approve and send invite email — user sets their own password" arrow>
                               <Button
                                 size="small"
                                 variant="contained"
@@ -834,30 +769,7 @@ export default function AdminConsole() {
                                   px: 1.4,
                                 }}
                               >
-                                Invite User
-                              </Button>
-                            </Tooltip>
-
-                            <Tooltip title="Set initial password and provision directly" arrow>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                startIcon={<VpnKeyIcon sx={{ fontSize: '14px !important' }} />}
-                                onClick={() => handleOpenPasswordModal(req)}
-                                disabled={actionLoading}
-                                sx={{
-                                  borderRadius: '10px',
-                                  borderColor: 'rgba(255,255,255,0.15)',
-                                  color: '#E2E8F0',
-                                  fontSize: '0.78rem',
-                                  fontWeight: 700,
-                                  textTransform: 'none',
-                                  py: 0.6,
-                                  px: 1.2,
-                                  '&:hover': { borderColor: '#38BDF8', bgcolor: 'rgba(56,189,248,0.08)' }
-                                }}
-                              >
-                                Set Password
+                                Approve & invite
                               </Button>
                             </Tooltip>
 
@@ -1121,89 +1033,6 @@ export default function AdminConsole() {
           </Table>
         </TableContainer>
       </Box>
-
-      {/* Set Password Provisioning Modal */}
-      <Dialog
-        open={passModalOpen}
-        onClose={() => setPassModalOpen(false)}
-        maxWidth="xs"
-        fullWidth
-        slotProps={{
-          backdrop: { sx: { backdropFilter: 'blur(12px)', bgcolor: 'rgba(2, 6, 23, 0.7)' } }
-        }}
-        PaperProps={{
-          sx: {
-            borderRadius: '22px',
-            background: 'linear-gradient(180deg, #0F172A 0%, #0B132B 100%)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.8)',
-            p: 1.5,
-            color: '#fff',
-          }
-        }}
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff' }}>
-            Provision User with Password
-          </Typography>
-          <Typography sx={{ fontSize: '0.8rem', color: '#94A3B8', mt: 0.3 }}>
-            Directly create credentials for <strong>{activeRequest?.email}</strong>
-          </Typography>
-        </DialogTitle>
-
-        <DialogContent sx={{ pt: '12px !important' }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <Box>
-              <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.6 }}>
-                INITIAL TEMPORARY PASSWORD
-              </Typography>
-              <TextField
-                fullWidth
-                size="small"
-                value={customPassword}
-                onChange={(e) => setCustomPassword(e.target.value)}
-                disabled={actionLoading}
-                placeholder="Enter password (e.g. Welcome@2026)"
-                sx={{
-                  '& .MuiOutlinedInput-root': {
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(2, 6, 23, 0.5)',
-                    color: '#fff',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    '& fieldset': { border: 'none' },
-                    '&:hover': { borderColor: 'rgba(255,255,255,0.15)' },
-                    '&.Mui-focused': { borderColor: '#38BDF8' }
-                  }
-                }}
-              />
-            </Box>
-
-            <Alert severity="info" sx={{ borderRadius: '10px', bgcolor: 'rgba(56, 189, 248, 0.08)', color: '#38BDF8', fontSize: '0.8rem', py: 0.5, '& .MuiAlert-icon': { color: '#38BDF8' } }}>
-              This creates the user in Supabase with auto-confirm enabled. You can share this temporary password with the user.
-            </Alert>
-          </Box>
-        </DialogContent>
-
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setPassModalOpen(false)} disabled={actionLoading} sx={{ color: '#94A3B8', textTransform: 'none' }}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleCreateWithPassword}
-            disabled={actionLoading || !customPassword.trim()}
-            sx={{
-              borderRadius: '12px',
-              background: 'linear-gradient(135deg, #0284C7 0%, #2563EB 100%)',
-              fontWeight: 700,
-              textTransform: 'none',
-              px: 3,
-            }}
-          >
-            {actionLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Create Account'}
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       {/* Snackbar notification */}
       <Snackbar

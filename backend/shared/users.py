@@ -217,8 +217,8 @@ def message_for_access_status(status: Optional[str]) -> str:
         )
     if status == "approved":
         return (
-            "Access approved. Check your email for an invite, "
-            "then sign in again once your account is ready."
+            "Password not set yet. Your access is approved. "
+            "Open the invite email, create your password, then sign in here."
         )
     return (
         "Access required. You do not have access yet. "

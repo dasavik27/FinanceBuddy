@@ -176,12 +176,14 @@ export default function Landing() {
     }
     setLoading(true)
     setBanner(null)
+    const emailTrim = email.trim()
     try {
-      await authClient.signInWithEmail(email.trim(), password)
+      await authClient.signInWithEmail(emailTrim, password)
       // App.tsx auth listener handles redirect to /dashboard
     } catch {
+      // Approved but password not created yet → guide to invite email, not "invalid password".
       try {
-        await applyAccessStatus(email.trim())
+        await applyAccessStatus(emailTrim)
       } catch {
         setBanner(bannerForError('Invalid email or password.'))
       }
@@ -197,7 +199,15 @@ export default function Landing() {
     try {
       await authClient.signInWithGoogle(emailTrim || undefined)
     } catch {
-      setBanner(bannerForOAuthNoAccount())
+      if (emailTrim) {
+        try {
+          await applyAccessStatus(emailTrim)
+        } catch {
+          setBanner(bannerForOAuthNoAccount())
+        }
+      } else {
+        setBanner(bannerForOAuthNoAccount())
+      }
       setLoading(false)
     }
   }
