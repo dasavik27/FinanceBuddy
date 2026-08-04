@@ -334,10 +334,7 @@ export function Topbar({ onMenuClick, isPartial }: TopbarProps) {
                   onClick={() => { 
                     setProfileAnchor(null); 
                     queryClient.clear(); 
-                    localStorage.clear(); 
-                    sessionStorage.clear(); 
-                    logout(); 
-                    navigate('/');
+                    void logout().then(() => navigate('/'));
                   }}
                   sx={{ 
                     color: '#FF516A !important',

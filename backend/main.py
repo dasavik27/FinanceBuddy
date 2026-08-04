@@ -233,9 +233,9 @@ class IdentityMiddleware:
     the identity has to be available there without threading a parameter through
     every signature. Same ContextVar mechanism as the L0 memo below.
 
-    One credential: `Authorization: Bearer <id token>`, verified against the
-    provider's JWKS in shared/oidc.py. There is no PAN-based fallback - a PAN is
-    printed on documents and is not something to authenticate with.
+    One credential: `Authorization: Bearer <Supabase access_token JWT>`, verified
+    against the provider JWKS in shared/oidc.py. There is no PAN-based fallback -
+    a PAN is printed on documents and is not something to authenticate with.
 
     Resolution is cached in process (shared/users.py) - without that this would add
     a database round trip to every authenticated request, ahead of the handler.
@@ -280,7 +280,7 @@ class IdentityMiddleware:
         if principal is None:
             logger.warning(
                 "[AUTH] path=%s reason=jwt_verify_failed "
-                "(see JWKS/HS256 rejection lines above)",
+                "(see JWKS rejection lines above)",
                 path,
             )
             return None

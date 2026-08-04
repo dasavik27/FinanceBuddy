@@ -51,13 +51,16 @@ In the Supabase dashboard:
 
 1. **Authentication → Providers → Email** — turn **off** “Allow new users to sign up”
    (or the project-level equivalent that disables public sign-up). Keep email
-   password sign-in enabled so approved users can still log in after an admin
-   invite or password provision.
+   password sign-in enabled so invited users can set a password from the invite
+   link and sign in afterwards.
 2. Keep the Google provider enabled for users who already have a Supabase Auth
    account (created by Admin invite / approve).
 3. Copy the **service_role** key (Project Settings → API) into backend `.env` as
-   `SUPABASE_SERVICE_ROLE_KEY`. The Admin Console uses it to invite users and
-   create passwords; without it, approve/invite only updates the app database.
+   `SUPABASE_SERVICE_ROLE_KEY`. Used to:
+   - send Supabase **invite emails** (users set their own password)
+   - resolve email for Google OAuth when the JWT omits the email claim
+   Without it, approve/invite fails, and some Google sign-ins may look “not authorized”
+   even for approved emails.
 
 Also set `FINANCEBUDDY_ADMIN_EMAILS` in backend `.env` to a comma-separated list
 of bootstrap admin emails. Those accounts get `role=admin` on first sign-in, and
@@ -74,7 +77,7 @@ flowchart LR
   A[Prospect] -->|Request access| B[access_requests pending]
   A -->|Admin invite| C[access_requests approved]
   B -->|Admin approve| C
-  C -->|Supabase invite or password| D[Supabase Auth user]
+  C -->|Supabase invite email| D[Supabase Auth user]
   D -->|First sign-in| E[users row created]
   E -->|status active| F[PAN prompt then dashboard]
   E -->|status pending| G[PendingAccess screen]
@@ -85,9 +88,10 @@ flowchart LR
 
 1. **Request or invite** — Prospect submits **Request access** on the landing page,
    or an admin uses **Invite user** in the Admin Console (`/admin`).
-2. **Admin approve / invite** — Backend provisions Supabase Auth (invite email or
-   direct password), sets `access_requests.status = 'approved'`, and promotes any
-   existing `users` row from `pending` → `active` for that email.
+2. **Admin approve / invite** — Backend sends a Supabase **invite email** (user
+   sets their own password), then sets `access_requests.status = 'approved'` and
+   promotes any existing `users` row from `pending` → `active` for that email.
+   If the invite fails, the request stays pending / is not allowlisted.
 3. **First sign-in** — The `users` table row is **not** created at approval time.
    It is inserted on the user's **first authenticated API request** when
    `users.resolve()` runs in middleware, but only if the email is allowlisted
@@ -104,13 +108,13 @@ flowchart LR
 
 | Section | Purpose |
 |---|---|
-| Access requests | Review leads, approve (invite / set password), reject |
-| Invite user | Direct allowlist + Supabase provision without a prior request |
+| Access requests | Review leads, approve (invite email), reject |
+| Invite user | Direct allowlist + Supabase invite without a prior request |
 | Suspend user | Set `users.status = suspended` and ban in Supabase when configured |
-| User accounts | List provisioned app accounts; set status and role (activate, make admin) |
+| User accounts | List accounts; set status/role; permanent delete |
 
-See ARCHITECTURE.md → *Authentication & access control* for API details and
-middleware rules.
+API catalog and Bearer token usage: **[API.md](API.md)**.  
+Auth design / middleware: ARCHITECTURE.md → *Authentication & access control*.
 
 ---
 
@@ -142,6 +146,7 @@ FINANCEBUDDY_ENCRYPTION_KEYS=k1:YOUR_KEY
 SUPABASE_URL=https://your-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 FINANCEBUDDY_ADMIN_EMAILS=you@example.com
+FINANCEBUDDY_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 ### 2.5 frontend/.env.local
@@ -186,24 +191,43 @@ Full migration descriptions are in ARCHITECTURE.md.
 ## Deployment
 
 ### Render (Backend)
-- Build: pip install -r backend/requirements.txt
-- Start: uvicorn main:app --host 0.0.0.0 --port $PORT
-- Working dir: backend
-- Env: DATABASE_URL, FINANCEBUDDY_ENCRYPTION_KEYS, SUPABASE_URL,
-  FINANCEBUDDY_ALLOWED_ORIGINS, FINANCEBUDDY_ADMIN_EMAILS,
-  SUPABASE_SERVICE_ROLE_KEY
+
+The repo `Procfile` already sets:
+
+- **release:** `cd backend && python -m migrations.migrate` (runs before each deploy)
+- **web:** uvicorn with **`--workers 1`** (required: in-process rate limits and caches
+  are per worker)
+
+Configure:
+
+- Build: `pip install -r backend/requirements.txt`
+- Working dir: repo root (Procfile `cd`s into `backend`) or set root to `backend`
+  and adjust the Procfile commands accordingly
+- Env (required for production):
+  - `DATABASE_URL`
+  - `FINANCEBUDDY_ENCRYPTION_KEYS` (**different** from local)
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `FINANCEBUDDY_ADMIN_EMAILS`
+  - `FINANCEBUDDY_ALLOWED_ORIGINS` — **must** include your Vercel URL  
+    (e.g. `https://your-app.vercel.app`). If unset, CORS defaults to **localhost
+    only** and the production frontend cannot call the API.
 
 ### Vercel (Frontend)
 - Framework: Vite
-- Build: npm run build
-- Output: dist
-- Env: `VITE_API_URL` (your Render backend URL, e.g. `https://your-app.onrender.com`),
-  `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- Build: `npm run build`
+- Output: `dist`
+- Env (all required — there is no usable default in production):
+  - `VITE_API_URL` — Render backend origin, e.g. `https://your-app.onrender.com`
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
 
-`VITE_API_URL` must be the **backend origin**, not `/api`. Public auth helpers
-(`access-status`, `request-access`) call the backend directly in production;
-Vercel only serves static files and cannot proxy POST `/api/*` without a separate
-rewrite to Render.
+`VITE_API_URL` must be the **backend origin**, not `/api`. If unset, the client
+falls back to `/api`, which Vercel does not proxy. Public auth helpers
+(`access-status`, `request-access`) call the backend directly.
+
+Also set Supabase Auth redirect URLs to the production Vercel origin (`/` and
+`/dashboard`). Keep public email sign-up **off**.
 
 ---
 
@@ -214,16 +238,24 @@ Backend — required:
 - FINANCEBUDDY_ENCRYPTION_KEYS: `k1:base64key`. No plaintext fallback — the app raises
   rather than writing sensitive columns unencrypted
 - SUPABASE_URL: Supabase project URL
-- FINANCEBUDDY_ALLOWED_ORIGINS: CORS whitelist
 - FINANCEBUDDY_ADMIN_EMAILS: comma-separated bootstrap admin emails (also used to
-  authorize Admin Console APIs)
+  authorize Admin Console APIs). Alias: `ADMIN_EMAILS`
 
-Backend — strongly recommended for invite/approve provisioning:
-- SUPABASE_SERVICE_ROLE_KEY: Supabase service_role secret (never expose to the frontend)
+Backend — required in production (defaults are local-only or incomplete):
+- FINANCEBUDDY_ALLOWED_ORIGINS: CORS whitelist. Defaults to
+  `http://localhost:5173,http://127.0.0.1:5173` — **must** list the Vercel URL in prod
+- SUPABASE_SERVICE_ROLE_KEY: service_role secret for invites + Google email lookup
+  (never expose to the frontend). Alias: `SUPABASE_SERVICE_KEY`
+
+JWT verification uses Supabase JWKS only (`SUPABASE_URL` → asymmetric ES256/RS256).
+No JWT secret env var is used.
+
+Backend — optional OIDC overrides (normally derived from `SUPABASE_URL`):
+- AUTH_JWKS_URL / SUPABASE_JWKS_URL
+- AUTH_ISSUER (default `{SUPABASE_URL}/auth/v1`)
+- AUTH_AUDIENCE (default `authenticated`)
 
 Backend — optional, defaults tuned for a single worker on ~512 MB:
-- FINANCEBUDDY_OPEN_PROVISION: set to `1` only in local/test to allow provisioning
-  without an approved access request (production should omit or set `0`)
 - FINANCEBUDDY_ENCRYPTION_ACTIVE_KEY: which key id to encrypt *new* data with, when
   rotating. Decryption always tries every key in FINANCEBUDDY_ENCRYPTION_KEYS
 - FINANCEBUDDY_SLOW_REQUEST_MS: slow-request log threshold (1500)
@@ -236,14 +268,18 @@ Backend — optional, defaults tuned for a single worker on ~512 MB:
 - FINANCEBUDDY_TAX_SESSION_TTL: tax session idle timeout, seconds (86400)
 - FINANCEBUDDY_CACHE_DIR / FINANCEBUDDY_CACHE_TTL / FINANCEBUDDY_DISK_CACHE_MB:
   market-data disk cache location, freshness and size budget
+- MARKET_DATA_PROVIDER: market data backend (default `mfapi`)
+- ZERODHA_API_KEY / ZERODHA_API_SECRET: only for Zerodha Kite live sync
 
 The resident-session caps bound memory, not retention: an evicted session is rehydrated
 from Postgres on next access, so lowering them costs a read, never data.
+Public `/auth` rate limits are in-process (20/min per IP+email) — keep `--workers 1`
+or accept weaker limits across workers.
 
 Frontend:
-- VITE_API_URL: Backend API URL
+- VITE_API_URL: Backend API URL (required in production)
 - VITE_SUPABASE_URL: Supabase URL
-- VITE_SUPABASE_ANON_KEY: Public key
+- VITE_SUPABASE_ANON_KEY: Public anon key
 
 ---
 
@@ -253,7 +289,7 @@ Frontend:
 cd backend
 python -m pytest tests/test_sql_is_valid_postgres.py -v
 python -m pytest tests/test_only_shared_db_opens_connections.py -v
-python backend/scripts/verify_setup.py
+python scripts/verify_setup.py
 ```
 
-See VERIFICATION.md for complete checks.
+See VERIFICATION.md for complete checks. API calling / Bearer tokens: [API.md](API.md).

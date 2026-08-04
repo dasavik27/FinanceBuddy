@@ -4,7 +4,8 @@ Complete personal finance analytics platform with four independent domains: Budg
 
 This describes the system as it is. Where a design looks unusual, the reason is stated — most of the unusual choices trace back to one constraint (below) and are wrong to "clean up" without removing that constraint first.
 
-Companion documents: **ONBOARDING.md** (setup instructions) and **VERIFICATION.md** (setup validation).
+Companion documents: **ONBOARDING.md** (setup), **API.md** (how to call APIs & pass tokens),
+and **VERIFICATION.md** (setup validation).
 
 ---
 
@@ -394,20 +395,11 @@ Otherwise `NotAuthorizedError` → `403 not_authorized` (no `users` row inserted
 
 ### Auth API (`/auth`)
 
-| Access | Method | Path | Purpose |
-|---|---|---|---|
-| Public | `POST` | `/auth/access-status` | Email lookup for landing-page messaging |
-| Public | `POST` | `/auth/request-access` | Submit early-access form |
-| Signed-in | `GET` | `/auth/me` | Current user id, PAN, status, role |
-| Signed-in | `POST` | `/auth/logout` | Evict resident sessions |
-| Signed-in, active | `PUT` | `/auth/profile/pan` | Attach PAN (blocked when pending/suspended) |
-| Admin | `GET` | `/auth/access-requests` | List access requests |
-| Admin | `POST` | `/auth/access-requests/{id}/approve` | Approve + Supabase provision |
-| Admin | `POST` | `/auth/access-requests/{id}/reject` | Reject and delete request |
-| Admin | `POST` | `/auth/invites` | Direct invite / password provision |
-| Admin | `POST` | `/auth/users/suspend` | Suspend by email (+ Supabase ban when configured) |
-| Admin | `GET` | `/auth/users` | List app accounts (status, role, email) |
-| Admin | `PATCH` | `/auth/users/{user_id}` | Set status and/or role |
+Full method/path catalog, rate limits, and curl examples:
+**[API.md](API.md)** (single source of truth — do not duplicate the table here).
+
+Summary: public `access-status` / `request-access`; signed-in `me` / `logout` /
+`profile/pan`; admin access-requests, invites, users (including hard delete).
 
 ### Middleware gates (`main.py` → `IdentityMiddleware`)
 
@@ -428,15 +420,20 @@ admin approval without a full page reload.
 | `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
 | `PendingAccess.tsx` | Signed in, `status=pending` |
 | `SuspendedAccess.tsx` | Signed in, `status=suspended` |
-| `MandatoryPanPrompt` | Signed in, active, no PAN |
+| `MandatoryPanPrompt` / `AccountSetupPrompt` | Signed in, active; password setup and/or missing PAN |
 | `AdminConsole.tsx` | Route `/admin`; admin-only actions |
+| `AdminOnly` (`Dashboard.tsx`) | UI gate: non-admins hitting `/admin` redirect to `/dashboard` (APIs still enforce admin) |
+
+**Logout order:** `POST /auth/logout` (await) → Supabase `signOut` → clear local store.
+Signing out without awaiting the backend can drop the Bearer token before resident
+sessions are evicted.
 
 ---
 
 ## Security, Data Encryption & Privacy
 
 ### 1. Authentication & Identity
-- **Bearer Token Verification**: `Authorization: Bearer <OIDC id token>` verified against the provider's cached JWKS in `shared/oidc.py` with pinned asymmetric algorithms and mandatory `exp`, `iss`, and `aud` claim checks.
+- **Bearer Token Verification**: `Authorization: Bearer <Supabase access_token JWT>` verified against the provider JWKS in `shared/oidc.py` with mandatory `exp`, `iss`, and `aud` checks. See [API.md](API.md) for how clients obtain and send the token.
 - **Admin-gated provisioning**: First-time app accounts require an allowlisted email (see *Authentication & access control* above). Supabase public sign-up must be disabled in production.
 - **PAN is Not Identity**: User identity is strictly keyed on UUID `users.id`. PAN is stored encrypted (`profiles.pan_encrypted`) solely for CAS/AIS matching; two users sharing a PAN cannot access each other's data.
 - **Fail-Closed Authorization**: Handled at data retrieval layers (`sessions.py`, `identity.owns_record`). Unowned or unauthorized requests respond with `404 Not Found` (never 403) to prevent resource enumeration. Admin routes and unprovisioned sign-ins use explicit `403` responses where appropriate.

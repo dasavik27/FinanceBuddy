@@ -97,17 +97,6 @@ def _admin_emails() -> set:
     return {e.strip().lower() for e in admin_env.split(",") if e.strip()}
 
 
-def _open_provision() -> bool:
-    """Test-only escape hatch so DB fixtures can create accounts without access_requests."""
-    import os
-    from dotenv import load_dotenv
-
-    load_dotenv(override=True)
-    return (os.getenv("FINANCEBUDDY_OPEN_PROVISION") or "").strip().lower() in (
-        "1", "true", "yes",
-    )
-
-
 def _has_approved_access(conn, email: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM access_requests WHERE LOWER(email) = %s AND status = 'approved' LIMIT 1",
@@ -228,8 +217,6 @@ def message_for_access_status(status: Optional[str]) -> str:
 
 def _provision_deny_reason(conn, email: Optional[str]) -> str:
     """Short reason for logs when first-time provisioning is denied."""
-    if _open_provision():
-        return "open_provision_enabled"  # should not deny
     if not email:
         return "no_email_on_token_or_supabase"
     email_lower = email.strip().lower()
@@ -252,8 +239,6 @@ def _provision_deny_reason(conn, email: Optional[str]) -> str:
 
 def _may_provision(conn, email: Optional[str]) -> bool:
     """True when a brand-new identity is allowed to create an app account."""
-    if _open_provision():
-        return True
     if not email:
         return False
     email_lower = email.strip().lower()
@@ -277,7 +262,6 @@ def _initial_account_flags(conn, email: Optional[str]) -> tuple:
         return "active", role
     if _has_pending_access(conn, email_lower):
         return "pending", role
-    # Open-provision / legacy test path: create as pending until approved.
     return status, role
 
 

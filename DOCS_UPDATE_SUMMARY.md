@@ -38,34 +38,24 @@
 
 ---
 
-## Key Information
+## Key Information (current — supersedes Aug 2 bullets below)
 
-### Domains (All Documented)
-- Budget Analyzer: /budget/* (3 routers)
-- Mutual Funds: /mutual-funds/* (9 routers)
-- Equity: /equity/* (6 routers)
-- Tax Expert: /tax-expert/* (6 routers)
+Canonical sources: [ARCHITECTURE.md](ARCHITECTURE.md), [ONBOARDING.md](ONBOARDING.md), [API.md](API.md).
 
-### Database Migrations
-- 0001: Core schema
-- 0002: Tax payloads
-- 0003: Equity support
-- 0004: Budget payloads (Aug 2, 2026)
-- 0005: Budget rules (Aug 2, 2026)
-
-### Session Caps (By Domain)
-- Budget: 8 in-process sessions
-- Mutual Funds: 3 in-process sessions
-- Equity: 3 in-process sessions
-- Tax Expert: 8 in-process sessions
-
----
+| Area | Fact |
+|---|---|
+| Domains | Budget **5** routers; MF 9; Equity 6; Tax 6 |
+| Migrations | **0001–0009** (0002=RLS, 0003=encryption, 0008=access_requests, 0009=status/role) |
+| Session caps | MF 3 / Equity 3 / Tax 8 (env); Budget has no resident-session env cap |
+| Auth API catalog | **API.md** only (do not duplicate elsewhere) |
+| Backend tests | ~**875** collected |
 
 ## How to Use Documentation
 
 1. **First setup:** Start with ONBOARDING.md
-2. **Understand system:** Read ARCHITECTURE.md (system design, domain architectures, and security model)
-3. **Verify setup:** Use VERIFICATION.md or run verify_setup.py
+2. **Call APIs / tokens:** API.md
+3. **Understand system:** ARCHITECTURE.md
+4. **Verify setup:** VERIFICATION.md or `cd backend && python scripts/verify_setup.py`
 
 ---
 
@@ -76,7 +66,7 @@
 cd backend && python -m migrations.migrate
 
 # Verify setup
-python scripts/verify_setup.py
+cd backend && python scripts/verify_setup.py
 
 # Run tests
 python -m pytest tests/test_sql_is_valid_postgres.py -v
@@ -85,8 +75,6 @@ python -m pytest tests/test_only_shared_db_opens_connections.py -v
 # Run all tests
 TEST_DATABASE_URL=postgresql://... python -m pytest tests/ -q
 ```
-
-**All documentation updated: August 2, 2026**
 
 ---
 
@@ -137,16 +125,17 @@ Admin-gated login, Admin Console user management, and documentation sync.
 
 | Document | What changed |
 |---|---|
-| **ARCHITECTURE.md** | New *Authentication & access control* section: two-layer auth, status/role, allowlist rules, full `/auth` API table, middleware gates, frontend auth screens; migrations 0008–0009; `/admin` route |
-| **ONBOARDING.md** | Expanded access flow (mermaid + step-by-step); when `users` rows are created; Admin Console sections; migrations 0001–0009; `FINANCEBUDDY_OPEN_PROVISION` |
-| **README.md** | Invite/approve-only sign-in; auth test pointer; backend test count (861) |
-| **VERIFICATION.md** | Migrations 0008–0009; `access_requests` in schema checks; auth/admin pre-deploy checklist; `test_user_status_role.py` |
-| **backend/scripts/verify_setup.py** | Checks `access_requests` table; warns on missing admin/service-role env vars |
+| **ARCHITECTURE.md** | New *Authentication & access control* section: two-layer auth, status/role, allowlist rules, middleware gates, frontend auth screens; migrations 0008–0009; `/admin` route |
+| **API.md** | Canonical `/auth` catalog + how to pass Supabase `access_token` Bearer header; OpenAPI for schemas |
+| **ONBOARDING.md** | Access flow; JWT secret + CORS prod warnings; Procfile release/`--workers 1`; full env catalog |
+| **README.md** | Invite/approve-only sign-in; API.md link; ~875 backend tests |
+| **VERIFICATION.md** | Auth/admin/CORS/JWT pre-deploy checklist; points at live `verify_setup.py` |
+| **backend/scripts/verify_setup.py** | Tables + migrations; warns on JWT secret, CORS, admin emails, service role |
 
 ## Key concepts now documented
 
 - **`access_requests`** (0008) — public form + admin allowlist; approval does **not** insert into `users`
 - **`users.status` / `users.role`** (0009) — pending / active / suspended; user / admin
 - **First sign-in** — `users.resolve()` creates the app account when email is allowlisted
-- **Admin APIs** — list/update users (`GET/PATCH /auth/users`), suspend, invites, approve/reject
-- **Removed from product** — local dev one-click sign-in; `GET /auth/provisioning-status`
+- **Admin APIs** — list/update/delete users, suspend, invites, approve/reject (catalog in API.md)
+- **Removed from product** — local dev one-click sign-in; `GET /auth/provisioning-status`; `FINANCEBUDDY_OPEN_PROVISION`

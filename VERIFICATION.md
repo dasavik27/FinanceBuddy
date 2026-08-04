@@ -128,54 +128,14 @@ python -m pytest tests/test_user_status_role.py -v
 
 ## Setup Verification Script
 
-Create `backend/scripts/verify_setup.py`:
+The live script is `backend/scripts/verify_setup.py`. It checks required env vars,
+Postgres tables (including `access_requests`), migrations 0001–0009, and warns on
+missing service role, admin emails, and CORS origins.
 
-```python
-#!/usr/bin/env python
-import os
-from pathlib import Path
-
-def check(name, ok):
-    print(f"{'✓' if ok else '✗'} {name}")
-    return ok
-
-def main():
-    print("\n=== Environment ===")
-    all_ok = True
-    all_ok &= check("DATABASE_URL", bool(os.getenv("DATABASE_URL")))
-    all_ok &= check("FINANCEBUDDY_ENCRYPTION_KEYS", bool(os.getenv("FINANCEBUDDY_ENCRYPTION_KEYS")))
-    all_ok &= check("SUPABASE_URL", bool(os.getenv("SUPABASE_URL")))
-    
-    print("\n=== Database ===")
-    try:
-        from shared import db
-        with db.get_pool().connection() as conn:
-            conn.execute("SELECT 1")
-            all_ok &= check("PostgreSQL connection", True)
-            
-            result = conn.execute("""
-                SELECT COUNT(*) FROM information_schema.tables 
-                WHERE table_schema = 'public'
-            """).fetchone()
-            all_ok &= check(f"Tables ({result[0]} found)", result[0] >= 8)
-    except Exception as e:
-        all_ok = False
-        print(f"✗ Database: {e}")
-    
-    print("\n=== Files ===")
-    all_ok &= check("backend/.env", Path("backend/.env").exists())
-    all_ok &= check("frontend/.env.local", Path("frontend/.env.local").exists())
-    all_ok &= check("domains/budget/", Path("domains/budget").is_dir())
-    
-    print("\n" + "="*40)
-    print(f"{'✓ Ready!' if all_ok else '✗ Setup incomplete'}")
-    return 0 if all_ok else 1
-
-if __name__ == "__main__":
-    exit(main())
+```bash
+cd backend
+python scripts/verify_setup.py
 ```
-
-Run: `python scripts/verify_setup.py`
 
 ---
 
@@ -196,8 +156,9 @@ cd backend
 export TEST_DATABASE_URL=postgresql://postgres:pwd@localhost:5432/financebuddy_test
 python -m pytest tests/ -q
 
-# Expected: 861 tests collected; all passing with TEST_DATABASE_URL set.
+# Expected: ~875 tests collected; all passing with TEST_DATABASE_URL set.
 # Without TEST_DATABASE_URL, database-backed tests skip instead.
+# Auth rate-limit unit: tests/test_user_status_role.py::test_public_auth_rate_limit_enforced
 ```
 
 ---
@@ -207,28 +168,42 @@ python -m pytest tests/ -q
 ### Render Backend
 - [ ] DATABASE_URL points to production Postgres
 - [ ] FINANCEBUDDY_ENCRYPTION_KEYS is production key (different from local)
-- [ ] FINANCEBUDDY_ALLOWED_ORIGINS includes Vercel URL
+- [ ] SUPABASE_URL set (JWKS token verification)
+- [ ] SUPABASE_SERVICE_ROLE_KEY set (invites + Google email lookup)
+- [ ] FINANCEBUDDY_ADMIN_EMAILS set with at least one bootstrap admin
+- [ ] FINANCEBUDDY_ALLOWED_ORIGINS includes the production Vercel URL (not localhost-only)
+- [ ] Procfile release hook migrates schema; web uses `--workers 1`
 - [ ] Health check: `curl https://your-app.onrender.com/health`
 
 ### Vercel Frontend
-- [ ] VITE_API_URL points to production Render URL
+- [ ] VITE_API_URL is the Render origin (not `/api`, not the Vercel URL)
+- [ ] VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY set
 - [ ] Build succeeds
-- [ ] Sign-in works with Google
+- [ ] Sign-in works with Google / email after invite
 
 ### Supabase
 - [ ] URL Configuration has production Vercel URL
 - [ ] Redirect URLs include `/` and `/dashboard`
 - [ ] Google OAuth still configured
 - [ ] Public email sign-up disabled (invite/approve-only)
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` set on backend (Render) for Admin Console provisioning
-
 ### Auth & Admin Console
-- [ ] `FINANCEBUDDY_ADMIN_EMAILS` set on backend with at least one bootstrap admin
 - [ ] Bootstrap admin can sign in and open `/admin`
-- [ ] Approve flow creates Supabase user and sets `access_requests.status = approved`
+- [ ] Non-admin visiting `/admin` is redirected to `/dashboard`
+- [ ] Approve/invite sends Supabase invite email; only then marks `access_requests` approved
 - [ ] Approved user sign-in creates `users` row with `status = active`
 - [ ] Unapproved email receives `403 not_authorized` on sign-in
-- [ ] `GET /auth/users` lists accounts after first sign-in (admin only)
+- [ ] `GET /auth/users` with Bearer token lists accounts (admin only) — see [API.md](API.md)
+- [ ] From the production site, `POST /auth/access-status` works (CORS smoke)
+
+```bash
+# Smoke: replace ACCESS_TOKEN with a Supabase session access_token for an admin
+curl -s https://your-app.onrender.com/auth/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+curl -s -X POST https://your-app.onrender.com/auth/access-status \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"you@example.com\"}"
+```
 
 ---
 

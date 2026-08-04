@@ -31,7 +31,7 @@ from domains.budget.sessions import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["budget"])
+router = APIRouter()
 
 
 def _require_caller() -> str:

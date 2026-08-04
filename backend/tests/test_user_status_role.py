@@ -18,12 +18,6 @@ def clear_user_cache():
 
 
 @pytest.fixture
-def deny_open_provision(monkeypatch):
-    """Exercise production allowlist behavior (conftest enables open provision by default)."""
-    monkeypatch.setenv("FINANCEBUDDY_OPEN_PROVISION", "0")
-
-
-@pytest.fixture
 def truncate_access_requests(clean_db):
     with db.connect() as conn:
         conn.execute("TRUNCATE access_requests RESTART IDENTITY CASCADE")
@@ -58,7 +52,7 @@ def test_message_for_access_status_none():
 
 
 @requires_db
-def test_unapproved_signup_is_denied(truncate_access_requests, deny_open_provision):
+def test_unapproved_signup_is_denied(truncate_access_requests, enforce_allowlist):
     with pytest.raises(users.NotAuthorizedError):
         users.resolve(TEST_ISSUER, "pending-user", email="new@example.test")
 
@@ -71,7 +65,7 @@ def test_unapproved_signup_is_denied(truncate_access_requests, deny_open_provisi
 
 
 @requires_db
-def test_pending_access_request_shows_pending_status(truncate_access_requests, deny_open_provision):
+def test_pending_access_request_shows_pending_status(truncate_access_requests, enforce_allowlist):
     """Google/email after requesting access should land as pending, not denied."""
     with db.connect() as conn:
         conn.execute(
@@ -87,7 +81,7 @@ def test_pending_access_request_shows_pending_status(truncate_access_requests, d
 
 
 @requires_db
-def test_approved_access_request_grants_active_status(truncate_access_requests, deny_open_provision):
+def test_approved_access_request_grants_active_status(truncate_access_requests, enforce_allowlist):
     with db.connect() as conn:
         conn.execute(
             """
@@ -102,7 +96,7 @@ def test_approved_access_request_grants_active_status(truncate_access_requests, 
 
 
 @requires_db
-def test_admin_email_gets_admin_role(truncate_access_requests, deny_open_provision, monkeypatch):
+def test_admin_email_gets_admin_role(truncate_access_requests, enforce_allowlist, monkeypatch):
     monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
 
     caller = users.resolve(TEST_ISSUER, "admin-user", email="admin@example.test")
@@ -111,8 +105,15 @@ def test_admin_email_gets_admin_role(truncate_access_requests, deny_open_provisi
 
 
 @requires_db
-def test_activate_by_email_promotes_pending_account(truncate_access_requests):
-    # Open provision (default in tests) still creates pending accounts for fixtures.
+def test_activate_by_email_promotes_pending_account(truncate_access_requests, enforce_allowlist):
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO access_requests (email, name, status)
+            VALUES ('later@example.test', 'Later User', 'pending')
+            """
+        )
+
     caller = users.resolve(TEST_ISSUER, "later-approved", email="later@example.test")
     assert caller.status == "pending"
 
@@ -137,7 +138,7 @@ def test_suspend_by_email(truncate_access_requests):
 
 @requires_db
 def test_invite_endpoint_allowlists_email(
-    truncate_access_requests, deny_open_provision, monkeypatch, fake_bearer_auth
+    truncate_access_requests, enforce_allowlist, monkeypatch, fake_bearer_auth
 ):
     monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
     monkeypatch.setattr(
@@ -196,7 +197,7 @@ def test_access_status_endpoint(truncate_access_requests, client):
 
 @requires_db
 def test_list_and_update_app_users(
-    truncate_access_requests, deny_open_provision, monkeypatch, fake_bearer_auth
+    truncate_access_requests, enforce_allowlist, monkeypatch, fake_bearer_auth
 ):
     monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
 
@@ -240,7 +241,7 @@ def test_list_and_update_app_users(
 
 @requires_db
 def test_update_app_user_blocks_self_demotion(
-    truncate_access_requests, deny_open_provision, monkeypatch, fake_bearer_auth
+    truncate_access_requests, enforce_allowlist, monkeypatch, fake_bearer_auth
 ):
     monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
     admin = users.resolve(TEST_ISSUER, "self-admin", email="admin@example.test")
@@ -257,10 +258,102 @@ def test_update_app_user_blocks_self_demotion(
 
 @requires_db
 def test_middleware_returns_not_authorized(
-    truncate_access_requests, deny_open_provision, fake_bearer_auth
+    truncate_access_requests, enforce_allowlist, fake_bearer_auth
 ):
     client = TestClient(app)
     headers = fake_bearer_auth("cold-user", email="cold@example.test")
     res = client.get("/auth/me", headers=headers)
     assert res.status_code == 403
     assert res.json()["detail"] == "not_authorized"
+
+
+@requires_db
+def test_invite_failure_does_not_allowlist(
+    truncate_access_requests, enforce_allowlist, monkeypatch, fake_bearer_auth
+):
+    monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
+    monkeypatch.setattr(
+        auth_router,
+        "_provision_in_supabase",
+        lambda **kwargs: (False, "SMTP down"),
+    )
+
+    users.resolve(TEST_ISSUER, "admin-inviter-fail", email="admin@example.test")
+    client = TestClient(app)
+    headers = fake_bearer_auth("admin-inviter-fail", email="admin@example.test")
+    res = client.post(
+        "/auth/invites",
+        headers=headers,
+        json={"email": "nope@example.test", "name": "Nope", "method": "invite"},
+    )
+    assert res.status_code == 502, res.text
+
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM access_requests WHERE LOWER(email) = %s",
+            ("nope@example.test",),
+        ).fetchone()
+    assert row is None
+
+
+@requires_db
+def test_approve_failure_leaves_pending(
+    truncate_access_requests, enforce_allowlist, monkeypatch, fake_bearer_auth
+):
+    monkeypatch.setenv("FINANCEBUDDY_ADMIN_EMAILS", "admin@example.test")
+    monkeypatch.setattr(
+        auth_router,
+        "_provision_in_supabase",
+        lambda **kwargs: (False, "invite failed"),
+    )
+
+    with db.connect() as conn:
+        req_id = conn.execute(
+            """
+            INSERT INTO access_requests (email, name, status)
+            VALUES ('still-pending@example.test', 'Still Pending', 'pending')
+            RETURNING id
+            """
+        ).fetchone()[0]
+
+    users.resolve(TEST_ISSUER, "admin-approve-fail", email="admin@example.test")
+    client = TestClient(app)
+    headers = fake_bearer_auth("admin-approve-fail", email="admin@example.test")
+    res = client.post(
+        f"/auth/access-requests/{req_id}/approve",
+        headers=headers,
+        json={"method": "invite"},
+    )
+    assert res.status_code == 502, res.text
+
+    with db.connect() as conn:
+        status = conn.execute(
+            "SELECT status FROM access_requests WHERE id = %s",
+            (req_id,),
+        ).fetchone()[0]
+    assert status == "pending"
+
+
+def test_already_registered_counts_as_provisioned():
+    assert auth_router._already_registered_message(
+        "A user with this email address has already been registered"
+    )
+    assert not auth_router._already_registered_message("rate limit exceeded")
+
+
+def test_public_auth_rate_limit_enforced():
+    from unittest.mock import MagicMock
+
+    from fastapi import HTTPException
+
+    auth_router._public_auth_limiter.reset()
+    req = MagicMock()
+    req.headers.get.return_value = ""
+    req.client.host = "203.0.113.10"
+    for _ in range(20):
+        auth_router._enforce_public_rate_limit(req, "access-status", "rate@example.test")
+    with pytest.raises(HTTPException) as exc:
+        auth_router._enforce_public_rate_limit(req, "access-status", "rate@example.test")
+    assert exc.value.status_code == 429
+    auth_router._public_auth_limiter.reset()
+

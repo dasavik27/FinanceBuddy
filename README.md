@@ -20,6 +20,7 @@ Your data persists to your own Postgres and is encrypted before it gets there.
 | Document | What it covers |
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
+| **[API.md](API.md)** | How to call the API, pass the Bearer token, and the full `/auth` endpoint catalog. |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, domain architecture (including Budget Analyzer), **authentication & access control**, security & privacy model, and design constraints. |
 | **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, auth/admin deploy checks, and deployment verification scripts. |
 | **[HOW_TO_VERIFY_DOCUMENTATION.md](HOW_TO_VERIFY_DOCUMENTATION.md)** | Quick checklist to confirm documentation is complete and up to date. |
@@ -52,13 +53,14 @@ cd backend && python -m migrations.migrate && cd ..
 cd frontend && npm run dev:all
 ```
 
-App on http://localhost:5173, API docs on http://localhost:8000/docs.
+App on http://localhost:5173. OpenAPI try-it-out on http://localhost:8000/docs.
+How to authenticate requests: [API.md](API.md).
 `npm run dev` alone starts only the frontend.
 
 ## Tests
 
 ```bash
-# Backend — 861 tests
+# Backend — ~875 tests
 cd backend
 TEST_DATABASE_URL=postgresql://postgres:pw@localhost:5432/financebuddy_test \
   python -m pytest tests/ -q
@@ -78,7 +80,7 @@ After setup, run the verification checklist:
 ```bash
 python -m pytest backend/tests/test_sql_is_valid_postgres.py -v
 python -m pytest backend/tests/test_only_shared_db_opens_connections.py -v
-python backend/scripts/verify_setup.py
+cd backend && python scripts/verify_setup.py
 ```
 
 See [VERIFICATION.md](VERIFICATION.md) for complete verification procedures.

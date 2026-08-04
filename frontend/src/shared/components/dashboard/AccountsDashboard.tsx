@@ -83,14 +83,14 @@ export default function AccountsDashboard() {
     onSuccess: () => {
       queryClient.clear()
       setDeletePan(null)
-      logout()
+      void logout()
     }
   })
 
   const clearCacheMutation = useMutation({
     mutationFn: () => apiClient.clearSystemCaches(),
     onSuccess: () => {
-      logout()
+      void logout()
       queryClient.clear()
     }
   })

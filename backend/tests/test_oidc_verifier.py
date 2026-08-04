@@ -15,7 +15,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from shared.oidc import OidcJwtVerifier, Principal, from_env, Hs256JwtVerifier, CompositeAuthVerifier
+from shared.oidc import OidcJwtVerifier, Principal, from_env
 
 ISSUER = "https://example-project.supabase.co/auth/v1"
 AUDIENCE = "authenticated"
@@ -267,61 +267,10 @@ def test_from_env_returns_none_when_unconfigured():
     assert from_env({}) is None
 
 
-def test_hs256_legacy_supabase_token(verifier, keypair):
-    secret = "super-secret-test-jwt-key"
-    hs256 = Hs256JwtVerifier(secret, ISSUER, AUDIENCE)
-    now = int(time.time())
-    token = jwt.encode(
-        {
-            "iss": ISSUER,
-            "aud": AUDIENCE,
-            "sub": "legacy-admin-1",
-            "email": "admin@example.com",
-            "iat": now,
-            "exp": now + 3600,
-        },
-        secret,
-        algorithm="HS256",
-    )
-    principal = hs256.verify(token)
-    assert principal == Principal(
-        issuer=ISSUER, subject="legacy-admin-1", email="admin@example.com"
-    )
-
-
-def test_composite_prefers_hs256_for_legacy_tokens(keypair):
-    secret = "super-secret-test-jwt-key"
-    _, public_key = keypair
-    jwks = OidcJwtVerifier(
-        jwks_url="https://example.invalid/jwks.json",
-        issuer=ISSUER,
-        audience=AUDIENCE,
-        jwk_client=_StubJwks(public_key),
-    )
-    hs256 = Hs256JwtVerifier(secret, ISSUER, AUDIENCE)
-    composite = CompositeAuthVerifier(jwks, hs256)
-    now = int(time.time())
-    token = jwt.encode(
-        {
-            "iss": ISSUER,
-            "aud": AUDIENCE,
-            "sub": "legacy-admin-2",
-            "email": "admin@example.com",
-            "iat": now,
-            "exp": now + 3600,
-        },
-        secret,
-        algorithm="HS256",
-    )
-    principal = composite.verify(token)
-    assert principal is not None
-    assert principal.subject == "legacy-admin-2"
-
-
-def test_from_env_builds_composite_when_jwt_secret_set():
+def test_from_env_ignores_jwt_secret_uses_jwks_only():
     built = from_env({
         "SUPABASE_URL": "https://abcxyz.supabase.co",
-        "SUPABASE_JWT_SECRET": "legacy-secret",
+        "SUPABASE_JWT_SECRET": "ignored-legacy-secret",
     })
-    assert isinstance(built, CompositeAuthVerifier)
+    assert isinstance(built, OidcJwtVerifier)
     assert built.issuer == "https://abcxyz.supabase.co/auth/v1"

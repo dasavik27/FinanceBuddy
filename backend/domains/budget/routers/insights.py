@@ -26,7 +26,7 @@ from domains.budget.transfers import set_flag
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["budget"])
+router = APIRouter()
 
 
 def _require_caller() -> str:

@@ -1,14 +1,36 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from shared import db, identity, session_stores, users
+from shared.rate_limit import SlidingWindowLimiter
 
 import logging
 logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
+
+# Public endpoints are email-enumeration surfaces; blunt brute force / scraping.
+_public_auth_limiter = SlidingWindowLimiter(max_calls=20, window_seconds=60)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_public_rate_limit(request: Request, bucket: str, email: str = "") -> None:
+    key = f"{bucket}:{_client_ip(request)}:{(email or '').strip().lower()}"
+    if not _public_auth_limiter.allow(key):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again in a minute.",
+        )
 
 
 class ProfileRequest(BaseModel):
@@ -27,7 +49,7 @@ class AccessStatusPayload(BaseModel):
 
 
 @router.post("/access-status")
-def check_access_status(req: AccessStatusPayload):
+def check_access_status(req: AccessStatusPayload, request: Request):
     """
     Public lookup: does this email have an access_requests row, and what status?
     Used on failed email/Google sign-in to show pending vs raise-request messaging.
@@ -35,6 +57,7 @@ def check_access_status(req: AccessStatusPayload):
     email = req.email.strip().lower()
     if not email or "@" not in email or "." not in email:
         raise HTTPException(status_code=400, detail="A valid email address is required.")
+    _enforce_public_rate_limit(request, "access-status", email)
 
     with db.connect() as conn:
         status = users.lookup_access_request_status(conn, email)
@@ -113,7 +136,7 @@ def logout_user():
 
 
 @router.post("/request-access")
-def submit_access_request(req: AccessRequestPayload):
+def submit_access_request(req: AccessRequestPayload, request: Request):
     """
     Public endpoint for prospective users to request early access / invitation.
     Stores the request in access_requests table for admin provisioning.
@@ -124,6 +147,7 @@ def submit_access_request(req: AccessRequestPayload):
         raise HTTPException(status_code=400, detail="A valid email address is required.")
     if not name:
         raise HTTPException(status_code=400, detail="Name is required.")
+    _enforce_public_rate_limit(request, "request-access", email)
 
     investor_type = (req.investor_type or "individual").strip()
     notes = (req.notes or "").strip()
@@ -168,28 +192,116 @@ class ApproveAccessRequestPayload(BaseModel):
     password: Optional[str] = None
 
 
-def _provision_in_supabase(email: str, name: str, method: str = "invite", password: Optional[str] = None):
-    import json
+def _supabase_admin_config():
+    """Returns (supabase_url, service_role_key) or (None, None) if not configured."""
     import os
-    import urllib.error
-    import urllib.request
     from dotenv import load_dotenv
 
     load_dotenv(override=True)
-
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_role_key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
     ).strip()
-
     if not supabase_url or not service_role_key:
-        return False, "SUPABASE_SERVICE_ROLE_KEY is missing in backend/.env. User was not created in Supabase."
+        return None, None
+    return supabase_url, service_role_key
 
-    headers = {
+
+def _supabase_admin_headers(service_role_key: str) -> dict:
+    return {
         "Authorization": f"Bearer {service_role_key}",
         "apikey": service_role_key,
         "Content-Type": "application/json",
     }
+
+
+def _already_registered_message(err_msg: str) -> bool:
+    lower = (err_msg or "").lower()
+    needles = (
+        "already been registered",
+        "already registered",
+        "user already exists",
+        "email_exists",
+        "already been invited",
+    )
+    return any(n in lower for n in needles)
+
+
+def _find_supabase_auth_user_id(email: str, supabase_url: str, headers: dict) -> Optional[str]:
+    """
+    Resolve a Supabase Auth user id by email.
+
+    Tries an email filter first (supported on newer GoTrue), then paginates the
+    admin list so accounts beyond the first page are still found.
+    """
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    email_lower = email.strip().lower()
+    if not email_lower:
+        return None
+
+    # Prefer filter when the API supports it (avoids scanning).
+    try:
+        q = urllib.parse.urlencode({"email": email_lower, "page": 1, "per_page": 50})
+        filter_url = f"{supabase_url}/auth/v1/admin/users?{q}"
+        req = urllib.request.Request(filter_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        users_list = payload.get("users") if isinstance(payload, dict) else payload
+        if isinstance(users_list, list):
+            match = next(
+                (u for u in users_list if (u.get("email") or "").strip().lower() == email_lower),
+                None,
+            )
+            if match and match.get("id"):
+                return match["id"]
+            # Some builds return the filtered user as the root object.
+            if isinstance(payload, dict) and (payload.get("email") or "").strip().lower() == email_lower:
+                if payload.get("id"):
+                    return payload["id"]
+    except urllib.error.HTTPError as e:
+        # 400/404/422 → fall through to pagination; other errors still fall through.
+        logger.info("[AUTH] Supabase email filter unavailable (%s); paginating", e.code)
+    except Exception as e:
+        logger.info("[AUTH] Supabase email filter failed (%s); paginating", e)
+
+    page = 1
+    per_page = 200
+    max_pages = 50
+    while page <= max_pages:
+        list_url = f"{supabase_url}/auth/v1/admin/users?page={page}&per_page={per_page}"
+        req = urllib.request.Request(list_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        users_list = payload.get("users") if isinstance(payload, dict) else payload
+        if not isinstance(users_list, list) or not users_list:
+            return None
+        match = next(
+            (u for u in users_list if (u.get("email") or "").strip().lower() == email_lower),
+            None,
+        )
+        if match and match.get("id"):
+            return match["id"]
+        if len(users_list) < per_page:
+            return None
+        page += 1
+    logger.warning("[AUTH] Supabase user list exhausted without match for %s", email_lower)
+    return None
+
+
+def _provision_in_supabase(email: str, name: str, method: str = "invite", password: Optional[str] = None):
+    import json
+    import urllib.error
+    import urllib.request
+
+    supabase_url, service_role_key = _supabase_admin_config()
+    if not supabase_url or not service_role_key:
+        return False, "SUPABASE_SERVICE_ROLE_KEY is missing in backend/.env. User was not created in Supabase."
+
+    headers = _supabase_admin_headers(service_role_key)
 
     try:
         if method == "create" and password:
@@ -212,7 +324,7 @@ def _provision_in_supabase(email: str, name: str, method: str = "invite", passwo
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp_body = resp.read().decode("utf-8")
             logger.info("[AUTH] Supabase provision successful for %s: %s", email, resp_body[:100])
-            return True, f"User {email} successfully provisioned in Supabase!"
+            return True, f"Invite email sent to {email}. They will set their own password."
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="replace")
         try:
@@ -220,9 +332,12 @@ def _provision_in_supabase(email: str, name: str, method: str = "invite", passwo
             err_msg = parsed.get("msg") or parsed.get("message") or parsed.get("error_description") or err_msg
         except Exception:
             pass
+        # Already in Auth = allowlist can proceed (re-invite / approve of existing user).
+        if _already_registered_message(err_msg):
+            logger.info("[AUTH] Supabase user already exists for %s; treating as provisioned", email)
+            return True, f"User {email} already has a Supabase Auth account; access allowlisted."
         logger.error("[AUTH] Supabase provision HTTP %d: %s", e.code, err_msg)
-        hint = " Tip: Use 'Set Password' to provision without relying on email SMTP." if method == "invite" else ""
-        return False, f"Supabase Error ({e.code}): {err_msg}.{hint}"
+        return False, f"Supabase Error ({e.code}): {err_msg}"
     except Exception as e:
         logger.exception("[AUTH] Supabase provision exception: %s", e)
         return False, f"Failed to connect to Supabase: {str(e)}"
@@ -302,6 +417,9 @@ def approve_access_request(request_id: str, req: ApproveAccessRequestPayload):
     """
     Approve an access request and send a Supabase invite email.
     The user sets their own password after opening the invite link.
+
+    Access is marked approved only after Supabase invite succeeds (or the Auth
+    user already exists). A failed invite leaves the request pending.
     """
     caller = identity.current_caller()
     _assert_admin(caller)
@@ -323,14 +441,24 @@ def approve_access_request(request_id: str, req: ApproveAccessRequestPayload):
 
         req_id, email, name = row
 
-        # Invite-only: Supabase emails a link; user creates their password in-app.
-        provisioned, prov_msg = _provision_in_supabase(
-            email=email,
-            name=name,
-            method="invite",
-            password=None,
+    # Invite first — do not allowlist until Auth can accept the user.
+    provisioned, prov_msg = _provision_in_supabase(
+        email=email,
+        name=name,
+        method="invite",
+        password=None,
+    )
+    if not provisioned:
+        logger.warning(
+            "[AUTH] access request %s (%s) left pending; invite failed for admin %s: %s",
+            req_id, email, caller.user_id, prov_msg,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invite failed; request left pending. {prov_msg}",
         )
 
+    with db.connect() as conn:
         conn.execute(
             "UPDATE access_requests SET status = 'approved', reviewed_at = now() WHERE id = %s",
             (req_id,),
@@ -338,11 +466,11 @@ def approve_access_request(request_id: str, req: ApproveAccessRequestPayload):
 
     users.activate_by_email(email)
 
-    logger.info("[AUTH] access request %s (%s) approved by admin %s (provisioned=%s)", req_id, email, caller.user_id, provisioned)
+    logger.info("[AUTH] access request %s (%s) approved by admin %s", req_id, email, caller.user_id)
     return {
-        "status": "success" if provisioned else "warning",
+        "status": "success",
         "message": prov_msg,
-        "supabase_provisioned": provisioned,
+        "supabase_provisioned": True,
     }
 
 
@@ -387,8 +515,10 @@ class InviteUserPayload(BaseModel):
 @router.post("/invites")
 def invite_user(req: InviteUserPayload):
     """
-    Admin-direct invite: allowlist the email, mark/create an approved access_requests
-    row, and provision the Supabase Auth user without a prior public request.
+    Admin-direct invite: send Supabase invite, then allowlist the email.
+
+    The access_requests row is marked approved only after invite succeeds (or the
+    Auth user already exists).
     """
     caller = identity.current_caller()
     _assert_admin(caller)
@@ -407,6 +537,22 @@ def invite_user(req: InviteUserPayload):
 
     investor_type = (req.investor_type or "individual").strip()
     notes = (req.notes or "Admin invite").strip()
+
+    provisioned, prov_msg = _provision_in_supabase(
+        email=email,
+        name=name,
+        method="invite",
+        password=None,
+    )
+    if not provisioned:
+        logger.warning(
+            "[AUTH] invite for %s by admin %s failed (not allowlisted): %s",
+            email, caller.user_id, prov_msg,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invite failed; email was not allowlisted. {prov_msg}",
+        )
 
     with db.connect() as conn:
         row = conn.execute(
@@ -433,22 +579,16 @@ def invite_user(req: InviteUserPayload):
                 (email, name, investor_type, notes),
             ).fetchone()[0]
 
-    provisioned, prov_msg = _provision_in_supabase(
-        email=email,
-        name=name,
-        method="invite",
-        password=None,
-    )
     users.activate_by_email(email)
 
     logger.info(
-        "[AUTH] invite for %s by admin %s (request_id=%s provisioned=%s)",
-        email, caller.user_id, request_id, provisioned,
+        "[AUTH] invite for %s by admin %s (request_id=%s)",
+        email, caller.user_id, request_id,
     )
     return {
-        "status": "success" if provisioned else "warning",
+        "status": "success",
         "message": prov_msg,
-        "supabase_provisioned": provisioned,
+        "supabase_provisioned": True,
         "request_id": str(request_id),
         "email": email,
     }
@@ -461,40 +601,18 @@ class SuspendUserPayload(BaseModel):
 def _ban_in_supabase(email: str) -> tuple:
     """Best-effort ban of the Supabase Auth user. Returns (ok, message)."""
     import json
-    import os
     import urllib.error
     import urllib.request
-    from dotenv import load_dotenv
 
-    load_dotenv(override=True)
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    service_role_key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
-    ).strip()
+    supabase_url, service_role_key = _supabase_admin_config()
     if not supabase_url or not service_role_key:
         return False, "Supabase service role not configured; app account suspended only."
 
-    headers = {
-        "Authorization": f"Bearer {service_role_key}",
-        "apikey": service_role_key,
-        "Content-Type": "application/json",
-    }
+    headers = _supabase_admin_headers(service_role_key)
     try:
-        # Admin list has no reliable email filter across versions; page and match client-side.
-        list_url = f"{supabase_url}/auth/v1/admin/users?page=1&per_page=200"
-        req = urllib.request.Request(list_url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        users_list = payload.get("users") if isinstance(payload, dict) else payload
-        if not isinstance(users_list, list):
-            users_list = []
-        match = next(
-            (u for u in users_list if (u.get("email") or "").strip().lower() == email),
-            None,
-        )
-        if not match:
+        user_id = _find_supabase_auth_user_id(email, supabase_url, headers)
+        if not user_id:
             return False, "No Supabase Auth user found for that email; app account suspended."
-        user_id = match.get("id")
         ban_url = f"{supabase_url}/auth/v1/admin/users/{user_id}"
         ban_body = json.dumps({"ban_duration": "876000h"}).encode("utf-8")
         ban_req = urllib.request.Request(ban_url, data=ban_body, headers=headers, method="PUT")
@@ -580,40 +698,18 @@ def update_app_user(user_id: str, req: UpdateUserPayload):
 
 def _delete_in_supabase(email: str) -> tuple:
     """Best-effort hard-delete of the Supabase Auth user. Returns (ok, message)."""
-    import json
-    import os
     import urllib.error
     import urllib.request
-    from dotenv import load_dotenv
 
-    load_dotenv(override=True)
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    service_role_key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_SERVICE_KEY", "")
-    ).strip()
+    supabase_url, service_role_key = _supabase_admin_config()
     if not supabase_url or not service_role_key:
         return False, "Supabase service role not configured; app data deleted only."
 
-    headers = {
-        "Authorization": f"Bearer {service_role_key}",
-        "apikey": service_role_key,
-        "Content-Type": "application/json",
-    }
+    headers = _supabase_admin_headers(service_role_key)
     try:
-        list_url = f"{supabase_url}/auth/v1/admin/users?page=1&per_page=200"
-        req = urllib.request.Request(list_url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        users_list = payload.get("users") if isinstance(payload, dict) else payload
-        if not isinstance(users_list, list):
-            users_list = []
-        match = next(
-            (u for u in users_list if (u.get("email") or "").strip().lower() == email),
-            None,
-        )
-        if not match:
+        auth_user_id = _find_supabase_auth_user_id(email, supabase_url, headers)
+        if not auth_user_id:
             return False, "No Supabase Auth user found for that email; app data deleted."
-        auth_user_id = match.get("id")
         del_url = f"{supabase_url}/auth/v1/admin/users/{auth_user_id}"
         del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
         with urllib.request.urlopen(del_req, timeout=10) as resp:

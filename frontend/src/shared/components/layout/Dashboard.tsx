@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
 import { ErrorBoundary }    from '../ui'
+import { useAppStore } from '../../store/appStore'
 
 // Route-level code splitting. These were static imports, which meant every
 // domain — including the whole tax-expert tree and its five tabs — landed in the
@@ -37,6 +38,19 @@ function LegacyDashboardRedirect() {
   return <Navigate to={`${rest}${location.search}${location.hash}`} replace />
 }
 
+/** UI-only gate; APIs still enforce admin. Stops non-admins opening the console shell. */
+function AdminOnly() {
+  const role = useAppStore((s) => s.role)
+  if (role !== 'admin') {
+    return <Navigate to="/dashboard" replace />
+  }
+  return (
+    <ErrorBoundary fallbackMessage="Admin Console encountered an error.">
+      <AdminConsole />
+    </ErrorBoundary>
+  )
+}
+
 export default function Dashboard() {
   return (
     <Box>
@@ -51,7 +65,7 @@ export default function Dashboard() {
           <Route path="tax-expert/*"     element={<ErrorBoundary fallbackMessage="Tax Expert section encountered an error."><TaxExpertDashboard /></ErrorBoundary>} />
           <Route path="budget/*"         element={<ErrorBoundary fallbackMessage="Budget Analyzer section encountered an error."><BudgetDashboard /></ErrorBoundary>} />
           <Route path="accounts"         element={<ErrorBoundary fallbackMessage="Accounts Vault encountered an error."><AccountsDashboard /></ErrorBoundary>} />
-          <Route path="admin"            element={<ErrorBoundary fallbackMessage="Admin Console encountered an error."><AdminConsole /></ErrorBoundary>} />
+          <Route path="admin"            element={<AdminOnly />} />
 
           {/* Legacy /dashboard/<domain> URLs. Ranked below the static "dashboard"
               route above, so the bare hub path is not swallowed by this. */}

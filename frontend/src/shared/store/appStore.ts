@@ -63,7 +63,7 @@ interface AppState {
   clearSession: (type?: string) => void
   setFilters: (f: Partial<Filters>) => void
   triggerRefresh: () => void
-  logout: () => void
+  logout: () => Promise<void>
 
   compareFunds: Record<string, string[]>
   setCompareFunds: (sid: string, funds: string[]) => void
@@ -189,17 +189,23 @@ export const useAppStore = create<AppState>()(
           }
         }),
         
-      logout: () => {
+      logout: async () => {
         try {
           // Body intentionally empty: the server takes the account from the request
           // identity. It used to read the PAN from here, which made logout an
           // unauthenticated way to destroy any named user's sessions.
+          // Await server eviction before clearing the provider token so logout
+          // still authenticates.
           if (get().userId || get().pan) {
-            api.post('/auth/logout').catch(console.error)
+            try {
+              await api.post('/auth/logout')
+            } catch (e) {
+              console.error(e)
+            }
           }
           // Ends the provider session too, so the next visit does not silently
           // resume via a still-valid refresh token.
-          void authClient.signOut()
+          await authClient.signOut()
           // Only our own key. localStorage.clear() also wiped the auth client's
           // session and anything else on the origin.
           localStorage.removeItem('finance-buddy-storage')

@@ -93,7 +93,7 @@ export default function PendingAccess() {
         <Button
           variant="outlined"
           startIcon={<LogoutIcon />}
-          onClick={() => logout()}
+          onClick={() => void logout()}
           sx={{
             color: '#94A3B8',
             borderColor: 'rgba(255,255,255,0.12)',

@@ -121,8 +121,7 @@ class OidcJwtVerifier:
             alg = None
         if alg == "HS256":
             logger.warning(
-                "[AUTH] received HS256 token but verifier is JWKS-only — "
-                "set SUPABASE_JWT_SECRET on the backend (Supabase JWT Secret)"
+                "[AUTH] received HS256 token — only JWKS (asymmetric) tokens are accepted"
             )
             return None
 
@@ -202,112 +201,15 @@ def _principal_from_claims(claims: dict, default_issuer: str) -> Optional[Princi
     )
 
 
-class Hs256JwtVerifier:
-    """Verify legacy Supabase tokens signed with the project JWT secret (HS256)."""
-
-    def __init__(
-        self,
-        secret: str,
-        issuer: str,
-        audience: str,
-        leeway: int = DEFAULT_LEEWAY,
-    ):
-        if not secret:
-            raise ValueError("secret is required")
-        if not issuer:
-            raise ValueError("issuer is required")
-        if not audience:
-            raise ValueError("audience is required")
-        self.issuer = issuer
-        self.audience = audience
-        self.leeway = leeway
-        self._secret = secret
-
-    def verify(self, token: str) -> Optional[Principal]:
-        if not token:
-            return None
-        try:
-            claims = jwt.decode(
-                token,
-                self._secret,
-                algorithms=["HS256"],
-                issuer=self.issuer,
-                audience=self.audience,
-                leeway=self.leeway,
-                options={
-                    "require": ["exp", "iss", "aud", "sub"],
-                    "verify_signature": True,
-                    "verify_exp": True,
-                    "verify_iss": True,
-                    "verify_aud": True,
-                },
-            )
-        except jwt.PyJWTError as e:
-            logger.warning(
-                "[AUTH] HS256 token rejected reason=%s expected_iss=%s expected_aud=%s "
-                "(check SUPABASE_JWT_SECRET matches Supabase JWT Secret)",
-                type(e).__name__, self.issuer, self.audience,
-            )
-            return None
-        return _principal_from_claims(claims, self.issuer)
-
-
-class CompositeAuthVerifier:
-    """Try JWKS (asymmetric) first, then legacy HS256 when configured."""
-
-    def __init__(
-        self,
-        jwks: Optional[OidcJwtVerifier],
-        hs256: Optional[Hs256JwtVerifier],
-    ):
-        if jwks is None and hs256 is None:
-            raise ValueError("at least one verifier is required")
-        self._jwks = jwks
-        self._hs256 = hs256
-        ref = jwks or hs256
-        self.issuer = ref.issuer
-        self.audience = ref.audience
-
-    def verify(self, token: str) -> Optional[Principal]:
-        if not token:
-            return None
-        try:
-            header = jwt.get_unverified_header(token)
-            alg = header.get("alg")
-            kid = header.get("kid")
-        except jwt.PyJWTError as e:
-            logger.warning("[AUTH] malformed JWT header: %s", type(e).__name__)
-            return None
-
-        if alg == "HS256":
-            if self._hs256 is None:
-                logger.warning(
-                    "[AUTH] token alg=HS256 but SUPABASE_JWT_SECRET not set — "
-                    "cannot verify legacy Supabase JWT; set secret or rotate to asymmetric keys"
-                )
-                return None
-            principal = self._hs256.verify(token)
-            if principal is None:
-                logger.warning("[AUTH] HS256 verify failed alg=%s kid=%s", alg, kid)
-            return principal
-
-        if self._jwks is not None:
-            principal = self._jwks.verify(token)
-            if principal is None:
-                logger.warning("[AUTH] JWKS verify failed alg=%s kid=%s", alg, kid)
-            return principal
-
-        logger.warning("[AUTH] no verifier for token alg=%s kid=%s", alg, kid)
-        return None
-
-
 def from_env(env: Optional[dict] = None) -> Optional[AuthVerifier]:
     """
-    Build the verifier from configuration, or None when auth is not configured.
+    Build the JWKS verifier from configuration, or None when auth is not configured.
 
     Reads generic names first so the provider is a deployment detail. The
     SUPABASE_* fallbacks exist only so an existing .env keeps working; nothing in
     the code path below cares which provider answered.
+
+    Only asymmetric tokens (JWKS) are accepted — matching current Supabase ES256/RS256.
     """
     import os
 
@@ -333,25 +235,8 @@ def from_env(env: Optional[dict] = None) -> Optional[AuthVerifier]:
         )
         return None
 
-    jwt_secret = (
-        env.get("SUPABASE_JWT_SECRET")
-        or env.get("JWT_SECRET")
-        or ""
-    ).strip()
-
-    jwks_verifier = OidcJwtVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)
-    hs256_verifier = Hs256JwtVerifier(jwt_secret, issuer, audience) if jwt_secret else None
-
-    if hs256_verifier is not None:
-        logger.info(
-            "[AUTH] JWT verification ready mode=jwks+hs256 issuer=%s audience=%s jwks=%s",
-            issuer, audience, jwks_url,
-        )
-        return CompositeAuthVerifier(jwks_verifier, hs256_verifier)
-
     logger.info(
-        "[AUTH] JWT verification ready mode=jwks-only issuer=%s audience=%s jwks=%s "
-        "(set SUPABASE_JWT_SECRET if tokens are still HS256)",
+        "[AUTH] JWT verification ready mode=jwks issuer=%s audience=%s jwks=%s",
         issuer, audience, jwks_url,
     )
-    return jwks_verifier
+    return OidcJwtVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)

@@ -16,10 +16,6 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AUTH_JWKS_URL", "https://example-test-issuer.invalid/jwks.json")
 os.environ.setdefault("AUTH_ISSUER", "https://example-test-issuer.invalid/auth/v1")
 os.environ.setdefault("AUTH_AUDIENCE", "authenticated")
-# Most DB tests create accounts via users.resolve() without an access_requests row.
-# Production denies that path; tests opt into open provisioning unless a case
-# explicitly turns it off (see test_user_status_role.py).
-os.environ.setdefault("FINANCEBUDDY_OPEN_PROVISION", "1")
 
 # A fixed, obviously-fake key so the storage tests can round-trip encrypted columns.
 # setdefault, not a plain assignment: test_crypto.py drives its own keyring through
@@ -104,6 +100,48 @@ def db_schema():
     with db.connect() as conn:
         conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
     db.close_pool()
+
+
+@pytest.fixture
+def enforce_allowlist():
+    """
+    Opt out of the autouse test provisioning bypass.
+
+    Use on tests that assert production invite/allowlist behavior.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _relax_provisioning_in_tests(request, monkeypatch):
+    """
+    Most DB tests call users.resolve() without an access_requests row.
+
+    Production denies that path. Tests get a pytest-only monkeypatch (not an env
+    escape hatch) unless they request the enforce_allowlist fixture.
+    """
+    if "enforce_allowlist" in request.fixturenames:
+        return
+
+    from shared import users
+
+    def _test_may_provision(conn, email):
+        return True
+
+    def _test_initial_account_flags(conn, email):
+        if email:
+            email_lower = email.strip().lower()
+            if email_lower in users._admin_emails():
+                return "active", "admin"
+            if users._has_approved_access(conn, email_lower):
+                return "active", "user"
+            if users._has_pending_access(conn, email_lower):
+                return "pending", "user"
+        # Default for fixtures: active so middleware does not 403 pending accounts.
+        return "active", "user"
+
+    monkeypatch.setattr(users, "_may_provision", _test_may_provision)
+    monkeypatch.setattr(users, "_initial_account_flags", _test_initial_account_flags)
 
 
 @pytest.fixture

@@ -25,7 +25,7 @@ from domains.budget.rules_safety import (
 )
 from domains.budget.sessions import reapply_rules_to_all_sessions
 
-router = APIRouter(tags=["budget"])
+router = APIRouter()
 
 
 class RuleCreate(BaseModel):
