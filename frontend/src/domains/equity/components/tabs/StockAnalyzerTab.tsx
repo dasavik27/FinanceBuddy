@@ -37,6 +37,7 @@ import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 
 import {
   ResponsiveContainer,
@@ -152,6 +153,25 @@ function fmtAsOf(iso?: string | null) {
   })
 }
 
+/** Info icon showing which upstream served a card / tile. */
+function SourceInfo({ source, fallback }: { source?: string | null; fallback?: string }) {
+  const text = source || fallback
+  if (!text) return null
+  return (
+    <Tooltip title={`Source: ${text}`} arrow placement="top">
+      <InfoOutlinedIcon
+        sx={{
+          fontSize: '1rem',
+          color: '#64748B',
+          cursor: 'help',
+          opacity: 0.85,
+          '&:hover': { color: '#94A3B8', opacity: 1 },
+        }}
+      />
+    </Tooltip>
+  )
+}
+
 function fmtLargeRev(v?: number | null) {
   if (v === null || v === undefined) return '—'
   if (Math.abs(v) >= 1000) {
@@ -166,12 +186,14 @@ function StatBox({
   subtext,
   highlight,
   color,
+  source,
 }: {
   label: string
   value: string | number
   subtext?: string
   highlight?: boolean
   color?: string
+  source?: string | null
 }) {
   return (
     <Box
@@ -187,9 +209,12 @@ function StatBox({
         },
       }}
     >
-      <Typography sx={{ color: '#94A3B8', fontSize: '0.76rem', fontWeight: 600, mb: 0.5 }}>
-        {label}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.5, mb: 0.5 }}>
+        <Typography sx={{ color: '#94A3B8', fontSize: '0.76rem', fontWeight: 600 }}>
+          {label}
+        </Typography>
+        <SourceInfo source={source} />
+      </Box>
       <Typography sx={{ color: color ?? '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
         {value}
       </Typography>
@@ -791,30 +816,33 @@ export default function StockAnalyzerTab() {
                 >
                   {/* Timeframe & Chart Style Switchers */}
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 1.5 }}>
-                    <Box sx={{ display: 'flex', gap: 0.5, bgcolor: 'rgba(255,255,255,0.04)', p: 0.5, borderRadius: '12px' }}>
-                      {timeframesList.map((tf) => {
-                        const isTfActive = activeTimeframe === tf
-                        return (
-                          <Button
-                            key={tf}
-                            size="small"
-                            onClick={() => setActiveTimeframe(tf)}
-                            sx={{
-                              minWidth: 42,
-                              px: 1.2,
-                              py: 0.4,
-                              borderRadius: '8px',
-                              fontSize: '0.78rem',
-                              fontWeight: isTfActive ? 800 : 600,
-                              color: isTfActive ? '#10B981' : '#94A3B8',
-                              bgcolor: isTfActive ? 'rgba(16,185,129,0.15)' : 'transparent',
-                              '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: '#fff' },
-                            }}
-                          >
-                            {tf}
-                          </Button>
-                        )
-                      })}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <SourceInfo source={stock.sources?.charts} fallback={stock.source} />
+                      <Box sx={{ display: 'flex', gap: 0.5, bgcolor: 'rgba(255,255,255,0.04)', p: 0.5, borderRadius: '12px' }}>
+                        {timeframesList.map((tf) => {
+                          const isTfActive = activeTimeframe === tf
+                          return (
+                            <Button
+                              key={tf}
+                              size="small"
+                              onClick={() => setActiveTimeframe(tf)}
+                              sx={{
+                                minWidth: 42,
+                                px: 1.2,
+                                py: 0.4,
+                                borderRadius: '8px',
+                                fontSize: '0.78rem',
+                                fontWeight: isTfActive ? 800 : 600,
+                                color: isTfActive ? '#10B981' : '#94A3B8',
+                                bgcolor: isTfActive ? 'rgba(16,185,129,0.15)' : 'transparent',
+                                '&:hover': { bgcolor: 'rgba(255,255,255,0.08)', color: '#fff' },
+                              }}
+                            >
+                              {tf}
+                            </Button>
+                          )
+                        })}
+                      </Box>
                     </Box>
 
                     {/* Chart Display Mode Switcher */}
@@ -912,36 +940,46 @@ export default function StockAnalyzerTab() {
                   <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                     <AssessmentIcon sx={{ color: '#10B981', fontSize: '1.2rem' }} />
                     Key Statistics & Valuation
+                    <SourceInfo source={stock.sources?.valuation} fallback={stock.source} />
                   </Typography>
 
                   <Grid container spacing={2} sx={{ mb: 4 }}>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="Market Cap" value={stock.market_cap_cr ? `₹${stock.market_cap_cr.toLocaleString()} Cr` : '-'} />
+                      <StatBox
+                        label="Market Cap"
+                        value={stock.market_cap_cr ? `₹${stock.market_cap_cr.toLocaleString()} Cr` : '-'}
+                        source={stock.sources?.market_cap}
+                      />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
                       <StatBox
                         label="P/E Ratio"
                         value={stock.pe_ratio ? stock.pe_ratio.toFixed(1) : '-'}
                         subtext={stock.sector_pe ? `Sector P/E: ${stock.sector_pe.toFixed(1)}` : undefined}
+                        source={stock.sources?.pe_ratio}
                       />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="P/B Ratio" value={stock.pb_ratio ? stock.pb_ratio.toFixed(2) : '-'} />
+                      <StatBox label="P/B Ratio" value={stock.pb_ratio ? stock.pb_ratio.toFixed(2) : '-'} source={stock.sources?.pb_ratio} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="Dividend Yield" value={fmtYield(stock.dividend_yield)} />
+                      <StatBox label="Dividend Yield" value={fmtYield(stock.dividend_yield)} source={stock.sources?.dividend_yield} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="EPS (TTM)" value={stock.eps ? `₹${stock.eps.toFixed(2)}` : '-'} />
+                      <StatBox label="EPS (TTM)" value={stock.eps ? `₹${stock.eps.toFixed(2)}` : '-'} source={stock.sources?.eps} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="Beta" value={stock.beta ? stock.beta.toFixed(2) : '-'} />
+                      <StatBox label="Beta" value={stock.beta ? stock.beta.toFixed(2) : '-'} source={stock.sources?.beta} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="VWAP" value={stock.vwap ? fmtINR(stock.vwap) : '-'} />
+                      <StatBox label="VWAP" value={stock.vwap ? fmtINR(stock.vwap) : '-'} source={stock.sources?.vwap} />
                     </Grid>
                     <Grid item xs={6} sm={4} md={3}>
-                      <StatBox label="Delivery %" value={stock.delivery_pct !== null && stock.delivery_pct !== undefined ? `${stock.delivery_pct}%` : '-'} />
+                      <StatBox
+                        label="Delivery %"
+                        value={stock.delivery_pct !== null && stock.delivery_pct !== undefined ? `${stock.delivery_pct}%` : '-'}
+                        source={stock.sources?.delivery_pct}
+                      />
                     </Grid>
                   </Grid>
 
@@ -951,6 +989,7 @@ export default function StockAnalyzerTab() {
                       <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                         <TrendingUpIcon sx={{ color: '#38BDF8', fontSize: '1.2rem' }} />
                         People Also Watch ({stock.sector} Peers)
+                        <SourceInfo source={stock.sources?.peers} />
                       </Typography>
                       <Grid container spacing={2}>
                         {stock.peers.map((peer: PeerStock) => {
@@ -1017,8 +1056,16 @@ export default function StockAnalyzerTab() {
                   */}
                   {(stock.corporate_actions?.length || stock.upcoming_events?.length) ? (
                     <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 2 }}>
+                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                         Corporate actions &amp; events
+                        <SourceInfo
+                          source={
+                            stock.sources?.corporate_actions && stock.sources.corporate_actions !== 'Unavailable'
+                              ? stock.sources.corporate_actions
+                              : stock.sources?.events
+                          }
+                          fallback="NSE Disclosures"
+                        />
                       </Typography>
                       <Grid container spacing={2}>
                         {stock.upcoming_events?.slice(0, 3).map((e, i) => (
@@ -1068,8 +1115,9 @@ export default function StockAnalyzerTab() {
                   */}
                   {stock.announcements && stock.announcements.length > 0 && (
                     <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 1.8 }}>
+                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 1.8, display: 'flex', alignItems: 'center', gap: 1 }}>
                         Recent exchange filings
+                        <SourceInfo source={stock.sources?.announcements} fallback="NSE Announcements" />
                       </Typography>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         {stock.announcements.slice(0, 6).map((a, i) => (
@@ -1096,6 +1144,10 @@ export default function StockAnalyzerTab() {
                   {/* Company Description */}
                   {stock.description && (
                     <Box sx={{ pt: 3, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.02rem', mb: 1.2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        About
+                        <SourceInfo source={stock.sources?.description} fallback={stock.source} />
+                      </Typography>
                       <Typography sx={{ color: '#94A3B8', fontSize: '0.85rem', lineHeight: 1.6 }}>
                         {stock.description}
                       </Typography>
@@ -1116,8 +1168,9 @@ export default function StockAnalyzerTab() {
                 >
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 3 }}>
                     <AutoGraphIcon sx={{ color: '#8B5CF6' }} />
-                    <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.15rem' }}>
+                    <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: 1 }}>
                       Portfolio Impact Simulator
+                      <SourceInfo source="Computed from your portfolio + selected stock" />
                     </Typography>
                   </Box>
 
@@ -1243,8 +1296,9 @@ export default function StockAnalyzerTab() {
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <SpeedIcon sx={{ color: '#38BDF8', fontSize: '1.3rem' }} />
-                  <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem' }}>
+                  <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: 1 }}>
                     Technical Indicators & Moving Averages
+                    <SourceInfo source={stock.sources?.technicals} fallback={stock.source} />
                   </Typography>
                 </Box>
                 {technicals?.trend && (
@@ -1589,8 +1643,9 @@ export default function StockAnalyzerTab() {
               </Box>
 
               {/* ── Side-by-Side Dynamic Multi-Stock Comparison Table ── */}
-              <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', mb: 2 }}>
+              <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                 Multi-Asset Fundamentals & Valuation Matrix
+                <SourceInfo source={stock.sources?.compare} fallback={stock.sources?.valuation || stock.source} />
               </Typography>
               <Box sx={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
@@ -1778,8 +1833,9 @@ export default function StockAnalyzerTab() {
                   }}
                 >
                   <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', mb: 1.6 }}>
-                    <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.98rem' }}>
+                    <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: 0.75 }}>
                       Latest filed quarter · {stock.latest_filing.quarter_end}
+                      <SourceInfo source={stock.sources?.latest_filing} fallback={stock.latest_filing.source} />
                     </Typography>
                     {stock.latest_filing.basis && (
                       <Chip size="small" label={stock.latest_filing.basis}
@@ -1789,9 +1845,6 @@ export default function StockAnalyzerTab() {
                       <Chip size="small" label={stock.latest_filing.audited}
                         sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700, bgcolor: 'rgba(148,163,184,0.14)', color: '#94A3B8' }} />
                     )}
-                    <Typography sx={{ color: '#64748B', fontSize: '0.72rem' }}>
-                      {stock.latest_filing.source}
-                    </Typography>
                   </Box>
                   <Grid container spacing={2}>
                     {([
@@ -1813,6 +1866,11 @@ export default function StockAnalyzerTab() {
                   </Grid>
                 </Box>
               )}
+
+              <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.05rem', mb: 2, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                Financial statements
+                <SourceInfo source={stock.sources?.financials} fallback={stock.source} />
+              </Typography>
 
               {/* Statement and Period Switcher Controls */}
               <Box
@@ -2442,8 +2500,9 @@ export default function StockAnalyzerTab() {
 
               {/* Quarterly Earnings Call / History Section */}
               <Box sx={{ mb: 2 }}>
-                <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.15rem', mb: 2.5 }}>
+                <Typography sx={{ color: '#F8FAFC', fontWeight: 800, fontSize: '1.15rem', mb: 2.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   Fiscal {stock.earnings_summary?.financial_period || 'Quarterly'} earnings call
+                  <SourceInfo source={stock.sources?.earnings} fallback={stock.source} />
                 </Typography>
 
                 {(() => {

@@ -908,9 +908,18 @@ def _build_timeframe_charts(hist: pd.DataFrame, current_price: float) -> dict[st
     }
 
 
+def _yahoo_source_label(eff_ticker: str) -> str:
+    """Human-readable Yahoo provenance, including which exchange suffix won."""
+    if str(eff_ticker).upper().endswith(".BO"):
+        return "Yahoo Finance (.BO)"
+    return "Yahoo Finance (.NS)"
+
+
 def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     ticker = _to_yf_ticker(clean)
     sector, industry = get_sector(clean)
+    effective_ticker = ticker  # may cascade to .BO
+    hist = pd.DataFrame()
 
     # 1. Fetch Official Quote directly from NSE
     nse_quote = nse_client.get_equity_quote(clean)
@@ -1328,12 +1337,94 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     
     # Fetch BSE VWAP
     bse_vwap = bse_client.get_vwap(clean)
-    
+    effective_vwap = bse_vwap or vwap
+
+    yahoo_lbl = _yahoo_source_label(effective_ticker)
+
+    def _pick_src(preferred: str | None, *candidates: tuple[Any, str]) -> str:
+        """First non-None value wins; label the winning source."""
+        for val, label in candidates:
+            if val is not None:
+                return label
+        return preferred or "Unavailable"
+
+    price_src = _pick_src(
+        None,
+        (nse_quote.get("current_price") if nse_quote else None, "NSE"),
+        (current_price or None, yahoo_lbl),
+        (_f("currentPrice"), yahoo_lbl),
+    )
+    day_src = yahoo_lbl if (day_open or day_high or day_low) else "Unavailable"
+    mcap_src = _pick_src(
+        None,
+        (nse_quote.get("market_cap_cr") if nse_quote else None, "NSE"),
+        (_f("marketCap"), yahoo_lbl),
+    )
+    pe_src = _pick_src(
+        None,
+        (nse_quote.get("pe_ratio") if nse_quote else None, "NSE"),
+        (_f("trailingPE"), yahoo_lbl),
+    )
+    pb_src = _pick_src(None, (_f("priceToBook"), yahoo_lbl))
+    eps_src = _pick_src(None, (_f("trailingEps"), yahoo_lbl))
+    div_src = _pick_src(
+        None,
+        (nse_yield, "NSE Corporate Actions"),
+        (yahoo_yield, yahoo_lbl),
+    )
+    beta_src = _pick_src(
+        None,
+        (math_beta, "Math (vs Nifty 50)"),
+        (yahoo_beta, yahoo_lbl),
+    )
+    vwap_src = _pick_src(
+        None,
+        (bse_vwap, "BSE"),
+        (vwap, "NSE"),
+    )
+    has_statements = bool(
+        financial_statements.get("quarterly", {}).get("income_statement")
+        or financial_statements.get("annual", {}).get("income_statement")
+        or quarterly_fin
+    )
+    sources = {
+        "price": price_src,
+        "day_range": day_src,
+        "market_cap": mcap_src,
+        "pe_ratio": pe_src,
+        "pb_ratio": pb_src,
+        "eps": eps_src,
+        "dividend_yield": div_src,
+        "beta": beta_src,
+        "vwap": vwap_src,
+        "delivery_pct": "NSE" if delivery_pct is not None else "Unavailable",
+        # Card-level summaries for section info icons
+        "charts": yahoo_lbl if (price_dates or timeframe_charts) else "Unavailable",
+        "valuation": (
+            f"Market Cap: {mcap_src} · P/E: {pe_src} · P/B: {pb_src} · EPS: {eps_src} · "
+            f"Dividend Yield: {div_src} · Beta: {beta_src} · VWAP: {vwap_src}"
+        ),
+        "technicals": (
+            "Computed from Yahoo price history" if not prices.empty else "Unavailable"
+        ),
+        "peers": "Yahoo quotes + NSE sector map" if peers else "Unavailable",
+        "financials": yahoo_lbl if has_statements else "Unavailable",
+        "earnings": yahoo_lbl if (earnings_hist or earnings_summary) else "Unavailable",
+        "consensus": yahoo_lbl if consensus else "Unavailable",
+        "corporate_actions": "NSE Disclosures" if actions else "Unavailable",
+        "events": "NSE Event Calendar" if calendar_events else "Unavailable",
+        "announcements": "NSE Announcements" if recent_filings else "Unavailable",
+        "latest_filing": "NSE Integrated Filings" if latest_filing else "Unavailable",
+        "compare": yahoo_lbl,
+        "description": yahoo_lbl if _f("longBusinessSummary") else "Unavailable",
+    }
+
     result = {
         # Provenance, so the UI can stop asserting "NSE Live Terminal" over data that
         # did not come from NSE. quote-equity returns 403 by exchange policy, so
         # `nse_quote` is normally None and everything below is Yahoo-sourced.
-        "source": "NSE" if nse_quote else "Yahoo Finance",
+        "source": "NSE" if nse_quote else yahoo_lbl,
+        "sources": sources,
         "as_of": _now_iso(),
         "financial_currency": fin_currency,
         "symbol": clean,
@@ -1377,7 +1468,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         ),
         "week52_high": week52_high,
         "week52_low": week52_low,
-        "vwap": bse_vwap or vwap,  # BSE VWAP (primary) or NSE VWAP (fallback)
+        "vwap": effective_vwap,  # BSE VWAP (primary) or NSE VWAP (fallback)
         "delivery_pct": delivery_pct,
         "avg_volume": _f("averageVolume"),
         "volume": _f("volume"),

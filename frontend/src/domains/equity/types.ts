@@ -327,9 +327,38 @@ export interface StockTechnicals {
   dist_52w_low_pct?: number | null
 }
 
+/** Per-card / per-field provenance for Stock Analyzer info-icon tooltips. */
+export interface StockAnalysisSources {
+  price?: string
+  day_range?: string
+  market_cap?: string
+  pe_ratio?: string
+  pb_ratio?: string
+  eps?: string
+  dividend_yield?: string
+  beta?: string
+  vwap?: string
+  delivery_pct?: string
+  charts?: string
+  valuation?: string
+  technicals?: string
+  peers?: string
+  financials?: string
+  earnings?: string
+  consensus?: string
+  corporate_actions?: string
+  events?: string
+  announcements?: string
+  latest_filing?: string
+  compare?: string
+  description?: string
+}
+
 export interface StockAnalysis {
   /** Which upstream actually served this — "NSE" or "Yahoo Finance", not a fixed label. */
   source?: string
+  /** Per-card / per-field data sources for info-icon tooltips. */
+  sources?: StockAnalysisSources
   /** ISO-8601 UTC timestamp of when the payload was built, for the staleness chip. */
   as_of?: string
   /**
