@@ -781,6 +781,102 @@ export const apiClient = {
     const { data } = await api.delete(`/auth/users/${userId}`)
     return data
   },
+
+  // ── Market Data / AMFI Snapshot Admin ──────────────────────────────────────
+  getMfSyncStatus: async (): Promise<{
+    total_schemes: number
+    latest_portfolio_month: string
+    recent_logs: Array<{
+      id: number
+      triggered_by: string
+      status: 'in_progress' | 'completed' | 'failed'
+      schemes_updated: number
+      portfolio_month: string
+      duration_seconds: number
+      error_message: string | null
+      created_at: string | null
+    }>
+  }> => {
+    const { data } = await api.get('/admin/mf-sync/status')
+    return data
+  },
+
+  getSyncedAmcs: async (): Promise<{
+    amcs: Array<{
+      amc: string
+      schemes_count: number
+      total_aum_cr: number
+    }>
+  }> => {
+    const { data } = await api.get('/admin/mf-sync/amcs')
+    return data
+  },
+
+  triggerMfSync: async (payload?: {
+    amcs?: string[]
+    preset?: string
+  }): Promise<{
+    status: string
+    schemes_updated: number
+    total_schemes_in_db?: number
+    portfolio_month: string
+    duration_seconds: number
+    message?: string
+    error?: string
+  }> => {
+    const { data } = await api.post('/admin/mf-sync/trigger', payload || {})
+    return data
+  },
+
+  purgeMfSnapshots: async (params: {
+    amc?: string
+    purge_all?: boolean
+  }): Promise<{
+    status: string
+    deleted_count: number
+    message: string
+    amc?: string
+    purged_all?: boolean
+  }> => {
+    const { data } = await api.delete('/admin/mf-sync/purge', { params })
+    return data
+  },
+
+  searchMfSchemes: async (
+    query: string = '',
+    limit: number = 50,
+    offset: number = 0,
+    amc?: string,
+    category?: string
+  ): Promise<{
+    total: number
+    limit: number
+    offset: number
+    schemes: Array<{
+      isin: string
+      scheme_code: string
+      scheme_name: string
+      amc: string
+      category: string
+      aum_cr: number | null
+      aum_formatted: string
+      expense_ratio: number | null
+      risk_level: string
+      portfolio_date: string | null
+      sectors_count: number
+      holdings_count: number
+      sectors: Array<{ sector: string; value: number }>
+      holdings: Array<{ name: string; pct: number }>
+      source: string
+      updated_at: string | null
+    }>
+  }> => {
+    const params: Record<string, any> = { q: query, limit, offset }
+    if (amc && amc !== 'All') params.amc = amc
+    if (category && category !== 'All') params.category = category
+    const { data } = await api.get('/admin/mf-sync/schemes', { params })
+    return data
+  },
 }
 
 export default api

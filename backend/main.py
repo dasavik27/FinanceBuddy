@@ -29,7 +29,7 @@ from shared.identity import identity_scope
 from shared.services.cache import cache_stats, request_scope
 
 # Shared Infrastructure Gateways
-from shared.routers import auth, market, accounts, history
+from shared.routers import auth, market, accounts, history, admin_mf
 
 # Domain: Mutual Funds
 from domains.mutual_funds.routers import (
@@ -471,6 +471,7 @@ app.include_router(auth.router,      prefix="/auth",      tags=["Infrastructure 
 app.include_router(market.router,    prefix="/market",    tags=["Infrastructure - Live Market Feed"])
 app.include_router(accounts.router,  prefix="/accounts",  tags=["Infrastructure - Vault Manager"])
 app.include_router(history.router,   prefix="/history",   tags=["Infrastructure - History Timeline"])
+app.include_router(admin_mf.router,  prefix="/admin/mf-sync", tags=["Admin - Mutual Fund Sync"])
 
 # Domain: Mutual Funds
 app.include_router(portfolio.router,    prefix="/mutual-funds/portfolio",     tags=["Mutual Funds - Session Management"])
