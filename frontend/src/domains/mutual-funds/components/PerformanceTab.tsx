@@ -101,7 +101,7 @@ function FundPeers({ fund }: { fund: any }) {
   const total = allReturns.length + 1
 
   const fmtRet = (v: any) => {
-    if (v == null) return '—'
+    if (v == null) return 'N/A'
     const n = Number(v)
     return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
   }
@@ -184,8 +184,8 @@ function FundPeers({ fund }: { fund: any }) {
               <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 12, color: (yourFundRow.ret1y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(yourFundRow.ret1y)}</TableCell>
               <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 12, color: (yourFundRow.ret3y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(yourFundRow.ret3y)}</TableCell>
               <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 12, color: (yourFundRow.ret5y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(yourFundRow.ret5y)}</TableCell>
-              <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 12, color: '#fff' }}>{yourFundRow.sharpe != null ? Number(yourFundRow.sharpe).toFixed(2) : '—'}</TableCell>
-              <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#94A3B8' }}>{yourFundRow.expense != null ? `${Number(yourFundRow.expense).toFixed(2)}%` : '—'}</TableCell>
+              <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 12, color: '#fff' }}>{yourFundRow.sharpe != null ? Number(yourFundRow.sharpe).toFixed(2) : 'N/A'}</TableCell>
+              <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#94A3B8' }}>{yourFundRow.expense != null ? `${Number(yourFundRow.expense).toFixed(2)}%` : 'N/A'}</TableCell>
             </TableRow>
             {/* Peer Rows */}
             {sortedPeers.slice(0, 5).map((p, i) => {
@@ -201,8 +201,8 @@ function FundPeers({ fund }: { fund: any }) {
                   <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: (p.ret1y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(p.ret1y)}</TableCell>
                   <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: (p.ret3y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(p.ret3y)}</TableCell>
                   <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: (p.ret5y ?? 0) >= 0 ? '#4EDE93' : '#FF516A' }}>{fmtRet(p.ret5y)}</TableCell>
-                  <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#fff' }}>{p.sharpe != null ? Number(p.sharpe).toFixed(2) : '—'}</TableCell>
-                  <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#94A3B8' }}>{p.expense ? `${Number(p.expense).toFixed(2)}%` : '—'}</TableCell>
+                  <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#fff' }}>{p.sharpe != null ? Number(p.sharpe).toFixed(2) : 'N/A'}</TableCell>
+                  <TableCell align="center" className="num" sx={{ fontWeight: 700, fontSize: 12, color: '#94A3B8' }}>{p.expense ? `${Number(p.expense).toFixed(2)}%` : 'N/A'}</TableCell>
                 </TableRow>
               )
             })}
@@ -483,16 +483,16 @@ function PerformanceRow({ fund, color }: { fund: any, color: string }) {
           </Box>
         </TableCell>
         <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 14, color: ret3y != null ? (ret3y >= 0 ? '#4EDE93' : '#FF516A') : 'text.secondary' }}>
-          {ret3y != null ? fmtPct(ret3y) : '—'}
+          {ret3y != null ? fmtPct(ret3y) : 'N/A'}
         </TableCell>
         <TableCell align="center" className="num" sx={{ fontWeight: 900, fontSize: 15, color: alphaVal >= 0 ? '#4EDE93' : '#FF516A' }}>
           {fmtPct(alphaVal)}
         </TableCell>
         <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 15, color: sharpeVal != null ? '#fff' : 'text.secondary' }}>
-          {sharpeVal != null ? sharpeVal.toFixed(2) : '—'}
+          {sharpeVal != null ? sharpeVal.toFixed(2) : 'N/A'}
         </TableCell>
         <TableCell align="center" className="num" sx={{ fontWeight: 800, fontSize: 15, color: sortinoVal != null ? '#fff' : 'text.secondary' }}>
-          {sortinoVal != null ? sortinoVal.toFixed(2) : '—'}
+          {sortinoVal != null ? sortinoVal.toFixed(2) : 'N/A'}
         </TableCell>
         <TableCell align="center">
           <VerdictChip verdict={fund?.verdict || 'Average'} reason={fund?.verdict_reason} score={fund?.fund_score} />
@@ -525,11 +525,11 @@ function PerformanceRow({ fund, color }: { fund: any, color: string }) {
                       </Box>
                       <Stack spacing={1.5} sx={{ p: 2.5, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)' }}>
                         {[
-                          { label: <>Annualized Volatility (σ) <InfoTooltip title="The annualized standard deviation of daily returns. Higher volatility means larger price swings." size={12} /></>, val: fund?.vol != null ? `${Number(fund.vol).toFixed(1)}%` : '—' },
-                          { label: 'Tracking Error vs Benchmark', val: fund?.tracking_error != null ? `${Number(fund.tracking_error).toFixed(2)}%` : '—' },
+                          { label: <>Annualized Volatility (σ) <InfoTooltip title="The annualized standard deviation of daily returns. Higher volatility means larger price swings." size={12} /></>, val: fund?.vol != null ? `${Number(fund.vol).toFixed(1)}%` : 'N/A' },
+                          { label: 'Tracking Error vs Benchmark', val: fund?.tracking_error != null ? `${Number(fund.tracking_error).toFixed(2)}%` : 'N/A' },
                           { label: <>Market Beta (Systematic Risk) <InfoTooltip title="Measures volatility relative to the market. Beta > 1 means the fund is more volatile than the market; Beta < 1 means it is less volatile." size={12} /></>, val: fund?.beta != null ? Number(fund.beta).toFixed(2) : '1.00' },
-                          { label: <>Maximum Drawdown (Peak to Trough) <InfoTooltip title="The maximum observed loss from a peak to a trough. Indicates the worst-case historical drop." size={12} /></>, val: fund?.max_dd != null ? `${Number(fund.max_dd).toFixed(1)}%` : '—' },
-                          { label: <>Expense Ratio Drag (TER) <InfoTooltip title="Total Expense Ratio (TER). The annual percentage fee charged by the AMC to manage this fund." size={12} /></>, val: fund?.er != null ? `${Number(fund.er).toFixed(2)}%` : '—' },
+                          { label: <>Maximum Drawdown (Peak to Trough) <InfoTooltip title="The maximum observed loss from a peak to a trough. Indicates the worst-case historical drop." size={12} /></>, val: fund?.max_dd != null ? `${Number(fund.max_dd).toFixed(1)}%` : 'N/A' },
+                          { label: <>Expense Ratio Drag (TER) <InfoTooltip title="Total Expense Ratio (TER). The annual percentage fee charged by the AMC to manage this fund." size={12} /></>, val: fund?.er != null ? `${Number(fund.er).toFixed(2)}%` : 'N/A' },
                         ].map((s, i) => (
                           <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', pb: 1, borderBottom: i < 4 ? '1px dashed rgba(255,255,255,0.06)' : 'none' }}>
                             <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>{s.label}</Typography>
@@ -547,11 +547,11 @@ function PerformanceRow({ fund, color }: { fund: any, color: string }) {
                       </Box>
                       <Stack spacing={1.5} sx={{ p: 2.5, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.05)' }}>
                         {[
-                          { label: 'Up-Market Capture Ratio', val: fund?.up_capture != null ? `${Number(fund.up_capture).toFixed(1)}%` : '—', color: (fund?.up_capture ?? 0) > 100 ? '#4EDE93' : '#fff' },
-                          { label: 'Down-Market Capture Ratio', val: fund?.down_capture != null ? `${Number(fund.down_capture).toFixed(1)}%` : '—', color: (fund?.down_capture ?? 100) < 100 ? '#4EDE93' : '#FF516A' },
-                          { label: 'Information Ratio (IR)', val: fund?.info_ratio != null ? Number(fund.info_ratio).toFixed(2) : '—', color: (fund?.info_ratio ?? 0) >= 0.5 ? '#4EDE93' : '#fff' },
-                          { label: 'Calmar Ratio (Return/Drawdown)', val: fund?.calmar != null ? Number(fund.calmar).toFixed(2) : '—', color: '#fff' },
-                          { label: 'Treynor Ratio (Return/Beta)', val: fund?.treynor != null ? Number(fund.treynor).toFixed(2) : '—', color: '#fff' },
+                          { label: 'Up-Market Capture Ratio', val: fund?.up_capture != null ? `${Number(fund.up_capture).toFixed(1)}%` : 'N/A', color: (fund?.up_capture ?? 0) > 100 ? '#4EDE93' : '#fff' },
+                          { label: 'Down-Market Capture Ratio', val: fund?.down_capture != null ? `${Number(fund.down_capture).toFixed(1)}%` : 'N/A', color: (fund?.down_capture ?? 100) < 100 ? '#4EDE93' : '#FF516A' },
+                          { label: 'Information Ratio (IR)', val: fund?.info_ratio != null ? Number(fund.info_ratio).toFixed(2) : 'N/A', color: (fund?.info_ratio ?? 0) >= 0.5 ? '#4EDE93' : '#fff' },
+                          { label: 'Calmar Ratio (Return/Drawdown)', val: fund?.calmar != null ? Number(fund.calmar).toFixed(2) : 'N/A', color: '#fff' },
+                          { label: 'Treynor Ratio (Return/Beta)', val: fund?.treynor != null ? Number(fund.treynor).toFixed(2) : 'N/A', color: '#fff' },
                         ].map((s, i) => (
                           <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', pb: 1, borderBottom: i < 4 ? '1px dashed rgba(255,255,255,0.06)' : 'none' }}>
                             <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>{s.label}</Typography>

@@ -198,16 +198,16 @@ export default function HoldingsTab() {
                           <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', mb: 0.5 }}>
                             DAY CHANGE <InfoTooltip title="The change in value based on the latest single-day NAV movement." />
                           </Typography>
-                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: h['Day Chg.'] >= 0 ? '#4EDE93' : '#FF516A' }}>
-                            {h['Day Chg.'] != null ? `${h['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(h['Day Chg.'])}` : '—'}
+                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: (h['Day Chg.'] != null && h['Day Chg.'] !== 0) ? (h['Day Chg.'] >= 0 ? '#4EDE93' : '#FF516A') : '#94A3B8' }}>
+                            {h['Day Chg.'] != null ? `${h['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(h['Day Chg.'])}` : 'N/A'}
                           </Typography>
                         </Grid>
                         <Grid item xs={6} sx={{ textAlign: 'right' }}>
                           <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 0.5 }}>
-                            EXP. RATIO <InfoTooltip title="Total Expense Ratio (TER). The annual percentage fee charged by the AMC to manage this fund." />
+                            EXP. RATIO <InfoTooltip title={h.TER_fallback ? "Category band approximation. Click to inspect or refresh." : (h.TER != null && h.TER !== '' && !isNaN(Number(h.TER))) ? "Total Expense Ratio (TER). Sourced directly from official AMFI regulatory sheets." : "TER is unpopulated for this scheme in the active AMFI dataset."} />
                           </Typography>
-                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: !h.TER_fallback ? '#94A3B8' : '#EAB308' }}>
-                            {h.TER_fallback ? `~${h.TER}%` : `${h.TER}%`}
+                          <Typography variant="body1" className="num" sx={{ fontWeight: 800, color: (h.TER != null && h.TER !== '' && !isNaN(Number(h.TER))) ? (!h.TER_fallback ? '#94A3B8' : '#EAB308') : '#94A3B8' }}>
+                            {h.TER != null && h.TER !== '' && !isNaN(Number(h.TER)) ? (h.TER_fallback ? `~${Number(h.TER).toFixed(2)}%` : `${Number(h.TER).toFixed(2)}%`) : 'N/A'}
                           </Typography>
                         </Grid>
                       </Grid>
@@ -243,7 +243,10 @@ export default function HoldingsTab() {
         )}
       </Box>
 
-      <FundDetailDrawer fund={selectedFund} onClose={() => setSelectedFund(null)} />
+      <FundDetailDrawer 
+        fund={selectedFund ? (holdings.find((h: any) => (selectedFund.ISIN && h.ISIN === selectedFund.ISIN) || h.Fund === selectedFund.Fund) || selectedFund) : null} 
+        onClose={() => setSelectedFund(null)} 
+      />
     </Box>
   )
 }

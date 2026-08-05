@@ -197,12 +197,12 @@ export default function CompareTab() {
         isBench,
         color: COLORS[i % COLORS.length],
         // Technicals
-        alpha: isBench ? (bStats?.alpha ?? 0) : (pFund?.alpha || '—'),
-        beta: isBench ? (bStats?.beta ?? 1) : (pFund?.beta || '—'),
-        sharpe: isBench ? (bStats?.sharpe ?? '—') : (pFund?.sharpe || '—'),
-        sortino: isBench ? (bStats?.sortino ?? '—') : (pFund?.sortino || '—'),
-        volatility: isBench ? (bStats?.volatility ?? '—') : (pFund?.vol || '—'),
-        consistency: isBench ? '100%' : (pFund?.consistency || '—'),
+        alpha: isBench ? (bStats?.alpha ?? 0) : (pFund?.alpha || 'N/A'),
+        beta: isBench ? (bStats?.beta ?? 1) : (pFund?.beta || 'N/A'),
+        sharpe: isBench ? (bStats?.sharpe ?? 'N/A') : (pFund?.sharpe || 'N/A'),
+        sortino: isBench ? (bStats?.sortino ?? 'N/A') : (pFund?.sortino || 'N/A'),
+        volatility: isBench ? (bStats?.volatility ?? 'N/A') : (pFund?.vol || 'N/A'),
+        consistency: isBench ? '100%' : (pFund?.consistency || 'N/A'),
         risk: isBench ? 'Moderate' : (pFund?.verdict || 'Average'),
         // Performance
         return: isBench ? ((perfData as any)?.benchmark_return ?? 0) : (pFund?.return_period || 0),
@@ -212,20 +212,20 @@ export default function CompareTab() {
         chartValues: hist.values || [], 
         drawdownValues: calculateDrawdown(hist.values || []),
         data: {
-          '1Y Ret': trailingDict['1Y'] != null ? `${trailingDict['1Y'] >= 0 ? '+' : ''}${trailingDict['1Y'].toFixed(1)}%` : (pFund ? `${pFund.fund_xi?.toFixed(1)}%` : '—'),
-          '3Y Ret': trailingDict['3Y'] != null ? `${trailingDict['3Y'] >= 0 ? '+' : ''}${trailingDict['3Y'].toFixed(1)}%` : '—',
-          'Alpha': isBench ? '0.0%' : (pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(1)}%` : '—'),
-          'Sharpe': isBench ? (bStats?.sharpe?.toFixed(2) ?? '—') : (pFund?.sharpe?.toFixed(2) ?? '—'),
-          'Sortino': isBench ? (bStats?.sortino?.toFixed(2) ?? '—') : (pFund?.sortino?.toFixed(2) ?? '—'),
-          'Beta': isBench ? '1.00' : (pFund?.beta?.toFixed(2) ?? '—'),
-          'Volatility': isBench ? (bStats?.volatility != null ? `${bStats.volatility}%` : '—') : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : '—'),
-          'Max Drawdown': isBench ? (bStats?.max_drawdown != null ? `${bStats.max_drawdown.toFixed(1)}%` : '—') : (pFund?.max_dd != null ? `${Number(pFund.max_dd).toFixed(1)}%` : '—'),
-          'Expense Ratio': pFund?.er != null ? `${Number(pFund.er).toFixed(2)}%` : '—',
-          'Consistency': isBench ? '10/10' : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : '—'),
+          '1Y Ret': trailingDict['1Y'] != null ? `${trailingDict['1Y'] >= 0 ? '+' : ''}${trailingDict['1Y'].toFixed(1)}%` : (pFund ? `${pFund.fund_xi?.toFixed(1)}%` : 'N/A'),
+          '3Y Ret': trailingDict['3Y'] != null ? `${trailingDict['3Y'] >= 0 ? '+' : ''}${trailingDict['3Y'].toFixed(1)}%` : 'N/A',
+          'Alpha': isBench ? '0.0%' : (pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(1)}%` : 'N/A'),
+          'Sharpe': isBench ? (bStats?.sharpe?.toFixed(2) ?? 'N/A') : (pFund?.sharpe?.toFixed(2) ?? 'N/A'),
+          'Sortino': isBench ? (bStats?.sortino?.toFixed(2) ?? 'N/A') : (pFund?.sortino?.toFixed(2) ?? 'N/A'),
+          'Beta': isBench ? '1.00' : (pFund?.beta?.toFixed(2) ?? 'N/A'),
+          'Volatility': isBench ? (bStats?.volatility != null ? `${bStats.volatility}%` : 'N/A') : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : 'N/A'),
+          'Max Drawdown': isBench ? (bStats?.max_drawdown != null ? `${bStats.max_drawdown.toFixed(1)}%` : 'N/A') : (pFund?.max_dd != null ? `${Number(pFund.max_dd).toFixed(1)}%` : 'N/A'),
+          'Expense Ratio': pFund?.er != null ? `${Number(pFund.er).toFixed(2)}%` : 'N/A',
+          'Consistency': isBench ? '10/10' : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : 'N/A'),
           'Verdict': isBench ? 'Target' : (pFund?.verdict ?? 'Average'),
-          'P/E Ratio': pFund?.pe_ratio != null ? pFund.pe_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : '—'),
-          'P/B Ratio': pFund?.pb_ratio != null ? pFund.pb_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : '—'),
-          'Day Chg.%': isBench ? ((perfData as any)?.benchmark_day_chg != null ? `${(perfData as any).benchmark_day_chg >= 0 ? '+' : ''}${(perfData as any).benchmark_day_chg.toFixed(2)}%` : '—') : (h?.['Day Chg.%'] != null ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%` : '—'),
+          'P/E Ratio': pFund?.pe_ratio != null ? pFund.pe_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : 'N/A'),
+          'P/B Ratio': pFund?.pb_ratio != null ? pFund.pb_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : 'N/A'),
+          'Day Chg.%': isBench ? ((perfData as any)?.benchmark_day_chg != null ? `${(perfData as any).benchmark_day_chg >= 0 ? '+' : ''}${(perfData as any).benchmark_day_chg.toFixed(2)}%` : 'N/A') : (h?.['Day Chg.%'] != null ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%` : 'N/A'),
           AlphaVal: isBench ? 0 : (pFund?.alpha ?? 0),
           SharpeVal: isBench ? (bStats?.sharpe ?? 0) : (pFund?.sharpe ?? 0),
           SortinoVal: isBench ? (bStats?.sortino ?? 0) : (pFund?.sortino ?? 0),
@@ -254,7 +254,7 @@ export default function CompareTab() {
     return yearsArr.map((y: number) => {
       const row: any = { year: `Year ${y}`, rawYear: y }
       allMatrix.forEach((m: any) => {
-        const retStr = m.data['3Y Ret'] !== '—' ? m.data['3Y Ret'] : (m.data['1Y Ret'] !== '—' ? m.data['1Y Ret'] : '12%')
+        const retStr = m.data['3Y Ret'] !== '—' && m.data['3Y Ret'] !== 'N/A' ? m.data['3Y Ret'] : (m.data['1Y Ret'] !== '—' && m.data['1Y Ret'] !== 'N/A' ? m.data['1Y Ret'] : '12%')
         const rateNum = parseFloat(retStr.replace(/[^0-9.-]/g, '')) || 12.0
         const r = rateNum / 100.0
 

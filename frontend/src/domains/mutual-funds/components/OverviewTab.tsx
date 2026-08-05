@@ -125,7 +125,7 @@ export default function OverviewTab() {
                   <Box>
                     <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#fff' }}>{isHealthy ? 'Optimal Momentum' : 'Underperforming Benchmark'}</Typography>
                     <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                      Portfolio Beta: {perf?.portfolio_beta != null ? perf.portfolio_beta.toFixed(2) : '—'}
+                      Portfolio Beta: {perf?.portfolio_beta != null ? perf.portfolio_beta.toFixed(2) : 'N/A'}
                       {perf?.portfolio_beta != null && (perf.portfolio_beta < 1 ? ' (Defensive)' : perf.portfolio_beta > 1.1 ? ' (Aggressive)' : ' (Stable)')}
                     </Typography>
                   </Box>

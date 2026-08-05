@@ -10,6 +10,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
 
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -17,7 +18,7 @@ import {
 } from 'recharts'
 import { ChartTooltip } from '../../../shared/components/charts/ChartTooltip'
 import { fmtInr, gainColor } from '../../../shared/utils/fmt'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionId } from '../../../shared/store/appStore'
 
 // ── Heuristic sector / credit profile ────────────────────────────────────────
@@ -150,6 +151,7 @@ const THEME_COLORS = ['#6366F1', '#4EDE93', '#FCD34D', '#FF516A', '#8B5CF6', '#9
 export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProps) {
   const open = !!fund
   const sid = useSessionId()
+  const queryClient = useQueryClient()
   const [liveNav, setLiveNav] = useState<number | null>(null)
 
   useEffect(() => {
@@ -174,6 +176,28 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
   // Live Institutional Insights
   const { data: insights, isFetching: insightsLoading } = useFundInsights(fund?.ISIN ?? '', fund?.Fund ?? '')
 
+  // Post-pulling: Automatically update the holding card in the query cache with the newly fetched TER
+  useEffect(() => {
+    if (insights?.expense_ratio && fund?.ISIN && sid) {
+      const rawEr = typeof insights.expense_ratio === 'string'
+        ? parseFloat(insights.expense_ratio.replace('%', '').trim())
+        : Number(insights.expense_ratio)
+
+      if (!isNaN(rawEr) && rawEr > 0) {
+        queryClient.setQueriesData({ queryKey: ['holdings', sid] }, (oldData: any) => {
+          if (!oldData || !oldData.holdings) return oldData
+          const updatedHoldings = oldData.holdings.map((h: any) => {
+            if (h.ISIN === fund.ISIN || (fund.Fund && h.Fund === fund.Fund)) {
+              return { ...h, TER: rawEr, TER_fallback: false }
+            }
+            return h
+          })
+          return { ...oldData, holdings: updatedHoldings }
+        })
+      }
+    }
+  }, [insights?.expense_ratio, fund?.ISIN, fund?.Fund, sid, queryClient])
+
   const effectiveNav = liveNav ?? fund?.NAV ?? 1
   const currentVal = (fund?.Units ?? 0) * effectiveNav
   const totalGain  = currentVal - (fund?.Invested ?? 0)
@@ -185,54 +209,63 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
       open={open}
       onClose={onClose}
       PaperProps={{
-        sx: { width: { xs: '100vw', lg: 600 }, bgcolor: '#0B1326', borderLeft: '1px solid rgba(255,255,255,0.05)', backgroundImage: 'none' },
+        sx: { 
+          width: { xs: '100%', sm: 600, md: 720 },
+          background: 'rgba(10, 15, 29, 0.95)',
+          backdropFilter: 'blur(20px)',
+          borderLeft: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '-10px 0 40px rgba(0,0,0,0.8)',
+          p: 0,
+        },
       }}
     >
       {fund && (
-        <Box sx={{ height: '100%', overflow: 'auto', bgcolor: '#0B1326', color: '#fff' }}>
-          {/* ── Institutional Hero Header ────────────────────────────── */}
-          <Box sx={{
-            p: 4, pt: 6,
-            background: `linear-gradient(135deg, ${alpha('#6366F1', 0.15)} 0%, ${alpha('#0B1326', 0.1)} 100%)`,
-            borderBottom: '1px solid rgba(255,255,255,0.05)',
-            position: 'relative'
-          }}>
-            <IconButton onClick={onClose} sx={{ position: 'absolute', top: 20, right: 20, color: 'text.secondary' }}>
-              <CloseIcon />
-            </IconButton>
-            
-            <Stack spacing={1}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 900, letterSpacing: '0.2em' }}>
-                  FUND AUDIT COCKPIT
-                </Typography>
-                {insights?.source && (
-                   <Chip label={insights.source.toUpperCase()} size="small" sx={{ height: 16, fontSize: 8, fontWeight: 900, bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary', border: '1px solid rgba(255,255,255,0.1)' }} />
-                )}
+        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {/* Header */}
+          <Box sx={{ p: 3, borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.01)' }}>
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
+                <Chip 
+                  label={fund.Category ?? 'Other'} 
+                  size="small" 
+                  sx={{ 
+                    bgcolor: 'rgba(99, 102, 241, 0.15)', 
+                    color: 'primary.light', 
+                    fontWeight: 800, 
+                    border: '1px solid rgba(99, 102, 241, 0.3)',
+                    fontSize: 10,
+                    textTransform: 'uppercase'
+                  }} 
+                />
+                <Chip 
+                  label={fund.Plan ?? 'Direct'} 
+                  size="small" 
+                  variant="outlined" 
+                  sx={{ 
+                    borderColor: 'rgba(255,255,255,0.1)', 
+                    color: 'text.secondary', 
+                    fontSize: 10,
+                    fontWeight: 700 
+                  }} 
+                />
               </Box>
-              <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.02em', color: '#fff' }}>
+              <Typography variant="h6" sx={{ fontWeight: 900, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
                 {fund.Fund}
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', pt: 1 }}>
-                <Chip label={fund.Category} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary', fontWeight: 800, fontSize: 10 }} />
-                <Chip label={fund['Cap Type']} size="small" sx={{ bgcolor: alpha('#4EDE93', 0.1), color: '#4EDE93', fontWeight: 800, fontSize: 10 }} />
-                <Chip label={fund.Plan} size="small" sx={{ bgcolor: alpha('#6366F1', 0.1), color: '#6366F1', fontWeight: 800, fontSize: 10 }} />
-                {fund.ISIN && fund.ISIN !== 'N/A' && (
-                  <Chip label={`ISIN: ${fund.ISIN}`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.05)', color: 'text.secondary', fontWeight: 700, fontSize: 10, fontFamily: 'monospace' }} />
-                )}
-              </Box>
-            </Stack>
+            </Box>
+            <IconButton onClick={onClose} sx={{ color: 'text.secondary', '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.05)' } }}>
+              <CloseIcon />
+            </IconButton>
           </Box>
 
-          <Box sx={{ p: 4 }}>
-            {/* ── Position Summary ────────────────────────────────────── */}
-            <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 800, letterSpacing: '0.1em', display: 'block', mb: 2 }}>YOUR POSITION</Typography>
+          <Box sx={{ flex: 1, overflowY: 'auto', p: 4, '&::-webkit-scrollbar': { width: 6 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 3 } }}>
+            {/* ── Key Metrics Grid ────────────────────────────────────────── */}
             <Grid container spacing={2} sx={{ mb: 4 }}>
               <Grid item xs={6} md={4}>
                 <StatChip label="CURRENT VALUE" value={fmtInr(currentVal)} isLive={!!liveNav} />
               </Grid>
               <Grid item xs={6} md={4}>
-                <StatChip label="INVESTED" value={fmtInr(fund.Invested)} />
+                <StatChip label="INVESTED AMOUNT" value={fmtInr(fund.Invested)} />
               </Grid>
               <Grid item xs={6} md={4}>
                 <StatChip label="TOTAL P&L" value={fmtInr(totalGain)} valueColor={gainColor(totalGain)} isLive={!!liveNav} />
@@ -242,7 +275,7 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                   label="LIVE NAV" 
                   value={`₹${effectiveNav.toFixed(2)}`} 
                   isLive={!!liveNav} 
-                  tip={fund['NAV Date'] && fund['NAV Date'] !== '—' ? `NAV Date: ${fund['NAV Date']}` : undefined}
+                  tip={fund['NAV Date'] && fund['NAV Date'] !== '—' && fund['NAV Date'] !== 'N/A' ? `NAV Date: ${fund['NAV Date']}` : undefined}
                 />
               </Grid>
               <Grid item xs={6} md={4}>
@@ -254,14 +287,12 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
               <Grid item xs={6} md={4}>
                 <StatChip 
                   label="DAY CHANGE" 
-                  value={fund['Day Chg.'] != null ? `${fund['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(fund['Day Chg.'])}` : '—'} 
-                  valueColor={fund['Day Chg.'] >= 0 ? '#4EDE93' : (fund['Day Chg.'] < 0 ? '#FF516A' : '#fff')} 
+                  value={fund['Day Chg.'] != null ? `${fund['Day Chg.'] >= 0 ? '+' : ''}${fmtInr(fund['Day Chg.'])}` : 'N/A'} 
+                  valueColor={(fund['Day Chg.'] != null && fund['Day Chg.'] !== 0) ? (fund['Day Chg.'] >= 0 ? '#4EDE93' : '#FF516A') : '#94A3B8'} 
                   tip={fund['Day Chg.'] != null && fund['Prev NAV Date'] ? `Calculated against previous chronological NAV: ₹${fund['Prev NAV']} on ${fund['Prev NAV Date']}` : 'Calculation unavailable'}
                 />
               </Grid>
             </Grid>
-
-            <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', mb: 4 }} />
 
             {/* ── Fund Insights (Dynamic) ─────────────────────────── */}
             <Box sx={{ mb: 4 }}>
@@ -297,44 +328,94 @@ export default function FundDetailDrawer({ fund, onClose }: FundDetailDrawerProp
                   const riskMeta = getRiskMeta(riskVal)
 
                   return (
-                    <Grid container spacing={2}>
-                      <Grid item xs={6} md={3}>
-                        <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXPENSE RATIO</Typography>
-                            {fbEr && <MuiTooltip title="Category band heuristic estimate. Exact TER missing from provider." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                    <Box>
+                      <Grid container spacing={2}>
+                        {/* EXPENSE RATIO */}
+                        <Grid item xs={6} md={3}>
+                          <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXPENSE RATIO</Typography>
+                              {fbEr ? (
+                                <MuiTooltip title="Estimated value. Exact TER missing from primary AMFI feed." placement="top">
+                                  <WarningAmberIcon sx={{ fontSize: 13, color: '#EAB308', cursor: 'help' }} />
+                                </MuiTooltip>
+                              ) : (
+                                <MuiTooltip title={erVal !== 'N/A' ? "Verified Total Expense Ratio (TER) from official AMFI regulatory filings." : "TER is unpopulated for this scheme in the active AMFI dataset."} placement="top">
+                                  <InfoOutlinedIcon sx={{ fontSize: 13, color: 'text.secondary', cursor: 'help' }} />
+                                </MuiTooltip>
+                              )}
+                            </Box>
+                            <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: fbEr ? '#EAB308' : '#fff' }}>{erVal}</Typography>
                           </Box>
-                          <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{erVal}</Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={6} md={3}>
-                        <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>TOTAL AUM</Typography>
-                            {fbAum && <MuiTooltip title="Deterministic approximation based on asset class." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                        </Grid>
+
+                        {/* TOTAL AUM */}
+                        <Grid item xs={6} md={3}>
+                          <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>TOTAL AUM</Typography>
+                              {fbAum ? (
+                                <MuiTooltip title="Approximate benchmark estimate based on asset class." placement="top">
+                                  <WarningAmberIcon sx={{ fontSize: 13, color: '#EAB308', cursor: 'help' }} />
+                                </MuiTooltip>
+                              ) : (
+                                <MuiTooltip title={aumVal !== 'N/A' ? "Total Assets Under Management (AUM) from official AMC factsheet / monthly disclosure." : "AUM data is currently unpopulated for this scheme."} placement="top">
+                                  <InfoOutlinedIcon sx={{ fontSize: 13, color: 'text.secondary', cursor: 'help' }} />
+                                </MuiTooltip>
+                              )}
+                            </Box>
+                            <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: fbAum ? '#EAB308' : '#fff' }}>{aumVal}</Typography>
                           </Box>
-                          <Typography className="num" sx={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>{aumVal}</Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={6} md={3}>
-                        <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXIT LOAD</Typography>
-                            {fbExit && <MuiTooltip title="SEBI standard heuristic applied." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: '#EAB308', cursor: 'help' }} /></MuiTooltip>}
+                        </Grid>
+
+                        {/* EXIT LOAD */}
+                        <Grid item xs={6} md={3}>
+                          <Box sx={{ p: 2, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 800, fontSize: 10 }}>EXIT LOAD</Typography>
+                              {fbExit ? (
+                                <MuiTooltip title="Standard category guideline applied. Refer to scheme document." placement="top">
+                                  <WarningAmberIcon sx={{ fontSize: 13, color: '#EAB308', cursor: 'help' }} />
+                                </MuiTooltip>
+                              ) : (
+                                <MuiTooltip title={exitVal !== 'N/A' ? "Redemption fee schedule as defined in Scheme Information Document (SID)." : "Exit load details unpopulated. Check AMC offer document."} placement="top">
+                                  <InfoOutlinedIcon sx={{ fontSize: 13, color: 'text.secondary', cursor: 'help' }} />
+                                </MuiTooltip>
+                              )}
+                            </Box>
+                            <Typography sx={{ fontSize: 12, fontWeight: 800, color: fbExit ? '#EAB308' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exitVal}</Typography>
                           </Box>
-                          <Typography sx={{ fontSize: 12, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exitVal}</Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={6} md={3}>
-                        <Box sx={{ p: 2, bgcolor: riskMeta.bg, borderRadius: '16px', border: `1px solid ${riskMeta.border}` }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-                            <Typography variant="caption" sx={{ color: riskMeta.color, fontWeight: 800, fontSize: 10 }}>RISK PROFILE</Typography>
-                            {fbRisk && <MuiTooltip title="Inferred directly from category taxonomy." placement="top"><WarningAmberIcon sx={{ fontSize: 12, color: riskMeta.color, cursor: 'help', opacity: 0.8 }} /></MuiTooltip>}
+                        </Grid>
+
+                        {/* RISK PROFILE */}
+                        <Grid item xs={6} md={3}>
+                          <Box sx={{ p: 2, bgcolor: riskMeta.bg, borderRadius: '16px', border: `1px solid ${riskMeta.border}` }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="caption" sx={{ color: riskMeta.color, fontWeight: 800, fontSize: 10 }}>RISK PROFILE</Typography>
+                              {fbRisk ? (
+                                <MuiTooltip title="Inferred from category taxonomy proxy." placement="top">
+                                  <WarningAmberIcon sx={{ fontSize: 13, color: riskMeta.color, cursor: 'help' }} />
+                                </MuiTooltip>
+                              ) : (
+                                <MuiTooltip title={riskVal !== 'UNRATED' && riskVal !== 'N/A' ? "Official SEBI Riskometer / Morningstar classification." : "SEBI Riskometer rating unpopulated for this fund."} placement="top">
+                                  <InfoOutlinedIcon sx={{ fontSize: 13, color: riskMeta.color, cursor: 'help', opacity: 0.8 }} />
+                                </MuiTooltip>
+                              )}
+                            </Box>
+                            <Typography sx={{ fontSize: 12, fontWeight: 900, color: riskMeta.color }}>{riskVal.toUpperCase()}</Typography>
                           </Box>
-                          <Typography sx={{ fontSize: 12, fontWeight: 900, color: riskMeta.color }}>{riskVal.toUpperCase()}</Typography>
-                        </Box>
+                        </Grid>
                       </Grid>
-                    </Grid>
+
+                      {insights?.source && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 1.5, px: 0.5 }}>
+                          <CheckCircleOutlineIcon sx={{ fontSize: 13, color: 'primary.main' }} />
+                          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: 10, fontWeight: 600 }}>
+                            Source: <span style={{ color: '#CBD5E1', fontWeight: 700 }}>{insights.source}</span>
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
                   )
                 })()
               )}

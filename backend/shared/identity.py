@@ -48,6 +48,8 @@ class Caller:
     pan: Optional[str] = None
     status: str = "active"
     role: str = "user"
+    email: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 # Three states are distinguishable, and the distinction is load-bearing:

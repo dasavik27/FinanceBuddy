@@ -150,11 +150,21 @@ def get_holdings(
         code = resolve_scheme_code_from_isin(isin)
         ter = fetch_fund_ter(code, r.get("Plan", "Direct")) if code else None
         
+        if ter is None or ter <= 0:
+            try:
+                p_data = fetch_live_portfolio(isin, r.get("Category", "Equity"), r.get("Fund", ""))
+                if p_data and p_data.get("expense_ratio"):
+                    ter_val = float(str(p_data["expense_ratio"]).replace("%", "").strip())
+                    if ter_val > 0:
+                        ter = ter_val
+            except Exception:
+                pass
+
         if ter is not None and ter > 0:
             r["TER"] = round(ter, 2)
             r["TER_fallback"] = False
         else:
-            # Leave blank when AMFI TER is unavailable — no synthetic estimate.
+            # Leave blank/None when AMFI TER is unavailable — frontend renders N/A.
             r["TER"] = None
             r["TER_fallback"] = False
         return r
@@ -205,6 +215,19 @@ def get_fund_insights(session_id: str, isin: str, name: str = "", refresh: bool 
     amfi_er = fetch_fund_ter(code) if code else None
     er = amfi_er if amfi_er else portfolio_data.get("expense_ratio")
     
+    # If a valid TER is resolved, update in-memory session holding row so subsequent views retain it
+    if er not in (None, "", "N/A"):
+        try:
+            er_num = float(str(er).replace("%", "").strip())
+            portfolio = get_session(session_id)
+            if portfolio and hasattr(portfolio, "df_h") and not portfolio.df_h.empty:
+                if "ISIN" in portfolio.df_h.columns and isin:
+                    mask = portfolio.df_h["ISIN"] == isin
+                    if mask.any():
+                        portfolio.df_h.loc[mask, "TER"] = er_num
+        except Exception:
+            pass
+
     aum_str = meta.get("aum") or portfolio_data.get("aum")
     
     return {

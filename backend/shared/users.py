@@ -599,15 +599,14 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
 
             status, role = _sync_account_flags(conn, user_id, effective_email)
 
-            # PAN comes from the profile, not from the caller, so a request cannot
-            # assert someone else's. The legacy path passes one in only because it
-            # *is* the credential there, and it is written to the profile below.
+            # Read profile attributes (pan and display_name) in one query.
             profile = conn.execute(
-                "SELECT pan_encrypted FROM profiles WHERE user_id = %s", (user_id,)
+                "SELECT pan_encrypted, display_name FROM profiles WHERE user_id = %s", (user_id,)
             ).fetchone()
             # Bound to the user id, so a PAN ciphertext copied into another account's
             # profile row fails to decrypt rather than being served as theirs.
-            stored_pan = _decrypt_pan(profile[0], user_id) if profile else None
+            stored_pan = _decrypt_pan(profile[0], user_id) if (profile and profile[0]) else None
+            stored_display_name = str(profile[1]).strip() if (profile and profile[1]) else None
 
             if pan and pan != stored_pan:
                 conn.execute(
@@ -622,17 +621,26 @@ def resolve(issuer: str, subject: str, email: Optional[str] = None,
 
             if name and isinstance(name, str) and name.strip():
                 clean_name = name.strip()
-                conn.execute(
-                    """
-                    INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO UPDATE
-                        SET display_name = COALESCE(profiles.display_name, EXCLUDED.display_name),
-                            updated_at = now()
-                    """,
-                    (user_id, clean_name),
-                )
+                if not stored_display_name:
+                    conn.execute(
+                        """
+                        INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE
+                            SET display_name = COALESCE(profiles.display_name, EXCLUDED.display_name),
+                                updated_at = now()
+                        """,
+                        (user_id, clean_name),
+                    )
+                    stored_display_name = clean_name
 
-        caller = Caller(user_id=str(user_id), pan=stored_pan, status=status, role=role)
+        caller = Caller(
+            user_id=str(user_id),
+            pan=stored_pan,
+            status=status,
+            role=role,
+            email=effective_email,
+            display_name=stored_display_name,
+        )
         _cache_put(key, caller)
         return caller
     except NotAuthorizedError:
@@ -731,16 +739,19 @@ def set_display_name(user_id: str, raw_name: str) -> Optional[str]:
                 """,
                 (user_id,),
             )
+            invalidate(str(user_id))
             return None
-        conn.execute(
-            """
-            INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
-            ON CONFLICT (user_id) DO UPDATE
-                SET display_name = EXCLUDED.display_name, updated_at = now()
-            """,
-            (user_id, clean),
-        )
-    return clean
+        else:
+            conn.execute(
+                """
+                INSERT INTO profiles (user_id, display_name) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                    SET display_name = EXCLUDED.display_name, updated_at = now()
+                """,
+                (user_id, clean),
+            )
+            invalidate(str(user_id))
+            return clean
 
 
 def set_pan(user_id: str, raw_pan: str) -> Optional[str]:

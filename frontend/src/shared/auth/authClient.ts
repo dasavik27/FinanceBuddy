@@ -388,12 +388,9 @@ export const authClient = {
 
   getUser: async (): Promise<AuthUser | null> => {
     if (!supabase) return null
-    const { data, error } = await supabase.auth.getUser()
-    if (error || !data.user) {
-      const { data: sessionData } = await supabase.auth.getSession()
-      return toUser(sessionData.session)
-    }
-    return { id: data.user.id, email: extractEmail(data.user) }
+    // Fast path: reads from localStorage with 0 external network calls
+    const { data } = await supabase.auth.getSession()
+    return toUser(data.session)
   },
 
   /**

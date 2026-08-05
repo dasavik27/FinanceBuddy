@@ -723,7 +723,7 @@ export default function AdminConsole() {
             iconPosition="start"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <span>AMFI Data</span>
+                <span>MF Scheme Directory</span>
                 {(mfStatus?.total_schemes ?? 0) > 0 && (
                   <Chip
                     label={`${mfStatus!.total_schemes.toLocaleString()} schemes`}
@@ -1345,13 +1345,13 @@ export default function AdminConsole() {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
               <Box sx={{ p: 1, borderRadius: '10px', bgcolor: 'rgba(56, 189, 248, 0.12)', color: '#38BDF8' }}>
                 <SyncIcon sx={{ fontSize: 22 }} />
-                  </Box>
-                  <Box>
+              </Box>
+              <Box>
                 <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem', lineHeight: 1.2 }}>
-                  AMFI mutual fund data
-                      </Typography>
+                  Mutual Fund Scheme Directory
+                </Typography>
                 <Typography variant="caption" sx={{ color: '#64748B' }}>
-                  Choose what to ingest, then browse synced schemes
+                  Ingest, browse, and audit verified AMFI scheme master records
                 </Typography>
               </Box>
             </Box>

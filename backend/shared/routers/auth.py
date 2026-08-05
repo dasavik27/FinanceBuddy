@@ -104,11 +104,12 @@ def whoami():
             "(no caller — check JWT verify logs, or identity resolve / schema migration errors above)"
         )
         raise HTTPException(status_code=401, detail="Not signed in.")
-    display_name = users.find_display_name(caller.user_id)
-    email = users.primary_email(caller.user_id)
-    # Read PAN from the profile row, not only the middleware Caller cache — a
-    # request that started just before PUT /profile/pan can still hold pan=None.
-    pan = users.find_pan(caller.user_id) or caller.pan
+
+    # Instant in-memory resolution from Caller context (0 DB queries on cache hit)
+    display_name = caller.display_name if caller.display_name is not None else users.find_display_name(caller.user_id)
+    email = caller.email if caller.email is not None else users.primary_email(caller.user_id)
+    pan = caller.pan if caller.pan is not None else users.find_pan(caller.user_id)
+
     logger.info(
         "[AUTH] GET /auth/me → 200 user_id=%s status=%s role=%s pan_set=%s",
         caller.user_id, caller.status, caller.role, bool(pan),
