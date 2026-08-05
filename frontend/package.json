@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "dev:backend": "cd ../backend && ../venv_finance/Scripts/python.exe -m uvicorn main:app --reload",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@emotion/react": "^11.11.4",
@@ -28,10 +29,15 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^1.6.1",
     "concurrently": "^9.2.4",
+    "jsdom": "^29.1.1",
     "typescript": "^5.4.5",
     "vite": "^5.2.13",
     "vitest": "^1.6.1"
