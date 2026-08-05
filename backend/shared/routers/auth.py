@@ -66,6 +66,24 @@ def check_access_status(req: AccessStatusPayload, request: Request):
     _enforce_public_rate_limit(request, "access-status", email)
 
     with db.connect() as conn:
+        # If the user already has an active account or is an admin, they are fully enrolled.
+        is_existing_user = conn.execute(
+            """
+            SELECT 1 FROM identities i
+            JOIN users u ON u.id = i.user_id
+            WHERE LOWER(i.email) = %s AND u.status = 'active'
+            LIMIT 1
+            """,
+            (email,),
+        ).fetchone() is not None
+
+        if is_existing_user or email in users._admin_emails():
+            return {
+                "email": email,
+                "access_request_status": "none",
+                "message": "Account is active. Please sign in with your password.",
+            }
+
         status = users.lookup_access_request_status(conn, email)
 
     access_status = status or "none"

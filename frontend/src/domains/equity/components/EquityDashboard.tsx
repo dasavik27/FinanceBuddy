@@ -1,4 +1,5 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Box, Typography, Tabs, Tab } from '@mui/material'
 import { motion, AnimatePresence } from 'framer-motion'
 import EquityUploadPanel, { SwitchEquityStatementButton } from './EquityUploadPanel'
@@ -28,12 +29,19 @@ const TABS = [
 ]
 
 export default function EquityDashboard({ hasSession = true }: { hasSession?: boolean }) {
-  // Without a portfolio the analyzer is the only thing worth landing on.
-  const [activeTabId, setActiveTabId] = useState(hasSession ? 'overview' : 'analyzer')
+  const location = useLocation()
+  const navigate = useNavigate()
   const sessionId = useEquitySessionId()
 
+  const pathParts = location.pathname.split('/')
+  const lastPart = pathParts[pathParts.length - 1]
+  const tabFromUrl = TABS.some((t) => t.id === lastPart) ? lastPart : null
+
+  // By default, always open the overview tab unless another valid tab is in the URL
+  const activeTabId = tabFromUrl || 'overview'
+
   const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
-    setActiveTabId(newValue)
+    navigate(`/equity/${newValue}`)
   }
 
   return (

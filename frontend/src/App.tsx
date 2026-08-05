@@ -86,23 +86,26 @@ export default function App() {
           })
         } catch (e: unknown) {
           if (cancelled) return
-          let notice = await lookupAccessNoticeForEmails([
-            user.email,
-            readAccessRequestEmail(),
-          ])
+          // Only show an access request banner if the user was explicitly rejected
+          // with a 403 Forbidden (e.g. account pending approval or suspended).
+          // Do NOT show "Password not set" on routine 401 / session expiry / sign-out.
           const unauthorized = parseNotAuthorizedError(e)
-          if (notice.access_request_status === 'none' && unauthorized) {
-            if (unauthorized.access_request_status !== 'none') {
+          if (unauthorized) {
+            let notice = await lookupAccessNoticeForEmails([
+              user.email,
+              readAccessRequestEmail(),
+            ])
+            if (notice.access_request_status === 'none' && unauthorized.access_request_status !== 'none') {
               notice = {
                 message: unauthorized.message,
                 access_request_status: unauthorized.access_request_status,
                 email: user.email,
               }
-            } else {
+            } else if (unauthorized.message) {
               notice = { ...notice, message: unauthorized.message }
             }
+            writeAuthNotice(notice)
           }
-          writeAuthNotice(notice)
           await authClient.signOut()
           if (!cancelled) clearIdentity()
         }
