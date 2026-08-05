@@ -123,6 +123,79 @@ Relevant readers (for reference only):
 
 ---
 
+## Database Reset & Sequence Re-initialization
+
+When resetting staging/test data, preparing a fresh environment, or clearing out old records while keeping all schemas, tables, indexes, and RLS policies intact, use this one-liner or SQL script:
+
+### 1. One-Liner Reset Command (Terminal)
+
+Executes in-memory without saving temporary scripts to the repository:
+
+```bash
+python3 -c "
+import psycopg, os
+from dotenv import load_dotenv
+
+load_dotenv('backend/.env')
+db_url = os.environ.get('DATABASE_URL')
+if not db_url:
+    raise RuntimeError('DATABASE_URL not found in backend/.env')
+
+sql = '''
+DO \$\$ 
+DECLARE 
+    r RECORD;
+    s RECORD;
+BEGIN 
+    -- 1. Truncate all tables and reset primary key identity counters
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP 
+        EXECUTE 'TRUNCATE TABLE public.' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE;';
+    END LOOP; 
+
+    -- 2. Reset all standalone sequence counters to 1
+    FOR s IN (SELECT sequencename FROM pg_sequences WHERE schemaname = 'public') LOOP 
+        EXECUTE 'ALTER SEQUENCE public.' || quote_ident(s.sequencename) || ' RESTART WITH 1;';
+    END LOOP;
+END \$\$;
+'''
+
+with psycopg.connect(db_url, autocommit=True) as conn:
+    with conn.cursor() as cur:
+        cur.execute(sql)
+print('✅ All tables truncated and sequences reset to 1.')
+"
+```
+
+### 2. Pure SQL Script (psql / Database Console)
+
+```sql
+DO $$ 
+DECLARE 
+    r RECORD;
+    s RECORD;
+BEGIN 
+    -- 1. Truncate all public tables and restart primary keys
+    FOR r IN (
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public'
+    ) LOOP 
+        EXECUTE 'TRUNCATE TABLE public.' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE;';
+    END LOOP; 
+
+    -- 2. Reset all sequence generators to 1
+    FOR s IN (
+        SELECT sequencename 
+        FROM pg_sequences 
+        WHERE schemaname = 'public'
+    ) LOOP 
+        EXECUTE 'ALTER SEQUENCE public.' || quote_ident(s.sequencename) || ' RESTART WITH 1;';
+    END LOOP;
+END $$;
+```
+
+---
+
 # Path B — Move Auth only (OIDC; keep current Postgres)
 
 Leave Supabase Auth for Keycloak, Zitadel, Authentik, or another OIDC IdP.

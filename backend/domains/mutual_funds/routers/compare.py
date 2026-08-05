@@ -78,7 +78,7 @@ def get_comparison_metrics(fund: str, vs: str, session_id: str = ""):
     if vs.isdigit() and len(vs) >= 5:
         s2 = fetch_nav_series_by_code(vs, days=1825 + 60)
     else:
-        s2 = fetch_benchmark_series(vs, days=1825 + 60)
+        s2 = fetch_benchmark_series(vs, 1825 + 60)
 
     if s1.empty or s2.empty:
         return {"wins": {"A": 0, "B": 0}, "metrics": []}

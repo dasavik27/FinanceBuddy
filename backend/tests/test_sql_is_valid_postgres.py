@@ -42,6 +42,8 @@ KNOWN_FRAGMENTS = {
     "       total_value, total_invested, num_funds, is_partial,",
     "       statement_period, summary",
     "FROM sessions WHERE TRUE",
+    "SELECT COUNT(*) FROM mf_portfolio_snapshots WHERE",
+    "DELETE FROM mf_portfolio_snapshots WHERE",
 }
 
 

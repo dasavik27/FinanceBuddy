@@ -136,7 +136,7 @@ export default function Landing() {
       const notice = readAuthNotice()
       const oauthFailed = Boolean(consumeOAuthErrorFromUrl())
 
-      if (notice && (notice.access_request_status === 'pending' || notice.access_request_status === 'approved')) {
+      if (notice) {
         if (!cancelled) {
           showStatusBanner(notice.access_request_status)
           setLoading(false)
@@ -187,6 +187,11 @@ export default function Landing() {
     // Remember only for this OAuth round-trip (cleared again when Landing remounts).
     if (emailTrim) rememberAccessRequestEmail(emailTrim)
     try {
+      if (!authClient.isConfigured) {
+        setBanner(bannerForOAuthNoAccount())
+        setLoading(false)
+        return
+      }
       await authClient.signInWithGoogle(emailTrim || undefined)
     } catch {
       if (emailTrim) {

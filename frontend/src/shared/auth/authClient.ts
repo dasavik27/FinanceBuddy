@@ -72,13 +72,13 @@ export interface AuthBanner {
   severity: 'info' | 'error'
 }
 
-/** Shown when the email has no row in access_requests. */
+/** Canonical message shown when user has no access account / not allowlisted. */
 export const REQUEST_ACCESS_MESSAGE =
-  'You do not have access yet. Please submit an access request and wait for an administrator to approve you.'
+  'You do not have access yet. Please raise an access request, or enter your email above and tap Check status.'
 
-/** OAuth/sign-up disabled bounce — no Supabase Auth user; guide to request or status check. */
-export const OAUTH_NO_ACCOUNT_MESSAGE =
-  'No login account yet. Raise an access request, or enter your request email above and tap Check status.'
+/** Aliases for backward compatibility */
+export const OAUTH_NO_ACCOUNT_MESSAGE = REQUEST_ACCESS_MESSAGE
+export const MISSING_ISSUER_MESSAGE = REQUEST_ACCESS_MESSAGE
 
 const OAUTH_ERROR_KEY = 'fb_oauth_error_msg'
 
@@ -93,8 +93,8 @@ export function normalizeAuthMessage(raw: string | null | undefined): string | n
     if (msg.slice(0, half) === msg.slice(half)) msg = msg.slice(0, half)
   }
 
-  const doubled = OAUTH_NO_ACCOUNT_MESSAGE + OAUTH_NO_ACCOUNT_MESSAGE
-  if (msg.includes(doubled)) msg = msg.replace(doubled, OAUTH_NO_ACCOUNT_MESSAGE)
+  const doubled = REQUEST_ACCESS_MESSAGE + REQUEST_ACCESS_MESSAGE
+  if (msg.includes(doubled)) msg = msg.replace(doubled, REQUEST_ACCESS_MESSAGE)
 
   return msg
 }
@@ -121,19 +121,25 @@ export function bannerForAccessStatus(
   }
   return {
     title: 'Access required',
-    detail: 'You do not have access yet. Raise a request, or enter your email above and check status if you already submitted one.',
+    detail: REQUEST_ACCESS_MESSAGE,
     access_request_status: 'none',
     severity: 'info',
   }
 }
 
 export function bannerForOAuthNoAccount(): AuthBanner {
-  return {
-    title: 'No login account',
-    detail: 'Raise an access request if you are new. Already requested? Enter that email above and tap Check status.',
-    access_request_status: 'none',
-    severity: 'info',
-  }
+  return bannerForAccessStatus('none')
+}
+
+export function bannerForIssuerMissing(detail?: string): AuthBanner {
+  return detail
+    ? {
+        title: 'Access required',
+        detail,
+        access_request_status: 'none',
+        severity: 'info',
+      }
+    : bannerForAccessStatus('none')
 }
 
 export function bannerForError(message: string): AuthBanner {
@@ -151,12 +157,21 @@ export function messageForAccessStatus(status: AccessRequestStatus | string | nu
 }
 
 /**
- * Map provider / OAuth error text into a clear "request access" message when the
- * failure is "no account / sign-ups disabled / not invited".
+ * Map provider / OAuth error text into a clear message when the
+ * failure is missing issuer, or "no account / sign-ups disabled / not invited".
  */
 export function toAccessRequestMessage(raw: string | null | undefined): string | null {
   if (!raw) return null
   const text = raw.replace(/\+/g, ' ').toLowerCase()
+  if (
+    text.includes('issuer') ||
+    text.includes('no_verifier') ||
+    text.includes('no identity provider') ||
+    text.includes('provider not configured') ||
+    text.includes('invalid_issuer')
+  ) {
+    return MISSING_ISSUER_MESSAGE
+  }
   const hints = [
     'signup',
     'sign up',
