@@ -154,15 +154,9 @@ def get_holdings(
             r["TER"] = round(ter, 2)
             r["TER_fallback"] = False
         else:
-            from shared.services.fallbacks.deterministic import DeterministicFallback
-            fb = DeterministicFallback().generate_fallbacks(
-                isin=isin or "", 
-                category=r.get("Category", ""), 
-                fund_name=r.get("Fund", ""), 
-                current_result={}
-            )
-            r["TER"] = fb.get("expense_ratio", 0.0)
-            r["TER_fallback"] = True
+            # Leave blank when AMFI TER is unavailable — no synthetic estimate.
+            r["TER"] = None
+            r["TER_fallback"] = False
         return r
 
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -207,28 +201,28 @@ def get_fund_insights(session_id: str, isin: str, name: str = "", refresh: bool 
     search_name = name or meta.get("scheme_name", "")
     portfolio_data = fetch_live_portfolio(isin, category, search_name, refresh=refresh)
     
-    # Determine AUM from metadata (avoid hardcoded placeholders)
-    amfi_er = fetch_fund_ter(code) if code else 0.0
-    er = amfi_er if amfi_er else portfolio_data.get("expense_ratio", 0.0)
+    # Prefer live AMFI TER; otherwise use portfolio insight ER; else blank.
+    amfi_er = fetch_fund_ter(code) if code else None
+    er = amfi_er if amfi_er else portfolio_data.get("expense_ratio")
     
-    aum_str = meta.get("aum") or portfolio_data.get("aum") or "N/A"
+    aum_str = meta.get("aum") or portfolio_data.get("aum")
     
     return {
         "isin": isin,
         "scheme_code": code,
         "scheme_name": meta.get("scheme_name"),
         "fund_house": meta.get("fund_house"),
-        "expense_ratio": f"{er}%" if er and er != "N/A" else "N/A",
-        "expense_ratio_fallback": not amfi_er and portfolio_data.get("expense_ratio_fallback", False),
+        "expense_ratio": f"{er}%" if er not in (None, "", "N/A") else None,
+        "expense_ratio_fallback": False,
         "aum": aum_str,
-        "aum_fallback": not meta.get("aum") and portfolio_data.get("aum_fallback", False),
-        "exit_load": portfolio_data.get("exit_load", "See Factsheet"),
-        "exit_load_fallback": portfolio_data.get("exit_load_fallback", False),
-        "risk": portfolio_data.get("risk", "HIGH"),
-        "risk_fallback": portfolio_data.get("risk_fallback", False),
+        "aum_fallback": False,
+        "exit_load": portfolio_data.get("exit_load"),
+        "exit_load_fallback": False,
+        "risk": portfolio_data.get("risk"),
+        "risk_fallback": False,
         "category": category,
         "type": meta.get("scheme_type"),
         "sectors": portfolio_data.get("sectors", []),
         "holdings": portfolio_data.get("holdings", []),
-        "source": portfolio_data.get("source", "Institutional Audit")
+        "source": portfolio_data.get("source"),
     }

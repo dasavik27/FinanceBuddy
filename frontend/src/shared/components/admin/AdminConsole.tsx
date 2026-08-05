@@ -1345,19 +1345,19 @@ export default function AdminConsole() {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
               <Box sx={{ p: 1, borderRadius: '10px', bgcolor: 'rgba(56, 189, 248, 0.12)', color: '#38BDF8' }}>
                 <SyncIcon sx={{ fontSize: 22 }} />
-              </Box>
-              <Box>
+                  </Box>
+                  <Box>
                 <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem', lineHeight: 1.2 }}>
                   AMFI mutual fund data
-                </Typography>
+                      </Typography>
                 <Typography variant="caption" sx={{ color: '#64748B' }}>
                   Choose what to ingest, then browse synced schemes
                 </Typography>
               </Box>
             </Box>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <Chip
-                size="small"
+                      <Chip
+                        size="small"
                 label={mfStatusLoading ? 'Loading…' : `${(mfStatus?.total_schemes ?? 0).toLocaleString()} schemes in DB`}
                 sx={{ bgcolor: 'rgba(56, 189, 248, 0.12)', color: '#38BDF8', fontWeight: 700 }}
               />
@@ -1373,7 +1373,7 @@ export default function AdminConsole() {
                     ? `Last sync: ${lastSync.status}${lastSync.created_at ? ` · ${new Date(lastSync.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}`
                     : 'Never synced'
                 }
-                sx={{
+                        sx={{
                   bgcolor:
                     lastSync?.status === 'failed'
                       ? 'rgba(239, 68, 68, 0.12)'
@@ -1399,7 +1399,7 @@ export default function AdminConsole() {
                   <RefreshIcon sx={{ fontSize: 18 }} />
                 </IconButton>
               </Tooltip>
-            </Box>
+                    </Box>
           </Paper>
 
           {/* Primary panels */}
@@ -1418,17 +1418,17 @@ export default function AdminConsole() {
               { id: 'explore' as const, label: '2. Browse schemes', icon: <SearchIcon sx={{ fontSize: 16 }} /> },
             ].map((tab) => {
               const active = mfPanel === tab.id
-              return (
-                <Button
+                      return (
+                        <Button
                   key={tab.id}
                   onClick={() => setMfPanel(tab.id)}
                   startIcon={tab.icon}
-                  sx={{
+                          sx={{
                     px: 2.2,
                     py: 0.9,
-                    borderRadius: '10px',
-                    textTransform: 'none',
-                    fontWeight: 700,
+                            borderRadius: '10px',
+                            textTransform: 'none',
+                            fontWeight: 700,
                     fontSize: '0.86rem',
                     color: active ? '#F8FAFC' : '#94A3B8',
                     bgcolor: active ? 'rgba(56, 189, 248, 0.16)' : 'transparent',
@@ -1437,9 +1437,9 @@ export default function AdminConsole() {
                   }}
                 >
                   {tab.label}
-                </Button>
-              )
-            })}
+                        </Button>
+                      )
+                    })}
           </Paper>
 
           {/* ── Ingest panel ─────────────────────────────────────────────── */}
@@ -1506,7 +1506,7 @@ export default function AdminConsole() {
                             <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '0.95rem' }}>
                               {opt.title}
                             </Typography>
-                          </Box>
+                  </Box>
                           <Chip
                             size="small"
                             label={opt.badge}
@@ -1532,7 +1532,7 @@ export default function AdminConsole() {
                 })}
               </Grid>
 
-              {syncScope === 'custom' && (
+                  {syncScope === 'custom' && (
                 <Box
                   sx={{
                     p: 2,
@@ -1563,75 +1563,75 @@ export default function AdminConsole() {
                       </Button>
                     </Box>
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
-                    <TextField
-                      size="small"
+                      <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
+                        <TextField
+                          size="small"
                       placeholder="Add AMC name (e.g. Helios, Navi)…"
-                      value={newAmcInput}
-                      onChange={(e) => setNewAmcInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
+                          value={newAmcInput}
+                          onChange={(e) => setNewAmcInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
                           addCustomAmc()
-                        }
-                      }}
-                      sx={{
-                        flex: 1,
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: '10px',
-                          bgcolor: 'rgba(255,255,255,0.04)',
-                          color: '#F8FAFC',
-                          fontSize: '0.8rem',
-                          '& fieldset': { borderColor: 'rgba(255,255,255,0.12)' },
+                            }
+                          }}
+                          sx={{
+                            flex: 1,
+                            '& .MuiOutlinedInput-root': {
+                              borderRadius: '10px',
+                              bgcolor: 'rgba(255,255,255,0.04)',
+                              color: '#F8FAFC',
+                              fontSize: '0.8rem',
+                              '& fieldset': { borderColor: 'rgba(255,255,255,0.12)' },
                           '&:hover fieldset': { borderColor: '#F59E0B' },
-                        },
-                      }}
-                    />
-                    <Button
-                      variant="outlined"
-                      size="small"
+                            },
+                          }}
+                        />
+                        <Button
+                          variant="outlined"
+                          size="small"
                       onClick={addCustomAmc}
-                      disabled={!newAmcInput.trim()}
-                      sx={{
-                        borderRadius: '10px',
+                          disabled={!newAmcInput.trim()}
+                          sx={{
+                            borderRadius: '10px',
                         color: '#F59E0B',
                         borderColor: 'rgba(245, 158, 11, 0.45)',
-                        textTransform: 'none',
-                        fontWeight: 700,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      Add
-                    </Button>
-                  </Box>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8 }}>
-                    {Array.from(new Set([...customAmcs, ...BUILTIN_AMCS])).map((amc) => {
-                      const active = customAmcs.includes(amc)
-                      return (
-                        <Chip
-                          key={amc}
-                          label={amc}
-                          size="small"
-                          onClick={() => {
-                            setCustomAmcs((prev) =>
-                              prev.includes(amc) ? prev.filter((a) => a !== amc) : [...prev, amc]
-                            )
+                            textTransform: 'none',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
                           }}
+                        >
+                      Add
+                        </Button>
+                      </Box>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8 }}>
+                    {Array.from(new Set([...customAmcs, ...BUILTIN_AMCS])).map((amc) => {
+                          const active = customAmcs.includes(amc)
+                          return (
+                            <Chip
+                              key={amc}
+                              label={amc}
+                              size="small"
+                              onClick={() => {
+                                setCustomAmcs((prev) =>
+                                  prev.includes(amc) ? prev.filter((a) => a !== amc) : [...prev, amc]
+                                )
+                              }}
                           icon={active ? <CheckIcon sx={{ fontSize: '14px !important', color: '#F59E0B !important' }} /> : undefined}
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: active ? 700 : 500,
+                              sx={{
+                                fontSize: '0.75rem',
+                                fontWeight: active ? 700 : 500,
                             bgcolor: active ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255,255,255,0.03)',
                             color: active ? '#F59E0B' : '#64748B',
                             border: active ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255,255,255,0.06)',
-                            cursor: 'pointer',
-                          }}
-                        />
-                      )
-                    })}
-                  </Box>
-                </Box>
-              )}
+                                cursor: 'pointer',
+                              }}
+                            />
+                          )
+                        })}
+                      </Box>
+                    </Box>
+                  )}
 
               {/* Action summary */}
               <Box
@@ -1663,19 +1663,19 @@ export default function AdminConsole() {
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1.2, flexWrap: 'wrap' }}>
-                  <Button
-                    variant="contained"
-                    onClick={handleTriggerMfSync}
-                    disabled={mfTriggering || mfStatusLoading || (syncScope === 'custom' && customAmcs.length === 0)}
+                <Button
+                  variant="contained"
+                  onClick={handleTriggerMfSync}
+                  disabled={mfTriggering || mfStatusLoading || (syncScope === 'custom' && customAmcs.length === 0)}
                     startIcon={mfTriggering ? <CircularProgress size={18} color="inherit" /> : <BoltIcon />}
-                    sx={{
+                  sx={{
                       px: 3,
                       py: 1.2,
                       borderRadius: '12px',
-                      bgcolor: '#38BDF8',
-                      color: '#0F172A',
-                      fontWeight: 800,
-                      textTransform: 'none',
+                    bgcolor: '#38BDF8',
+                    color: '#0F172A',
+                    fontWeight: 800,
+                    textTransform: 'none',
                       fontSize: '0.92rem',
                       boxShadow: '0 4px 20px rgba(56, 189, 248, 0.3)',
                       '&:hover': { bgcolor: '#0EA5E9', color: '#fff' },
@@ -1683,32 +1683,32 @@ export default function AdminConsole() {
                     }}
                   >
                     {mfTriggering ? 'Syncing…' : syncActionLabel}
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() => setPurgeDialogOpen(true)}
-                    disabled={mfTriggering || mfStatusLoading}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => setPurgeDialogOpen(true)}
+                  disabled={mfTriggering || mfStatusLoading}
                     startIcon={<DeleteSweepIcon />}
-                    sx={{
+                  sx={{
                       px: 2.2,
-                      py: 1.1,
+                    py: 1.1,
                       borderRadius: '12px',
                       color: '#F87171',
-                      borderColor: 'rgba(244, 63, 94, 0.35)',
-                      textTransform: 'none',
+                    borderColor: 'rgba(244, 63, 94, 0.35)',
+                    textTransform: 'none',
                       fontWeight: 700,
                       '&:hover': { borderColor: '#F43F5E', bgcolor: 'rgba(244, 63, 94, 0.1)' },
                     }}
                   >
                     Purge data
-                  </Button>
+                </Button>
                 </Box>
-              </Box>
+                </Box>
 
               {mfTriggering && (
                 <Box sx={{ mt: 2 }}>
                   <LinearProgress
-                    sx={{
+                sx={{
                       height: 4,
                       borderRadius: 2,
                       bgcolor: 'rgba(56, 189, 248, 0.12)',
@@ -1720,22 +1720,22 @@ export default function AdminConsole() {
                   </Typography>
                 </Box>
               )}
-            </Paper>
+              </Paper>
           )}
 
           {/* ── Explore panel ────────────────────────────────────────────── */}
           {mfPanel === 'explore' && (
-            <Paper
-              sx={{
+              <Paper
+                sx={{
                 p: { xs: 2.5, md: 3 },
                 mb: 2.5,
-                borderRadius: '20px',
+                  borderRadius: '20px',
                 bgcolor: 'rgba(15, 23, 42, 0.7)',
                 border: '1px solid rgba(255,255,255,0.08)',
               }}
             >
               <Box
-                sx={{
+                            sx={{
                   display: 'flex',
                   flexDirection: { xs: 'column', md: 'row' },
                   alignItems: { xs: 'stretch', md: 'center' },
@@ -1744,31 +1744,31 @@ export default function AdminConsole() {
                   mb: 2,
                 }}
               >
-                <Box>
-                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem' }}>
+              <Box>
+                <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem' }}>
                     Scheme explorer
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: '#94A3B8' }}>
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#94A3B8' }}>
                     {mfSchemesLoading
                       ? 'Searching…'
                       : `${mfSchemesTotal.toLocaleString()} match${mfSchemesTotal === 1 ? '' : 'es'} · showing ${mfSchemes.length}`}
-                  </Typography>
-                </Box>
-                <TextField
-                  size="small"
-                  placeholder="Search name, ISIN, or AMC…"
-                  value={mfSearchQuery}
-                  onChange={(e) => handleSearchMf(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon sx={{ color: '#64748B', fontSize: 19 }} />
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ ...adminFieldSx, minWidth: { xs: '100%', md: 340 } }}
-                />
+                </Typography>
               </Box>
+              <TextField
+                size="small"
+                  placeholder="Search name, ISIN, or AMC…"
+                value={mfSearchQuery}
+                onChange={(e) => handleSearchMf(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon sx={{ color: '#64748B', fontSize: 19 }} />
+                    </InputAdornment>
+                  ),
+                }}
+                  sx={{ ...adminFieldSx, minWidth: { xs: '100%', md: 340 } }}
+              />
+            </Box>
 
               <Box sx={{ mb: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.2 }}>
@@ -1777,85 +1777,85 @@ export default function AdminConsole() {
                     CATEGORY
                   </Typography>
                   {MF_CATEGORIES.map((cat) => {
-                    const active = mfCategoryFilter === cat
-                    return (
-                      <Chip
-                        key={cat}
+                  const active = mfCategoryFilter === cat
+                  return (
+                    <Chip
+                      key={cat}
                         label={cat === 'All' ? 'All' : cat}
-                        size="small"
-                        onClick={() => handleSelectFilter('category', cat)}
-                        sx={{
-                          height: 24,
-                          fontSize: '0.72rem',
-                          fontWeight: active ? 800 : 500,
-                          bgcolor: active ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
-                          color: active ? '#38BDF8' : '#94A3B8',
-                          border: active ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255,255,255,0.06)',
-                          cursor: 'pointer',
-                        }}
-                      />
-                    )
-                  })}
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                      size="small"
+                      onClick={() => handleSelectFilter('category', cat)}
+                      sx={{
+                        height: 24,
+                        fontSize: '0.72rem',
+                        fontWeight: active ? 800 : 500,
+                        bgcolor: active ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
+                        color: active ? '#38BDF8' : '#94A3B8',
+                        border: active ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255,255,255,0.06)',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  )
+                })}
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                   <AccountBalanceIcon sx={{ fontSize: 16, color: '#94A3B8' }} />
                   <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.72rem', mr: 0.5 }}>
                     AMC
                   </Typography>
                   {MF_AMC_FILTERS.map((amc) => {
-                    const active = mfAmcFilter === amc
-                    return (
-                      <Chip
-                        key={amc}
+                  const active = mfAmcFilter === amc
+                  return (
+                    <Chip
+                      key={amc}
                         label={amc === 'All' ? 'All' : amc}
-                        size="small"
-                        onClick={() => handleSelectFilter('amc', amc)}
-                        sx={{
-                          height: 24,
-                          fontSize: '0.72rem',
-                          fontWeight: active ? 800 : 500,
-                          bgcolor: active ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255,255,255,0.04)',
-                          color: active ? '#10B981' : '#94A3B8',
-                          border: active ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255,255,255,0.06)',
-                          cursor: 'pointer',
-                        }}
-                      />
-                    )
-                  })}
-                </Box>
+                      size="small"
+                      onClick={() => handleSelectFilter('amc', amc)}
+                      sx={{
+                        height: 24,
+                        fontSize: '0.72rem',
+                        fontWeight: active ? 800 : 500,
+                        bgcolor: active ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255,255,255,0.04)',
+                        color: active ? '#10B981' : '#94A3B8',
+                        border: active ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255,255,255,0.06)',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  )
+                })}
               </Box>
+            </Box>
 
               <TableContainer
                 component={Paper}
                 sx={{ borderRadius: '14px', bgcolor: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}
               >
                 <Table sx={{ minWidth: 760 }}>
-                  <TableHead sx={{ bgcolor: 'rgba(2, 6, 23, 0.5)' }}>
-                    <TableRow>
+                <TableHead sx={{ bgcolor: 'rgba(2, 6, 23, 0.5)' }}>
+                  <TableRow>
                       <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>SCHEME</TableCell>
-                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>CATEGORY</TableCell>
+                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>CATEGORY</TableCell>
                       <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>AUM</TableCell>
-                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>RISK</TableCell>
+                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>RISK</TableCell>
                       <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>COVERAGE</TableCell>
                       <TableCell align="right" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }} />
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
                     {mfSchemesLoading && mfSchemes.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
-                          <CircularProgress size={28} sx={{ color: '#38BDF8' }} />
-                        </TableCell>
-                      </TableRow>
-                    ) : mfSchemes.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                    <TableRow>
+                      <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                        <CircularProgress size={28} sx={{ color: '#38BDF8' }} />
+                      </TableCell>
+                    </TableRow>
+                  ) : mfSchemes.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
                           <Typography sx={{ color: '#E2E8F0', fontWeight: 700 }}>No schemes found</Typography>
                           <Typography variant="body2" sx={{ color: '#64748B', mt: 0.5, mb: 1.5 }}>
                             {mfSearchQuery || mfAmcFilter !== 'All' || mfCategoryFilter !== 'All'
                               ? 'Try clearing filters or searching something else.'
                               : 'Ingest an AMC scope first, then browse here.'}
-                          </Typography>
+                        </Typography>
                           <Button
                             size="small"
                             variant="outlined"
@@ -1864,74 +1864,74 @@ export default function AdminConsole() {
                           >
                             Go to Ingest
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      mfSchemes.map((scheme) => (
-                        <TableRow key={scheme.isin} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    mfSchemes.map((scheme) => (
+                      <TableRow key={scheme.isin} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
                           <TableCell sx={{ py: 1.6 }}>
                             <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.86rem' }}>
-                              {scheme.scheme_name}
-                            </Typography>
+                            {scheme.scheme_name}
+                          </Typography>
                             <Typography sx={{ color: '#64748B', fontSize: '0.74rem', mt: 0.2 }}>
                               <span style={{ color: '#38BDF8', fontFamily: 'monospace' }}>{scheme.isin}</span>
                               {' · '}{scheme.amc}
                             </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={scheme.category || 'Equity'}
-                              size="small"
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={scheme.category || 'Equity'}
+                            size="small"
                               sx={{ bgcolor: 'rgba(56, 189, 248, 0.1)', color: '#38BDF8', fontWeight: 700, fontSize: '0.7rem', borderRadius: '8px' }}
-                            />
-                          </TableCell>
+                          />
+                        </TableCell>
                           <TableCell sx={{ color: '#10B981', fontWeight: 800, fontSize: '0.88rem' }}>
-                            {scheme.aum_formatted}
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={scheme.risk_level}
-                              size="small"
-                              sx={{
-                                bgcolor: scheme.risk_level.includes('VERY HIGH') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                                color: scheme.risk_level.includes('VERY HIGH') ? '#F87171' : '#F59E0B',
-                                fontWeight: 800,
+                          {scheme.aum_formatted}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={scheme.risk_level}
+                            size="small"
+                            sx={{
+                              bgcolor: scheme.risk_level.includes('VERY HIGH') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                              color: scheme.risk_level.includes('VERY HIGH') ? '#F87171' : '#F59E0B',
+                              fontWeight: 800,
                                 fontSize: '0.66rem',
-                                borderRadius: '8px',
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="caption" sx={{ color: '#CBD5E1', display: 'block' }}>
+                              borderRadius: '8px',
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="caption" sx={{ color: '#CBD5E1', display: 'block' }}>
                               {scheme.holdings_count} holdings · {scheme.sectors_count} sectors
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#64748B' }}>
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748B' }}>
                               TER {scheme.expense_ratio != null ? `${scheme.expense_ratio}%` : 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Button
-                              size="small"
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            size="small"
                               variant="text"
-                              startIcon={<VisibilityIcon sx={{ fontSize: 14 }} />}
-                              onClick={() => setSelectedScheme(scheme)}
-                              sx={{
-                                borderRadius: '10px',
-                                color: '#38BDF8',
-                                fontSize: '0.75rem',
-                                fontWeight: 700,
-                                textTransform: 'none',
-                              }}
-                            >
+                            startIcon={<VisibilityIcon sx={{ fontSize: 14 }} />}
+                            onClick={() => setSelectedScheme(scheme)}
+                            sx={{
+                              borderRadius: '10px',
+                              color: '#38BDF8',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              textTransform: 'none',
+                            }}
+                          >
                               View
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
 
               {mfSchemes.length < mfSchemesTotal && (
                 <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
@@ -1951,7 +1951,7 @@ export default function AdminConsole() {
                   </Button>
                 </Box>
               )}
-            </Paper>
+          </Paper>
           )}
 
           {/* Audit — collapsed by default, lowest priority */}

@@ -1,8 +1,7 @@
 """
 domains/mutual_funds/portfolio_discovery.py
-The Deterministic Insights Engine.
-Fetches deep institutional metadata (AUM, Risk, ER, Sectors) via Yahoo Finance.
-Implements robust categorical heuristic fallbacks if upstream APIs fail, ensuring 100% UI uptime.
+Fund insights engine: AMFI snapshots first, Yahoo Finance second.
+Missing fields stay blank — no synthetic / heuristic fill-in.
 """
 
 from typing import Dict, List, Optional
@@ -13,10 +12,11 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
     """
     Fetch comprehensive fund metadata (sectors, holdings, risk, aum, ER).
     
-    This acts as the core Multi-Tier Insights Engine:
-      - Tier 1: PostgreSQL AMFI snapshots (seeded and/or sync ingest; may use category proxies)
-      - Tier 2: Yahoo Finance Engine (Global / ETF / Foreign fund coverage)
-      - Tier 3: Deterministic Categorical Heuristic Engine (UI uptime safety net)
+    Two-tier insights engine:
+      - Tier 1: PostgreSQL AMFI snapshots (seeded and/or sync ingest)
+      - Tier 2: Yahoo Finance (Global / ETF / Foreign fund coverage)
+    
+    If both miss, fields stay blank (null / empty lists). No deterministic heuristics.
     
     Args:
         isin (str): International Securities Identification Number.
@@ -58,8 +58,7 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
             result = None
 
     if not result:
-        from shared.services.providers.base import BaseMetadataProvider
-        # Fallback to empty template
+        # Both tiers missed — leave blank rather than inventing values.
         result = {
             "source": None,
             "sectors": [],
@@ -73,14 +72,9 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
             "exit_load_fallback": False,
             "expense_ratio_fallback": False,
         }
-
-    # ── Tier 3: Deterministic Categorical Heuristic Engine ────────────────────
-    from shared.services.fallbacks.factory import get_fallback_engine
-    fallback_engine = get_fallback_engine()
-    result = fallback_engine.generate_fallbacks(isin, category, fund_name, result)
-        
-    # Auto-persist newly discovered fund to PostgreSQL Tier 1 if it wasn't there
-    _auto_persist_snapshot(isin, fund_name, category, result)
+    else:
+        # Auto-persist only when a real upstream source produced data.
+        _auto_persist_snapshot(isin, fund_name, category, result)
 
     # Persist to cache for high-fidelity audit performance
     MarketCache.set(cache_key, result)

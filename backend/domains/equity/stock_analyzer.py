@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 
 from domains.equity import nse_corporate, nse_results
+from domains.equity.bse_client import bse_client
 from domains.equity.sector_map import SECTOR_MAP, get_sector
 from shared.cache import MarketCache as DiskCache
 from shared.services import market_hours, refresh
@@ -214,9 +215,24 @@ def _refresh_analysis(symbol: str) -> dict[str, Any]:
     clean = _clean_symbol(symbol)
     key = _ANALYSIS_KEY.format(clean)
     data = _analyze_stock_uncached(clean)
+    
+    # Smart negative cache: shorter TTL for degraded responses
+    is_degraded = (
+        data.get("pe_ratio") is None
+        and data.get("market_cap_cr") is None
+        and data.get("eps") is None
+    )
+    cache_ttl = 30 if is_degraded else market_hours.fundamentals_ttl()
+    
+    if is_degraded:
+        logger.warning(
+            "[analyzer] %s returned degraded data (no P/E, market cap, or EPS); "
+            "caching for 30s only", clean
+        )
+    
     envelope = {
         "data": data,
-        "fresh_until": time.time() + market_hours.fundamentals_ttl(),
+        "fresh_until": time.time() + cache_ttl,
     }
     MARKET_CACHE.set(
         key, envelope, _ANALYSIS_STALE_TTL,
@@ -232,6 +248,176 @@ def _refresh_analysis(symbol: str) -> dict[str, Any]:
 
 
 import numpy as np
+
+
+def _fetch_yf_info(ticker_ns: str) -> tuple[dict, str]:
+    """
+    Try .NS first; if info is empty or missing, fall back to .BO.
+    
+    Returns (info_dict, ticker_used). This fixes blank tiles for stocks like
+    TATAMOTORS, LTIM, ZOMATO where .NS returns HTTP 404 but .BO succeeds.
+    
+    Why this works: TATAMOTORS.BO, LTIM.BO, ZOMATO.BO all return 150+ key payloads
+    with P/E, EPS, Market Cap, Beta, Dividend Yield fields.
+    """
+    import yfinance as yf
+    
+    for suffix in (".NS", ".BO"):
+        sym = ticker_ns.replace(".NS", suffix).replace(".BO", suffix)
+        try:
+            ticker_obj = yf.Ticker(sym)
+            info = ticker_obj.info or {}
+            # Real payload check: an error stub or empty response has < 10 keys
+            if len(info) > 10:
+                logger.debug("[analyzer] %s resolved with %d info keys", sym, len(info))
+                return info, sym
+        except Exception as e:
+            logger.debug("[analyzer] %s fetch failed: %s", sym, e)
+            continue
+    
+    logger.warning("[analyzer] both .NS and .BO failed for %s", ticker_ns)
+    return {}, ticker_ns
+
+
+def _compute_beta(stock_hist: pd.DataFrame, symbol: str) -> float | None:
+    """
+    Compute 250-day beta of stock vs Nifty 50 from daily log returns.
+    
+    Primary source for Beta — Yahoo's beta is the fallback when < 60 trading
+    days of data exist for the stock.
+    
+    Formula: Beta = Covariance(stock_returns, market_returns) / Variance(market_returns)
+    """
+    nifty_map = _nifty_close_series()
+    if not nifty_map or len(nifty_map) < 60:
+        logger.debug("[analyzer] insufficient Nifty data for beta calculation")
+        return None
+    
+    if stock_hist.empty or "Close" not in stock_hist.columns:
+        return None
+    
+    # Extract close prices
+    close = stock_hist["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    stock_prices = close.dropna()
+    
+    if len(stock_prices) < 60:
+        logger.debug("[analyzer] %s has < 60 days of data, skipping math beta", symbol)
+        return None
+    
+    # Convert Nifty dict to Series aligned with stock dates
+    nifty_series = pd.Series(nifty_map, dtype=float)
+    nifty_series.index = pd.to_datetime(nifty_series.index)
+    
+    # Align both series on common dates
+    stock_aligned = stock_prices.reindex(nifty_series.index)
+    nifty_aligned = nifty_series.reindex(stock_prices.index)
+    
+    # Compute percentage returns
+    stock_returns = stock_aligned.pct_change().dropna()
+    nifty_returns = nifty_aligned.pct_change().dropna()
+    
+    # Align on common dates again after pct_change
+    aligned_df = pd.DataFrame({
+        "stock": stock_returns,
+        "nifty": nifty_returns
+    }).dropna()
+    
+    if len(aligned_df) < 60:
+        logger.debug("[analyzer] %s has < 60 aligned days after returns, skipping math beta", symbol)
+        return None
+    
+    # Take last 250 days if available
+    aligned_df = aligned_df.iloc[-250:]
+    
+    # Calculate covariance and variance
+    cov_matrix = aligned_df.cov()
+    if "stock" not in cov_matrix.columns or "nifty" not in cov_matrix.columns:
+        return None
+    
+    covariance = cov_matrix.loc["stock", "nifty"]
+    variance = aligned_df["nifty"].var()
+    
+    if variance == 0 or pd.isna(variance) or pd.isna(covariance):
+        return None
+    
+    beta = covariance / variance
+    result = round(float(beta), 3)
+    logger.debug("[analyzer] %s computed beta: %.3f from %d days", symbol, result, len(aligned_df))
+    return result
+
+
+def _nse_dividend_yield(actions: list[dict], current_price: float) -> float | None:
+    """
+    Sum all cash dividend amounts paid in the trailing 12 months from NSE
+    corporate actions. Divide by current price to get yield percentage.
+    
+    Returns None if no dividends in last 12 months or price is invalid.
+    """
+    if not actions or not current_price or current_price <= 0:
+        return None
+    
+    from datetime import datetime, timedelta, timezone
+    
+    cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+    total_div = 0.0
+    
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        
+        # Check if it's a dividend action
+        action_type = action.get("type", "").lower()
+        if action_type != "dividend":
+            # Also check subject for dividend keywords
+            subject = action.get("subject", "").upper()
+            if "DIVIDEND" not in subject:
+                continue
+        
+        try:
+            # Extract dividend amount
+            # NSE doesn't always have a separate "amount" field, parse from subject
+            subject = action.get("subject", "")
+            amount_match = re.search(r'RS?\.?\s*(\d+(?:\.\d+)?)', subject, re.I)
+            if amount_match:
+                amount = float(amount_match.group(1))
+            else:
+                # Try face_value or other fields
+                amount = float(str(action.get("amount", "0")).replace(",", ""))
+            
+            if amount <= 0:
+                continue
+            
+            # Check ex-date
+            ex_date_str = action.get("ex_date")
+            if not ex_date_str:
+                continue
+            
+            ex_date = pd.to_datetime(ex_date_str, errors="coerce")
+            if pd.isna(ex_date):
+                continue
+            
+            # Make timezone aware for comparison
+            if ex_date.tzinfo is None:
+                ex_date = ex_date.tz_localize("UTC")
+            
+            if ex_date >= cutoff:
+                total_div += amount
+                logger.debug("[analyzer] dividend: Rs %.2f on %s", amount, ex_date_str)
+                
+        except Exception as e:
+            logger.debug("[analyzer] failed to parse dividend action: %s", e)
+            continue
+    
+    if total_div > 0:
+        yield_pct = (total_div / current_price) * 100
+        result = round(yield_pct, 2)
+        logger.debug("[analyzer] NSE dividend yield: %.2f%% (Rs %.2f / Rs %.2f)", 
+                    result, total_div, current_price)
+        return result
+    
+    return None
 
 
 def _compute_rsi(prices_series: pd.Series, period: int = 14) -> float | None:
@@ -742,20 +928,21 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
 
     try:
         import yfinance as yf
-        yf_ticker = yf.Ticker(ticker)
-        try:
-            info = yf_ticker.info or {}
-        except Exception as e:
-            # `.info` is one heavy call behind a rate limit, and it backs *every* tile
-            # in Key Statistics and Valuation. When it failed the whole block was
-            # skipped, so market cap, P/E, P/B, EPS, yield and beta all went blank
-            # together with nothing on screen to say why. `fast_info` is a different,
-            # much cheaper endpoint, so it usually survives when `.info` does not -
-            # enough to keep price, market cap and the 52-week range populated.
-            logger.warning("[analyzer] .info failed for %s, falling back: %s", ticker, e)
-            info = {}
+        
+        # Use .NS to .BO cascade for info
+        info, effective_ticker = _fetch_yf_info(ticker)
+        if effective_ticker != ticker:
+            logger.info("[analyzer] %s cascaded to %s", ticker, effective_ticker)
+        
+        # Use the effective ticker for the yf.Ticker object
+        yf_ticker = yf.Ticker(effective_ticker)
+        
+        # If _fetch_yf_info returned empty, try fast_info fallback
+        if not info or len(info) <= 10:
+            logger.warning("[analyzer] .info failed for %s, falling back to fast_info", effective_ticker)
             try:
                 fi = yf_ticker.fast_info
+                info = {}
                 for src, dst in (
                     ("last_price", "currentPrice"),
                     ("market_cap", "marketCap"),
@@ -982,7 +1169,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
     try:
         import yfinance as yf
         hist = yf.download(
-            ticker, period="5y", interval="1d",
+            effective_ticker, period="5y", interval="1d",
             auto_adjust=True, progress=False, timeout=_YF_TIMEOUT,
         )
         if not hist.empty:
@@ -1128,8 +1315,21 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
 
     fin_currency = _f("financialCurrency") or "INR"
     stmt_fx = _fx_to_inr(fin_currency)
-
-    return {
+    
+    # Compute math-based beta (primary) with Yahoo beta as fallback
+    math_beta = _compute_beta(hist, clean)
+    yahoo_beta = _f("beta")
+    effective_beta = math_beta or yahoo_beta
+    
+    # Compute NSE dividend yield (primary) with Yahoo yield as fallback
+    nse_yield = _nse_dividend_yield(actions, effective_price)
+    yahoo_yield = _dividend_yield_pct(info)
+    effective_dividend_yield = nse_yield or yahoo_yield
+    
+    # Fetch BSE VWAP
+    bse_vwap = bse_client.get_vwap(clean)
+    
+    result = {
         # Provenance, so the UI can stop asserting "NSE Live Terminal" over data that
         # did not come from NSE. quote-equity returns 403 by exchange policy, so
         # `nse_quote` is normally None and everything below is Yahoo-sourced.
@@ -1166,7 +1366,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         # RELIANCE, whose yield is 0.46%. The *100 here rendered it as 46%. Guarded
         # rather than merely un-multiplied, because Yahoo has flipped these units
         # before - dividendRate/price is the cross-check when both are present.
-        "dividend_yield": _dividend_yield_pct(info),
+        "dividend_yield": effective_dividend_yield,
         "roe": round(_f("returnOnEquity", 0) * 100, 2) if _f("returnOnEquity") else None,
         "profit_margins": round(_f("profitMargins", 0) * 100, 2) if _f("profitMargins") else None,
         "operating_margins": round(_f("operatingMargins", 0) * 100, 2) if _f("operatingMargins") else None,
@@ -1177,11 +1377,11 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         ),
         "week52_high": week52_high,
         "week52_low": week52_low,
-        "vwap": vwap,
+        "vwap": bse_vwap or vwap,  # BSE VWAP (primary) or NSE VWAP (fallback)
         "delivery_pct": delivery_pct,
         "avg_volume": _f("averageVolume"),
         "volume": _f("volume"),
-        "beta": _f("beta"),
+        "beta": effective_beta,
         "year_return": year_return,
         "technicals": technicals,
         "peers": peers,
@@ -1211,6 +1411,8 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
         },
         "timeframes": timeframe_charts,
     }
+    
+    return result
 
 
 # The background sweep rebuilds warm symbols on the janitor thread. Registered at

@@ -155,12 +155,9 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
         else:
             logger.info(f"[TER] Could not resolve ISIN={isin} to a scheme code for '{fn[:30]}'.")
 
-    er_is_estimate = er is None
+    # Leave ER blank when AMFI TER is unavailable — no synthetic estimate.
     if er is None:
-        from shared.services.fallbacks.deterministic import DeterministicFallback
-        fb = DeterministicFallback().generate_fallbacks(isin, cat, fn, {})
-        er = fb.get("expense_ratio", 0.50)
-        logger.info(f"[TER] Deterministic fallback={er:.2f}% used for '{fn[:30]}' ({cat}).")
+        logger.info(f"[TER] No AMFI TER for '{fn[:30]}'; leaving blank.")
     
     is_debt = any(kw in cat.lower() for kw in ["debt", "bond", "liquid", "gilt", "psu", "money", "banking", "credit"])
     pe_ratio = None if is_debt else PE_ESTIMATES.get(cap_type, PE_ESTIMATES.get(cat, PE_ESTIMATES["Default"]))
@@ -242,7 +239,9 @@ def _compute_fund_performance(row, df_t, risk_free_rate=6.5):
         "info_ratio": risk["info_ratio"], "tracking_error": risk["tracking_error"],
         "up_capture": risk["up_capture"], "down_capture": risk["down_capture"],
         "calmar": risk["calmar"], "treynor": risk["treynor"],
-        "er": round(er, 2), "er_label": classify_er(er, cat), "er_display": f"{er:.2f}% {'(est.)' if er_is_estimate else ''}",
+        "er": round(er, 2) if er is not None else None,
+        "er_label": classify_er(er, cat) if er is not None else None,
+        "er_display": f"{er:.2f}%" if er is not None else None,
         "roll_labels": roll_labels, "fund_rolls": [trailing.get(p) for p in roll_labels],
         "bench_rolls": [bench_trailing.get(p) for p in roll_labels],
         "consistency": round(consistency, 1), "pe_ratio": pe_ratio, "pb_ratio": pb_ratio, "is_debt": is_debt,

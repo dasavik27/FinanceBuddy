@@ -65,18 +65,21 @@ def test_fetch_live_portfolio_tier1_cascade(db_schema):
     assert len(result["sectors"]) >= 5
 
 
-def test_fetch_live_portfolio_unseeded_fallback_heuristics():
-    """Verify fetch_live_portfolio falls back to deterministic heuristics for unseeded funds."""
+def test_fetch_live_portfolio_unseeded_stays_blank():
+    """Verify unseeded funds stay blank — no deterministic heuristic fill-in."""
     result = fetch_live_portfolio(
         isin="UNKNOWN_ISIN_999",
         category="Small Cap Fund",
         fund_name="Random Unindexed Fund",
         refresh=True,
     )
-    assert result["aum_fallback"] is True
-    assert result["risk_fallback"] is True
-    assert result["risk"] is not None
-    assert result["aum"] is not None
+    assert result["aum_fallback"] is False
+    assert result["risk_fallback"] is False
+    assert result["risk"] is None
+    assert result["aum"] is None
+    assert result["expense_ratio"] is None
+    assert result["sectors"] == []
+    assert result["holdings"] == []
 
 
 @requires_db

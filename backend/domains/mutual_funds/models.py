@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from domains.mutual_funds.finance import compute_xirr, compute_benchmark_xirr, compute_period_comparison, is_absolute_return
 from shared.services.market_indices import fetch_benchmark_series
-from shared.config import BENCHMARKS, PERIOD_MAP, get_standard_category, EXP_RATIO_BANDS, TAX_RATES
+from shared.config import BENCHMARKS, PERIOD_MAP, get_standard_category, TAX_RATES
 
 class Portfolio:
     def __init__(self, df_h: pd.DataFrame, df_t: pd.DataFrame, df_s: pd.DataFrame, is_partial: bool = False):
@@ -70,15 +70,7 @@ class Portfolio:
                 ter = fetch_fund_ter(code, row.get("Plan", "Direct")) if code else None
                 if ter is not None and ter > 0:
                     row["TER"] = round(ter, 2)
-                else:
-                    from shared.services.fallbacks.deterministic import DeterministicFallback
-                    fb = DeterministicFallback().generate_fallbacks(
-                        isin=isin or "", 
-                        category=row.get("Category", ""), 
-                        fund_name=row.get("Fund", ""), 
-                        current_result={}
-                    )
-                    row["TER"] = fb.get("expense_ratio", 0.0)
+                # else leave TER blank — no synthetic / category estimate
                         
             return row
 
@@ -153,10 +145,9 @@ class Portfolio:
             val = row.get("Market Value", 0)
             ter = row.get("TER", 0.0)
 
-            if pd.isna(ter) or ter == 0:
-                cat = row.get("Category", "Equity")
-                lo, hi = EXP_RATIO_BANDS.get(cat, (0.50, 1.00))
-                ter = lo if "direct" in str(row.get("Plan", "")).lower() else lo + 0.80
+            # Skip holdings with no real TER — do not invent category-band estimates.
+            if pd.isna(ter) or not ter:
+                continue
 
             total_expense += val * (ter / 100.0)
 
