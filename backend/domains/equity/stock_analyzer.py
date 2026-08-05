@@ -148,7 +148,8 @@ def search_stocks(query: str, limit: int = 15) -> list[dict]:
 #: rebuild, and better than the zeros the old path returned when upstream was down.
 _ANALYSIS_STALE_TTL = 24 * 3600
 
-_ANALYSIS_KEY = "equity_analysis_v2:{}"
+# v3: includes per-field `sources` and Yahoo labels with .NS / .BO suffix.
+_ANALYSIS_KEY = "equity_analysis_v3:{}"
 
 
 def analyze_stock(symbol: str) -> dict[str, Any]:
