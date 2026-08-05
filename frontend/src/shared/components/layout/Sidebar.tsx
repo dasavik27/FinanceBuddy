@@ -46,7 +46,12 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
   const navigate = useNavigate()
   const location = useLocation()
   const clearSession = useAppStore((s) => s.clearSession)
+  const logout = useAppStore((s) => s.logout)
   const activeModule = useAppStore((s) => s.activeModule)
+
+  const handleSignOut = () => {
+    void logout().then(() => navigate('/'))
+  }
 
   // Keyboard shortcut: Cmd+B (Mac) or Ctrl+B (Windows/Linux) to toggle sidebar
   useEffect(() => {
@@ -124,6 +129,11 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
 
 function SidebarContent({ location, navigate, isPartial, clearSession, activeModule, onClose, collapsed, onToggle, onExpand }: any) {
   const pan = useAppStore((s) => s.pan)
+  const logout = useAppStore((s) => s.logout)
+
+  const handleSignOut = () => {
+    void logout().then(() => navigate('/'))
+  }
 
   return (
     <Box sx={{ 
@@ -345,7 +355,7 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography sx={{ fontSize: 10, fontWeight: 800, color: '#94a3b8', letterSpacing: '0.1em' }}>ACCOUNT STATUS</Typography>
             <Tooltip title="Sign Out" arrow>
-              <IconButton size="small" onClick={() => clearSession(activeModule)} sx={{ color: '#FF516A', p: 0.5, '&:hover': { bgcolor: alpha('#FF516A', 0.12) } }}>
+              <IconButton size="small" onClick={handleSignOut} sx={{ color: '#FF516A', p: 0.5, '&:hover': { bgcolor: alpha('#FF516A', 0.12) } }}>
                 <LogoutIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
@@ -358,7 +368,7 @@ function SidebarContent({ location, navigate, isPartial, clearSession, activeMod
       ) : (
         <Tooltip title={`Account: ${pan || 'Guest'} (Click to sign out)`} placement="right" arrow>
           <IconButton 
-            onClick={() => clearSession(activeModule)} 
+            onClick={handleSignOut} 
             sx={{ 
               color: '#FF516A', 
               width: 42,

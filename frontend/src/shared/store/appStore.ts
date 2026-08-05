@@ -1,5 +1,6 @@
 import api from '../api/client'
 import authClient from '../auth/authClient'
+import { clearAuthLandingCache } from '../auth/authNotice'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 /**
@@ -215,6 +216,7 @@ export const useAppStore = create<AppState>()(
           // session and anything else on the origin.
           localStorage.removeItem('finance-buddy-storage')
           sessionStorage.clear()
+          clearAuthLandingCache()
         } catch (e) {
           console.error(e)
         }

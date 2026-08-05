@@ -136,25 +136,11 @@ export default function Landing() {
       const notice = readAuthNotice()
       const oauthFailed = Boolean(consumeOAuthErrorFromUrl())
 
-      if (notice) {
-        if (cancelled) return
-        if (notice.email && notice.access_request_status === 'none') {
-          try {
-            const refreshed = await lookupAccessNoticeForEmails([
-              notice.email,
-              storedEmail,
-            ])
-            if (refreshed.access_request_status !== 'none') {
-              showStatusBanner(refreshed.access_request_status)
-              setLoading(false)
-              return
-            }
-          } catch {
-            // Fall back to stored notice below.
-          }
+      if (notice && (notice.access_request_status === 'pending' || notice.access_request_status === 'approved')) {
+        if (!cancelled) {
+          showStatusBanner(notice.access_request_status)
+          setLoading(false)
         }
-        showStatusBanner(notice.access_request_status)
-        setLoading(false)
         return
       }
 

@@ -291,9 +291,9 @@ flowchart TD
 
 ---
 
-## 7. Mutual Funds
+## 7. Mutual Funds & AMFI Integration Engine
 
-CAS-based portfolio analytics with live NAV enrichment and factsheet insights.
+CAS-based portfolio analytics with live NAV enrichment, institutional AMFI factsheet disclosures, and real-time fund analytics.
 
 ```mermaid
 flowchart TD
@@ -304,73 +304,125 @@ flowchart TD
   E --> F[finance.py XIRR risk]
   F --> G[MF Dashboard tabs]
   H[AMFI sync admin] --> I[(mf_portfolio_snapshots)]
-  I --> J[fund-insights Tier1]
-  K[Yahoo] --> J
+  I --> J[fund-insights Tier 1]
+  K[Yahoo Finance] --> J
 ```
 
 ### Pipeline
 
-1. **Upload** — `POST /mutual-funds/portfolio/parse` (CAS + password)
-2. **Parse** — holdings, full txn ledger, SIPs; PDF deleted
-3. **Enrich** — AMFI live NAVs/TER; categories; fund insights
-4. **Persist** — compressed encrypted blob in `session_payloads`
-5. **Analyze** — XIRR, allocation, peers, rebalance, tax-harvest, journey
-6. **UI** — URL tabs under `/mutual-funds/*`
+1. **Upload** — `POST /mutual-funds/portfolio/parse` (CAS PDF + password).
+2. **Parse** — holdings, full transaction ledger, SIPs; temp files unlinked immediately.
+3. **Enrich** — Live AMFI NAVs/TER, multi-tier factsheets, and sector weights.
+4. **Persist** — Compressed, AES-256-GCM encrypted blob in `session_payloads`.
+5. **Analyze** — XIRR, allocation, peer compare, rebalance, tax-harvest, SIP journey.
+6. **UI** — Reactive URL tabs under `/mutual-funds/*`.
 
-### Key modules
+### AMFI Database Architecture & Schemas
+
+FinanceBuddy uses normalized PostgreSQL tables and optimized B-Tree indexes for official AMFI disclosures, fact sheets, and sync logs:
+
+| Table Name | Purpose | Key Indices |
+|---|---|---|
+| `mf_portfolio_snapshots` | Deep fund portfolios, top 10 asset allocations, sector weights, AUM, exit loads, and risk profiles | `isin` (PK), `scheme_code`, `scheme_name`, `category` |
+| `mf_sync_logs` | Audit trail of manual / automated AMFI catalog ingestion jobs | `id` (PK), `created_at DESC` |
+| `session_payloads` | Compressed AES-256-GCM encrypted CAS portfolio payloads | `session_id` (PK), `user_id` |
+
+#### `mf_portfolio_snapshots` Schema:
+```sql
+CREATE TABLE IF NOT EXISTS mf_portfolio_snapshots (
+    isin              text PRIMARY KEY,
+    scheme_code       text,
+    scheme_name       text NOT NULL,
+    amc               text NOT NULL DEFAULT '',
+    category          text NOT NULL DEFAULT '',
+    cap_type          text NOT NULL DEFAULT '',
+    aum_cr            numeric(14, 2),
+    expense_ratio     numeric(5, 2),
+    risk_level        text NOT NULL DEFAULT 'VERY HIGH',
+    exit_load         text NOT NULL DEFAULT 'See Factsheet',
+    portfolio_date    date NOT NULL DEFAULT '2026-07-31',
+    sectors           jsonb NOT NULL DEFAULT '[]'::jsonb,
+    holdings          jsonb NOT NULL DEFAULT '[]'::jsonb,
+    source            text NOT NULL DEFAULT 'AMFI Official Disclosure',
+    updated_at        timestamptz NOT NULL DEFAULT now()
+);
+```
+
+### Multi-Tier Insights Discovery Cascade
+
+| Tier | Source | Behavior |
+|---|---|---|
+| **Tier 1** | `mf_portfolio_snapshots` & AMFI TER tables | Official regulatory disclosures & daily published TER sheets |
+| **Tier 2** | Yahoo Finance (`.NS` / `.BO`) | Real-time live quote & expense fallback |
+| **Fallback** | `"N/A"` | Missing data points render clean `N/A` (zero synthetic or heuristic guessing) |
+
+### On-Demand Lazy Fetch & Interactive Card Live Updates
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Investor
+    participant UI as HoldingsTab (Card)
+    participant Drawer as FundDetailDrawer
+    participant Hook as useFundInsights (React Query)
+    participant API as /fund-insights/{isin}
+    participant DB as AMFI Database / Yahoo
+
+    User->>UI: Clicks Fund Card (TER: N/A)
+    UI->>Drawer: Opens Drawer with selectedFund
+    Drawer->>Hook: Triggers useFundInsights(isin, fundName)
+    Hook->>API: GET /fund-insights/{isin}?refresh=false
+    API->>DB: Query mf_portfolio_snapshots / Yahoo
+    DB-->>API: Returns verified TER & Factsheet
+    API-->>Hook: 200 OK with insights data
+    Hook-->>Drawer: Receives insights.expense_ratio
+    Drawer->>UI: queryClient.setQueriesData(['holdings', sid]) updates cache
+    UI-->>User: Card immediately updates from "N/A" to verified "0.62%"
+```
+
+#### Key Technical Mechanisms:
+1. **Backend Cache Mutation:** When `/fund-insights/{isin}` resolves the TER, it mutates the session's active pandas DataFrame in-memory (`portfolio.df_h`), ensuring consecutive endpoint requests retain the value.
+2. **Frontend Optimistic React Query Update:** `FundDetailDrawer` uses `queryClient` to update the holdings cache in-place without triggering a page reload.
+
+### Universal "N/A" Display Standard
+
+Across all mutual fund views (`HoldingsTab`, `FundDetailDrawer`, `PerformanceTab`, `CompareTab`, `OverviewTab`), all missing, empty, or uncomputable data points adhere strictly to `"N/A"`:
+- No generic em-dashes (`—`) are used.
+- Missing **Day Change**, **Expense Ratio (TER)**, **PE/PB**, **Sharpe / Sortino**, **Drawdown**, and **Risk Profiles** cleanly render `N/A`.
+- If an exact single-day change or NAV date is absent, the UI displays `N/A` in muted neutral styling (`#94A3B8`).
+
+### Key Modules
 
 | Path | Role |
 |---|---|
-| `domains/mutual_funds/parser.py` | CAMS/KFintech CAS |
-| `domains/mutual_funds/sessions.py` | LRU resident + rehydrate |
-| `domains/mutual_funds/models.py` | `Portfolio` |
-| `domains/mutual_funds/finance.py` | XIRR, simulation, drawdown, SIP |
-| `domains/mutual_funds/tax_lots.py` | FIFO lots / harvest |
-| `domains/mutual_funds/portfolio_discovery.py` | Factsheet cascade |
-| `shared/services/market_data.py` | AMFI NAV/TER, mfapi history |
-| `shared/services/amfi_ingest.py` | Admin catalogue sync |
+| `domains/mutual_funds/parser.py` | CAMS / KFintech CAS parser |
+| `domains/mutual_funds/sessions.py` | LRU resident session lifecycle + rehydration |
+| `domains/mutual_funds/models.py` | `Portfolio` object representation |
+| `domains/mutual_funds/finance.py` | XIRR, drawdown, SIP simulation engine |
+| `domains/mutual_funds/tax_lots.py` | FIFO capital gains tax lots & harvesting |
+| `domains/mutual_funds/portfolio_discovery.py` | Multi-tier factsheet discovery cascade |
+| `shared/services/providers/amfi_db.py` | Tier 1 AMFI PostgreSQL database provider |
+| `shared/services/market_data.py` | Unified AMFI daily NAV / TER parser & `mfapi.in` client |
+| `shared/services/amfi_ingest.py` | AMC catalog sync, batch ingestion & telemetry |
 
-### Insights cascade
-
-| Tier | Source |
-|---|---|
-| 1 | `mf_portfolio_snapshots` (AMFI admin sync / seed) |
-| 2 | Yahoo Finance |
-| — | Blank (no synthetic heuristics) |
-
-### API surface (selected)
+### API Surface
 
 | Prefix | Purpose |
 |---|---|
-| `/mutual-funds/portfolio` | Parse, sync |
-| `/mutual-funds/overview` | Summary, allocation, benchmark overlay |
-| `/mutual-funds/holdings` | Holdings, txns, fund-insights |
-| `/mutual-funds/performance` | Trailing/rolling/drawdown/SIP |
-| `/mutual-funds/compare` | Peer search & metrics |
-| `/mutual-funds/insights` `/rebalance` `/journey` `/planning` | Insights suite |
-| `/admin/mf-sync` | Catalogue sync / purge / explorer |
-| `/market` | Live NAV / config |
+| `/mutual-funds/portfolio` | Parse CAS, sync, upload status |
+| `/mutual-funds/overview` | Summary metrics, allocation, benchmark overlay |
+| `/mutual-funds/holdings` | Holdings list, txns, `/fund-insights/{isin}` |
+| `/mutual-funds/performance` | Trailing, rolling, drawdown, SIP returns |
+| `/mutual-funds/compare` | Peer search & head-to-head metrics |
+| `/mutual-funds/insights` `/rebalance` `/journey` `/planning` | Portfolio insights, rebalance optimizer, SIP journey |
+| `/admin/mf-sync` | MF Scheme Directory sync, purge, scheme explorer |
+| `/market` | Live NAV lookup & config |
 
 ### Storage
 
-- Resident LRU: **3** sessions, ~4h idle TTL; janitor + `session_stores`.
-- Postgres: `sessions` + encrypted `session_payloads`.
-- Admin: `mf_portfolio_snapshots`, `mf_sync_logs` (migration 0010).
-
-### AMFI admin pipeline (brief)
-
-`NAVAll.txt` → parse/ISIN dedup → AMC filter → upsert snapshots → Admin Explorer.
-Known limits: snapshot AUM is placeholder; sectors/holdings are category templates
-until real PDF disclosures are wired.
-
-### Frontend
-
-`MutualFundsDashboard` · Overview / Holdings / Performance / Compare / Journey /
-Insights · `MFUploadPanel` · `hooks/useData.ts`.
-
-### External sources
-
-AMFI · mfapi.in · Yahoo (tier-2 factsheets).
+- **Resident LRU:** 3 sessions, ~4h idle TTL; swept by lifespan janitor & `session_stores`.
+- **PostgreSQL:** `sessions` + AES-256-GCM encrypted `session_payloads`.
+- **AMFI Directory:** `mf_portfolio_snapshots`, `mf_sync_logs` (Migration 0010).
 
 ---
 
@@ -540,8 +592,7 @@ Gains · ITR Compare · History · `TaxUploadPanel` · `hooks/useTaxExpert.ts`.
 | Auth | Supabase Auth | Sign-in (Google / email-password) |
 | App account | `users` + `identities` + `profiles` | Authorization, PAN, ownership |
 
-Provisioning allowlist: `FINANCEBUDDY_ADMIN_EMAILS`, approved/pending
-`access_requests`. Bootstrap admins → `active` + `admin` on first provision.
+Provisioning allowlist: `FINANCEBUDDY_ADMIN_EMAILS`, approved/pending `access_requests`. Bootstrap admins → `active` + `admin` on first provision.
 
 | `status` | Effect |
 |---|---|
@@ -549,6 +600,12 @@ Provisioning allowlist: `FINANCEBUDDY_ADMIN_EMAILS`, approved/pending
 | `active` | Full API (frontend may still require PAN) |
 
 Admin UI: `/admin` · API admin routes under `/auth/*` (see API.md).
+
+#### Auth Performance & Session Lifecycle Optimizations:
+- **0-DB Roundtrip `/auth/me`:** In-memory `Caller` context preserves `email` and `display_name` from identity middleware resolution, bypassing duplicate database queries on routine identity checks.
+- **Frontend Token Soft-Caching:** `authClient.ts` soft-caches valid JWTs until ~60s before expiration, preventing duplicate Supabase network round-trips across high-frequency API calls.
+- **Self-Healing Multi-Host DB Portability:** When connected to a fresh PostgreSQL instance (e.g., Render DB), the app automatically runs schema migrations (`migrations/migrate.py`) and dynamically auto-provisions verified OIDC identities upon first sign-in.
+- **Clean Session Teardown:** Full logout wipes client-side storage (`localStorage`, `sessionStorage`, and React Query memory cache), ensuring no stale access notices or unauthorized banners pollute the landing interface.
 
 ### Security & privacy
 

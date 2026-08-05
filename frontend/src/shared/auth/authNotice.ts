@@ -15,14 +15,20 @@ export function readAuthNotice(): AuthNotice | null {
   sessionStorage.removeItem(AUTH_NOTICE_KEY)
   try {
     const parsed = JSON.parse(raw) as AuthNotice
-    if (parsed?.message) return parsed
+    if (parsed?.access_request_status && parsed.access_request_status !== 'none') {
+      return parsed
+    }
   } catch {
-    return { message: raw, access_request_status: 'none' }
+    return null
   }
   return null
 }
 
 export function writeAuthNotice(notice: AuthNotice): void {
+  if (notice.access_request_status === 'none') {
+    sessionStorage.removeItem(AUTH_NOTICE_KEY)
+    return
+  }
   sessionStorage.setItem(AUTH_NOTICE_KEY, JSON.stringify(notice))
 }
 
@@ -42,7 +48,12 @@ export function clearAccessRequestEmail(): void {
   sessionStorage.removeItem(ACCESS_REQUEST_EMAIL_KEY)
 }
 
+export function clearAuthNotice(): void {
+  sessionStorage.removeItem(AUTH_NOTICE_KEY)
+}
+
 export function clearAuthLandingCache(): void {
   clearOAuthErrorCache()
   clearAccessRequestEmail()
+  clearAuthNotice()
 }
