@@ -1,13 +1,14 @@
 """
 shared/services/providers/amfi_db.py
-Tier 1 Metadata Provider: PostgreSQL-backed AMFI Official Portfolio Snapshots.
-Provides sub-millisecond lookups for institutional Indian mutual fund disclosures.
+Tier 1 Metadata Provider: PostgreSQL-backed AMFI portfolio snapshots.
+
+Rows may be curated seed data or sync-time category benchmarks (AUM/sectors/holdings
+are not always live per-fund AMFI PDF disclosures — see AMFI_PIPELINE.md §9).
 """
 
 import json
 import logging
-from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict
 
 from shared import db
 from shared.services.providers.base import BaseMetadataProvider
@@ -18,12 +19,12 @@ logger = logging.getLogger(__name__)
 class AMFIDatabaseProvider(BaseMetadataProvider):
     """
     Tier 1 Provider: Reads from PostgreSQL `mf_portfolio_snapshots` table.
-    Delivers 100% accurate official AMC holdings, sector weightings, AUM, and Riskometer.
+    Serves cached scheme metadata for Indian mutual funds (seed and/or sync ingest).
     """
 
     def fetch_insights(self, isin: str, fund_name: str = "", category: str = "") -> Dict:
         """
-        Query PostgreSQL database for official AMFI portfolio snapshot by ISIN or scheme name.
+        Query PostgreSQL for a portfolio snapshot by ISIN or scheme name.
         """
         clean_isin = (isin or "").strip().upper()
         clean_name = (fund_name or "").strip()
@@ -93,19 +94,22 @@ class AMFIDatabaseProvider(BaseMetadataProvider):
                         aum_str = f"₹{aum_val:,.0f} Cr" if aum_val >= 1 else f"₹{aum_val:.2f} Cr"
 
                     er_float = float(expense_ratio) if expense_ratio is not None else None
+                    resolved_source = source or "AMFI Official Disclosure"
+                    # Sync ingest stores category-benchmark proxies, not live PDF allocations
+                    is_proxy = "benchmark" in resolved_source.lower() or "prox" in resolved_source.lower()
 
                     return {
-                        "source": source or "AMFI Official Disclosure",
+                        "source": resolved_source,
                         "sectors": sectors,
                         "holdings": holdings,
                         "risk": (risk_level or "VERY HIGH").upper(),
                         "exit_load": exit_load or "See Factsheet",
                         "expense_ratio": er_float,
                         "aum": aum_str,
-                        "aum_fallback": False,
-                        "risk_fallback": False,
-                        "exit_load_fallback": False,
-                        "expense_ratio_fallback": False,
+                        "aum_fallback": is_proxy,
+                        "risk_fallback": is_proxy,
+                        "exit_load_fallback": is_proxy,
+                        "expense_ratio_fallback": is_proxy,
                     }
 
         except Exception as exc:

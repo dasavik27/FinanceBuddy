@@ -67,7 +67,9 @@ idx_mf_snapshots_name      ON scheme_name
 idx_mf_snapshots_category  ON category
 ```
 
-**Upsert key:** `isin` (primary key) — re-syncing updates rows in-place, never duplicates.
+**Upsert key:** `isin` (primary key) — re-syncing updates all factsheet columns in-place
+(`scheme_*`, `amc`, `category`, `cap_type`, `aum_cr`, `expense_ratio`, `risk_level`,
+`exit_load`, `portfolio_date`, `sectors`, `holdings`, `source`), never duplicates.
 
 ---
 
@@ -129,8 +131,9 @@ TOP_10_AMCS = ["HDFC", "SBI", "ICICI Prudential", "Nippon India", "Kotak",
 - `holdings` — representative top 10 stock list
 - `er_direct` / `er_regular` — typical expense ratios
 
-Categories covered: `Large Cap`, `Mid Cap`, `Small Cap`, `Flexi Cap`,
-`Large & Mid Cap`, `ELSS`, `Debt Fund`, `Liquid Fund`, `Index Fund`.
+Categories covered: `Large Cap Fund`, `Large & Mid Cap Fund`, `Mid Cap Fund`,
+`Small Cap Fund`, `Flexi Cap Fund`, `Multi Cap Fund`, `ELSS / Tax Saver`,
+`Balanced Advantage / Hybrid`, `Debt / Liquid Fund`, `Index Fund`.
 
 ### 3.2 Public Functions
 
@@ -313,5 +316,8 @@ trigger_amfi_sync(amcs=["groww"])
 | **AUM is simulated** | The AMFI NAV feed does not publish AUM. Values are derived from a deterministic ISIN hash to produce stable, realistic-looking numbers for UI purposes. |
 | **Sectors & Holdings are category templates** | Real per-fund allocations require AMFI's monthly portfolio PDFs. The engine uses SEBI category-level benchmarks as representative proxies. |
 | **~14,067 schemes in feed** | All open-ended, closed-ended, and interval schemes are in the feed. After ISIN deduplication, ~10,000–12,000 unique rows are produced. |
-| **"grow" alias** | Typing or selecting `"grow"` automatically resolves to `"Groww Mutual Fund"` to prevent matching every fund ending in `"Growth Option"`. |
+| **"grow" alias** | Typing or selecting `"grow"` automatically resolves to `"groww"` for search, purge, and sync filters to prevent matching every fund ending in `"Growth Option"`. |
+| **PPFAS / Parag Parikh alias** | Explorer filter and purge treat `"Parag Parikh"` and `"PPFAS"` as equivalents (stored AMC is usually `PPFAS Mutual Fund`). |
 | **AMC + Category filter is AND** | Both filters apply together — results must match the selected AMC **and** the selected category. |
+| **Failed feed → failed sync** | If NAVAll.txt cannot be fetched or parses to 0 schemes, sync status is `failed` (not a silent `completed` with 0 rows). |
+| **Upsert refreshes factsheet fields** | Re-sync updates AUM, ER, risk, sectors, holdings, portfolio date, and source in place — not only identity columns. |

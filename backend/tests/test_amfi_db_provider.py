@@ -90,8 +90,15 @@ def test_amfi_sync_and_search(db_schema):
     assert search_res["total"] >= 1
     assert any("Parag Parikh" in s["scheme_name"] for s in search_res["schemes"])
 
-    # Test selective sync with top5 preset
+    # Parag Parikh UI label must resolve seeded PPFAS rows
+    parag_res = search_synced_schemes(query="", amc="Parag Parikh", limit=10, offset=0)
+    assert parag_res["total"] >= 1
+    assert any("PPFAS" in s["amc"] or "Parag" in s["scheme_name"] for s in parag_res["schemes"])
+
+    # Test selective sync with top5 preset (requires live AMFI feed)
     sync_res = trigger_amfi_sync(admin_email="admin@financebuddy.app", preset="top5")
+    if sync_res["status"] == "failed" and "AMFI" in (sync_res.get("error") or ""):
+        pytest.skip(f"AMFI feed unavailable: {sync_res.get('error')}")
     assert sync_res["status"] == "completed"
     assert sync_res["schemes_updated"] >= 1
     assert sync_res["duration_seconds"] >= 0.0
@@ -103,6 +110,10 @@ def test_amfi_sync_and_search(db_schema):
     # Test purge by AMC
     purge_res = purge_snapshots(amc="Quant", purge_all=False, admin_email="admin@financebuddy.app")
     assert purge_res["status"] == "success"
+
+    # Alias purge: Parag Parikh must remove PPFAS rows
+    purge_parag = purge_snapshots(amc="Parag Parikh", purge_all=False, admin_email="admin@financebuddy.app")
+    assert purge_parag["status"] == "success"
 
     # Test purge all
     purge_all_res = purge_snapshots(purge_all=True, admin_email="admin@financebuddy.app")

@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, type FormEvent } from 'react'
+import { useState, useEffect, useMemo, useRef, type FormEvent } from 'react'
 import {
   Box, Typography, Paper, Grid, TextField, InputAdornment, Button,
   Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions,
   CircularProgress, Alert, Snackbar, Tabs, Tab, LinearProgress,
-  FormControl, Select, MenuItem, Checkbox, FormControlLabel, Radio, RadioGroup
+  FormControl, Select, MenuItem, Collapse,
 } from '@mui/material'
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings'
 import SearchIcon from '@mui/icons-material/Search'
@@ -21,18 +21,61 @@ import PersonAddAlt1Icon from '@mui/icons-material/PersonAddAlt1'
 import StorageIcon from '@mui/icons-material/Storage'
 import SyncIcon from '@mui/icons-material/Sync'
 import VisibilityIcon from '@mui/icons-material/Visibility'
-import SpeedIcon from '@mui/icons-material/Speed'
-import PieChartOutlineIcon from '@mui/icons-material/PieChartOutline'
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline'
 import BoltIcon from '@mui/icons-material/Bolt'
 import FilterListIcon from '@mui/icons-material/FilterList'
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import TuneIcon from '@mui/icons-material/Tune'
-import LayersClearIcon from '@mui/icons-material/LayersClear'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
+import HistoryIcon from '@mui/icons-material/History'
 import { apiClient } from '../../api/client'
 import { useAppStore } from '../../store/appStore'
+
+const BUILTIN_AMCS = [
+  'HDFC', 'SBI', 'ICICI Prudential', 'Nippon India', 'Kotak',
+  'Axis', 'Quant', 'Parag Parikh', 'Mirae Asset', 'Tata',
+  'Groww', 'Zerodha', 'DSP', 'Bandhan', 'Canara Robeco', 'UTI',
+  'Motilal Oswal', 'Franklin Templeton', 'Aditya Birla Sun Life', 'Edelweiss', 'HSBC', 'Invesco',
+] as const
+
+const SCOPE_OPTIONS = [
+  {
+    id: 'top5' as const,
+    title: 'Top 5 AMCs',
+    subtitle: 'HDFC · SBI · ICICI Prudential · Nippon India · Kotak',
+    estimate: '~1,500 schemes',
+    badge: 'Light',
+    badgeColor: '#38BDF8',
+  },
+  {
+    id: 'top10' as const,
+    title: 'Top 10 AMCs',
+    subtitle: 'Top 5 plus Axis, Quant, Parag Parikh, Mirae Asset, Tata',
+    estimate: '~2,500 schemes',
+    badge: 'Recommended',
+    badgeColor: '#10B981',
+  },
+  {
+    id: 'custom' as const,
+    title: 'Choose AMCs',
+    subtitle: 'Select exactly which fund houses to ingest',
+    estimate: 'You decide',
+    badge: 'Flexible',
+    badgeColor: '#F59E0B',
+  },
+  {
+    id: 'all' as const,
+    title: 'Full catalogue',
+    subtitle: 'Every open/closed/interval scheme in the AMFI feed',
+    estimate: '~10–14k schemes',
+    badge: 'Heavy',
+    badgeColor: '#F43F5E',
+  },
+]
+
+const MF_CATEGORIES = ['All', 'Large Cap', 'Large & Mid Cap', 'Flexi Cap', 'Small Cap', 'Mid Cap', 'Multi Cap', 'ELSS', 'Hybrid', 'Index', 'Debt'] as const
+const MF_AMC_FILTERS = ['All', 'Groww', 'SBI', 'HDFC', 'ICICI Prudential', 'Nippon India', 'Kotak', 'Axis', 'Quant', 'Parag Parikh', 'Mirae Asset', 'Tata', 'Zerodha', 'DSP'] as const
 
 interface AccessRequest {
   id: string
@@ -152,11 +195,15 @@ export default function AdminConsole() {
   const [mfStatusLoading, setMfStatusLoading] = useState(false)
   const [mfTriggering, setMfTriggering] = useState(false)
   const [mfSchemes, setMfSchemes] = useState<MfScheme[]>([])
+  const [mfSchemesTotal, setMfSchemesTotal] = useState(0)
   const [mfSchemesLoading, setMfSchemesLoading] = useState(false)
   const [mfSearchQuery, setMfSearchQuery] = useState('')
   const [mfAmcFilter, setMfAmcFilter] = useState<string>('All')
   const [mfCategoryFilter, setMfCategoryFilter] = useState<string>('All')
   const [selectedScheme, setSelectedScheme] = useState<MfScheme | null>(null)
+  const [mfPanel, setMfPanel] = useState<'ingest' | 'explore'>('ingest')
+  const [auditExpanded, setAuditExpanded] = useState(false)
+  const mfSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Selective AMC Ingestion & Purge Controls
   const [syncScope, setSyncScope] = useState<'top10' | 'top5' | 'all' | 'custom'>('top10')
@@ -164,10 +211,21 @@ export default function AdminConsole() {
   const [newAmcInput, setNewAmcInput] = useState('')
   const [syncedAmcs, setSyncedAmcs] = useState<Array<{ amc: string; schemes_count: number; total_aum_cr: number }>>([])
   const [purgeDialogOpen, setPurgeDialogOpen] = useState(false)
-  const [purgeMode, setPurgeMode] = useState<'all' | 'amc'>('all')
+  const [purgeMode, setPurgeMode] = useState<'all' | 'amc'>('amc')
   const [purgeTargetAmc, setPurgeTargetAmc] = useState<string>('')
   const [purgeConfirmText, setPurgeConfirmText] = useState('')
   const [purgeLoading, setPurgeLoading] = useState(false)
+
+  const selectedScope = SCOPE_OPTIONS.find((s) => s.id === syncScope) || SCOPE_OPTIONS[1]
+  const syncActionLabel =
+    syncScope === 'all'
+      ? 'Sync full catalogue'
+      : syncScope === 'top10'
+        ? 'Sync Top 10 AMCs'
+        : syncScope === 'top5'
+          ? 'Sync Top 5 AMCs'
+          : `Sync ${customAmcs.length} selected AMC${customAmcs.length === 1 ? '' : 's'}`
+  const lastSync = mfStatus?.recent_logs?.[0] || null
 
   const [snackbarMsg, setSnackbarMsg] = useState<{ text: string; severity: 'success' | 'info' | 'error' } | null>(null)
 
@@ -208,17 +266,49 @@ export default function AdminConsole() {
     }
   }
 
-  const fetchMfData = async (query = mfSearchQuery) => {
+  const loadMfSchemes = async (
+    query = mfSearchQuery,
+    amc = mfAmcFilter,
+    category = mfCategoryFilter,
+    append = false,
+    offset = 0,
+  ) => {
+    setMfSchemesLoading(true)
+    try {
+      const schemesRes = await apiClient.searchMfSchemes(
+        query,
+        50,
+        offset,
+        amc !== 'All' ? amc : undefined,
+        category !== 'All' ? category : undefined,
+      )
+      setMfSchemes((prev) => (append ? [...prev, ...(schemesRes.schemes || [])] : schemesRes.schemes || []))
+      setMfSchemesTotal(schemesRes.total || 0)
+    } catch (err: any) {
+      console.error(err)
+    } finally {
+      setMfSchemesLoading(false)
+    }
+  }
+
+  const fetchMfData = async () => {
     setMfStatusLoading(true)
     setMfSchemesLoading(true)
     try {
       const [statusRes, schemesRes, amcsRes] = await Promise.all([
         apiClient.getMfSyncStatus(),
-        apiClient.searchMfSchemes(query, 50, 0),
+        apiClient.searchMfSchemes(
+          mfSearchQuery,
+          50,
+          0,
+          mfAmcFilter !== 'All' ? mfAmcFilter : undefined,
+          mfCategoryFilter !== 'All' ? mfCategoryFilter : undefined,
+        ),
         apiClient.getSyncedAmcs().catch(() => ({ amcs: [] })),
       ])
       setMfStatus(statusRes)
       setMfSchemes(schemesRes.schemes || [])
+      setMfSchemesTotal(schemesRes.total || 0)
       setSyncedAmcs(amcsRes.amcs || [])
       if (amcsRes.amcs && amcsRes.amcs.length > 0 && !purgeTargetAmc) {
         setPurgeTargetAmc(amcsRes.amcs[0].amc)
@@ -235,6 +325,10 @@ export default function AdminConsole() {
   }
 
   const handleTriggerMfSync = async () => {
+    if (syncScope === 'custom' && customAmcs.length === 0) {
+      setSnackbarMsg({ text: 'Select at least one AMC before syncing.', severity: 'error' })
+      return
+    }
     setMfTriggering(true)
     try {
       const payload = syncScope === 'custom'
@@ -246,6 +340,7 @@ export default function AdminConsole() {
         severity: 'success',
       })
       await fetchMfData()
+      setMfPanel('explore')
     } catch (err: any) {
       setSnackbarMsg({
         text: err?.response?.data?.detail || err?.message || 'Failed to trigger AMFI sync.',
@@ -254,6 +349,17 @@ export default function AdminConsole() {
     } finally {
       setMfTriggering(false)
     }
+  }
+
+  const addCustomAmc = () => {
+    const trimmed = newAmcInput.trim()
+    if (!trimmed) return
+    if (customAmcs.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
+      setNewAmcInput('')
+      return
+    }
+    setCustomAmcs((prev) => [...prev, trimmed])
+    setNewAmcInput('')
   }
 
   const handlePurge = async () => {
@@ -287,23 +393,12 @@ export default function AdminConsole() {
     }
   }
 
-  const handleSearchMf = async (q: string) => {
+  const handleSearchMf = (q: string) => {
     setMfSearchQuery(q)
-    setMfSchemesLoading(true)
-    try {
-      const schemesRes = await apiClient.searchMfSchemes(
-        q,
-        50,
-        0,
-        mfAmcFilter !== 'All' ? mfAmcFilter : undefined,
-        mfCategoryFilter !== 'All' ? mfCategoryFilter : undefined
-      )
-      setMfSchemes(schemesRes.schemes || [])
-    } catch (err: any) {
-      console.error(err)
-    } finally {
-      setMfSchemesLoading(false)
-    }
+    if (mfSearchTimer.current) clearTimeout(mfSearchTimer.current)
+    mfSearchTimer.current = setTimeout(() => {
+      loadMfSchemes(q, mfAmcFilter, mfCategoryFilter, false, 0)
+    }, 300)
   }
 
   const handleSelectFilter = async (filterType: 'amc' | 'category', value: string) => {
@@ -327,6 +422,7 @@ export default function AdminConsole() {
         nextAmc !== 'All' ? nextAmc : undefined,
         nextCat !== 'All' ? nextCat : undefined
       )
+      setMfSchemesTotal(schemesRes.total || 0)
       setMfSchemes(schemesRes.schemes || [])
     } catch (err: any) {
       console.error(err)
@@ -627,8 +723,14 @@ export default function AdminConsole() {
             iconPosition="start"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <span>Market Data / MF Sync</span>
-                <Chip label="AMFI DB" size="small" sx={{ bgcolor: 'rgba(16, 185, 129, 0.2)', color: '#10B981', fontWeight: 800, fontSize: '0.68rem', height: 20 }} />
+                <span>AMFI Data</span>
+                {(mfStatus?.total_schemes ?? 0) > 0 && (
+                  <Chip
+                    label={`${mfStatus!.total_schemes.toLocaleString()} schemes`}
+                    size="small"
+                    sx={{ bgcolor: 'rgba(16, 185, 129, 0.2)', color: '#10B981', fontWeight: 800, fontSize: '0.68rem', height: 20 }}
+                  />
+                )}
               </Box>
             }
           />
@@ -1221,651 +1323,746 @@ export default function AdminConsole() {
       )}
 
       {/* ──────────────────────────────────────────────────────────────────────────
-          SECTION 3: MARKET DATA & MF DISCLOSURES SYNC (✨ NEW)
-      ────────────────────────────────────────────────────────────────────────── */}
-      {/* ──────────────────────────────────────────────────────────────────────────
-          SECTION 3: MARKET DATA & MF DISCLOSURES SYNC (✨ MODERN REFINED)
+          SECTION 3: AMFI DATA
       ────────────────────────────────────────────────────────────────────────── */}
       {mainTab === 'market-data' && (
         <Box>
-          {/* Top Sync Trigger & Controls Banner */}
+          {/* Status strip */}
           <Paper
             sx={{
-              p: 3.5,
-              mb: 3.5,
-              borderRadius: '24px',
-              background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.85) 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.28)',
-              boxShadow: '0 12px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(56, 189, 248, 0.08)',
-              backdropFilter: 'blur(24px)',
+              p: 2,
+              mb: 2.5,
+              borderRadius: '16px',
+              bgcolor: 'rgba(15, 23, 42, 0.7)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 2,
+              justifyContent: 'space-between',
             }}
           >
-            <Grid container spacing={3} alignItems="flex-start">
-              <Grid item xs={12} lg={7}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.2 }}>
-                  <Box sx={{ p: 1.2, borderRadius: '12px', bgcolor: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8' }}>
-                    <SyncIcon sx={{ fontSize: 26 }} />
-                  </Box>
-                  <Box>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Typography variant="h6" sx={{ fontWeight: 800, color: '#F8FAFC', letterSpacing: '-0.02em' }}>
-                        AMFI Mutual Fund Portfolio Snapshot Engine
-                      </Typography>
-                      <Chip
-                        label="MONTHLY DISCLOSURES"
-                        size="small"
-                        sx={{
-                          height: 20,
-                          fontSize: '0.65rem',
-                          fontWeight: 800,
-                          bgcolor: 'rgba(56, 189, 248, 0.15)',
-                          color: '#38BDF8',
-                          border: '1px solid rgba(56, 189, 248, 0.3)',
-                        }}
-                      />
-                    </Box>
-                    <Typography variant="caption" sx={{ color: '#64748B' }}>
-                      Synchronizes official monthly AMC disclosures into PostgreSQL with custom ingestion scope
-                    </Typography>
-                  </Box>
-                </Box>
-                <Typography variant="body2" sx={{ color: '#94A3B8', maxWidth: 740, lineHeight: 1.6, mb: 2.5 }}>
-                  Pull monthly portfolio holdings and sector weightages directly from AMFI into your database.
-                  Choose a targeted AMC scope to keep database storage lightweight and queries lightning fast.
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+              <Box sx={{ p: 1, borderRadius: '10px', bgcolor: 'rgba(56, 189, 248, 0.12)', color: '#38BDF8' }}>
+                <SyncIcon sx={{ fontSize: 22 }} />
+              </Box>
+              <Box>
+                <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem', lineHeight: 1.2 }}>
+                  AMFI mutual fund data
                 </Typography>
+                <Typography variant="caption" sx={{ color: '#64748B' }}>
+                  Choose what to ingest, then browse synced schemes
+                </Typography>
+              </Box>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <Chip
+                size="small"
+                label={mfStatusLoading ? 'Loading…' : `${(mfStatus?.total_schemes ?? 0).toLocaleString()} schemes in DB`}
+                sx={{ bgcolor: 'rgba(56, 189, 248, 0.12)', color: '#38BDF8', fontWeight: 700 }}
+              />
+              <Chip
+                size="small"
+                label={mfStatus?.latest_portfolio_month || 'No disclosure month'}
+                sx={{ bgcolor: 'rgba(16, 185, 129, 0.12)', color: '#10B981', fontWeight: 700 }}
+              />
+              <Chip
+                size="small"
+                label={
+                  lastSync
+                    ? `Last sync: ${lastSync.status}${lastSync.created_at ? ` · ${new Date(lastSync.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}`
+                    : 'Never synced'
+                }
+                sx={{
+                  bgcolor:
+                    lastSync?.status === 'failed'
+                      ? 'rgba(239, 68, 68, 0.12)'
+                      : lastSync?.status === 'completed'
+                        ? 'rgba(245, 158, 11, 0.12)'
+                        : 'rgba(255,255,255,0.06)',
+                  color:
+                    lastSync?.status === 'failed'
+                      ? '#F87171'
+                      : lastSync?.status === 'completed'
+                        ? '#F59E0B'
+                        : '#94A3B8',
+                  fontWeight: 700,
+                }}
+              />
+              <Tooltip title="Refresh status">
+                <IconButton
+                  size="small"
+                  onClick={() => fetchMfData()}
+                  disabled={mfStatusLoading || mfTriggering}
+                  sx={{ color: '#94A3B8' }}
+                >
+                  <RefreshIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </Paper>
 
-                {/* Scope Selection Selector */}
-                <Box sx={{ p: 2, borderRadius: '16px', bgcolor: 'rgba(2, 6, 23, 0.6)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <Typography variant="caption" sx={{ color: '#38BDF8', fontWeight: 700, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 0.8, mb: 1.2 }}>
-                    <TuneIcon sx={{ fontSize: 16 }} /> INGESTION SCOPE
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                    {[
-                      { id: 'top10', label: 'Top 10 AMCs (~2.5k schemes)', desc: 'Recommended' },
-                      { id: 'top5', label: 'Top 5 AMCs (~1.5k schemes)', desc: 'Lightweight' },
-                      { id: 'all', label: 'All 44 AMCs (14,067 schemes)', desc: 'Full Universe' },
-                      { id: 'custom', label: 'Custom AMCs', desc: `${customAmcs.length} selected` },
-                    ].map((item) => {
-                      const isSelected = syncScope === item.id
+          {/* Primary panels */}
+          <Paper
+            sx={{
+              p: 0.75,
+              mb: 2.5,
+              borderRadius: '14px',
+              bgcolor: 'rgba(15, 23, 42, 0.55)',
+              border: '1px solid rgba(255,255,255,0.06)',
+              display: 'inline-flex',
+            }}
+          >
+            {[
+              { id: 'ingest' as const, label: '1. Ingest', icon: <TuneIcon sx={{ fontSize: 16 }} /> },
+              { id: 'explore' as const, label: '2. Browse schemes', icon: <SearchIcon sx={{ fontSize: 16 }} /> },
+            ].map((tab) => {
+              const active = mfPanel === tab.id
+              return (
+                <Button
+                  key={tab.id}
+                  onClick={() => setMfPanel(tab.id)}
+                  startIcon={tab.icon}
+                  sx={{
+                    px: 2.2,
+                    py: 0.9,
+                    borderRadius: '10px',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.86rem',
+                    color: active ? '#F8FAFC' : '#94A3B8',
+                    bgcolor: active ? 'rgba(56, 189, 248, 0.16)' : 'transparent',
+                    border: active ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid transparent',
+                    '&:hover': { bgcolor: active ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255,255,255,0.04)', color: '#fff' },
+                  }}
+                >
+                  {tab.label}
+                </Button>
+              )
+            })}
+          </Paper>
+
+          {/* ── Ingest panel ─────────────────────────────────────────────── */}
+          {mfPanel === 'ingest' && (
+            <Paper
+              sx={{
+                p: { xs: 2.5, md: 3.5 },
+                mb: 2.5,
+                borderRadius: '20px',
+                bgcolor: 'rgba(15, 23, 42, 0.72)',
+                border: '1px solid rgba(56, 189, 248, 0.2)',
+              }}
+            >
+              <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem', mb: 0.5 }}>
+                Ingestion scope
+              </Typography>
+              <Typography variant="body2" sx={{ color: '#94A3B8', mb: 2.5, maxWidth: 720 }}>
+                Pick how much of the AMFI catalogue to pull into PostgreSQL. Smaller scopes stay faster and lighter.
+              </Typography>
+
+              <Grid container spacing={1.5} sx={{ mb: 2.5 }}>
+                {SCOPE_OPTIONS.map((opt) => {
+                  const active = syncScope === opt.id
+                  return (
+                    <Grid item xs={12} sm={6} key={opt.id}>
+                      <Box
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSyncScope(opt.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            setSyncScope(opt.id)
+                          }
+                        }}
+                        sx={{
+                          p: 2,
+                          height: '100%',
+                          borderRadius: '14px',
+                          cursor: 'pointer',
+                          bgcolor: active ? 'rgba(56, 189, 248, 0.12)' : 'rgba(2, 6, 23, 0.45)',
+                          border: active ? '1.5px solid #38BDF8' : '1px solid rgba(255,255,255,0.08)',
+                          transition: 'border-color 0.15s, background 0.15s',
+                          outline: 'none',
+                          '&:hover': {
+                            borderColor: active ? '#38BDF8' : 'rgba(56, 189, 248, 0.35)',
+                            bgcolor: active ? 'rgba(56, 189, 248, 0.14)' : 'rgba(255,255,255,0.03)',
+                          },
+                          '&:focus-visible': { boxShadow: '0 0 0 2px rgba(56, 189, 248, 0.45)' },
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, mb: 0.8 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box
+                              sx={{
+                                width: 18,
+                                height: 18,
+                                borderRadius: '50%',
+                                border: active ? '5px solid #38BDF8' : '2px solid #64748B',
+                                bgcolor: active ? '#0F172A' : 'transparent',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '0.95rem' }}>
+                              {opt.title}
+                            </Typography>
+                          </Box>
+                          <Chip
+                            size="small"
+                            label={opt.badge}
+                            sx={{
+                              height: 22,
+                              fontSize: '0.68rem',
+                              fontWeight: 800,
+                              bgcolor: `${opt.badgeColor}22`,
+                              color: opt.badgeColor,
+                              border: `1px solid ${opt.badgeColor}55`,
+                            }}
+                          />
+                        </Box>
+                        <Typography variant="body2" sx={{ color: '#94A3B8', fontSize: '0.8rem', ml: 3.5, mb: 0.6, lineHeight: 1.45 }}>
+                          {opt.subtitle}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#64748B', ml: 3.5, fontWeight: 700 }}>
+                          {opt.estimate}
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  )
+                })}
+              </Grid>
+
+              {syncScope === 'custom' && (
+                <Box
+                  sx={{
+                    p: 2,
+                    mb: 2.5,
+                    borderRadius: '14px',
+                    bgcolor: 'rgba(2, 6, 23, 0.55)',
+                    border: '1px solid rgba(245, 158, 11, 0.25)',
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.2, gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="caption" sx={{ color: '#F59E0B', fontWeight: 800, letterSpacing: '0.04em' }}>
+                      SELECT AMCS ({customAmcs.length} selected)
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        size="small"
+                        onClick={() => setCustomAmcs([...BUILTIN_AMCS])}
+                        sx={{ textTransform: 'none', fontSize: '0.75rem', color: '#94A3B8', minWidth: 0 }}
+                      >
+                        Select all
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => setCustomAmcs([])}
+                        sx={{ textTransform: 'none', fontSize: '0.75rem', color: '#94A3B8', minWidth: 0 }}
+                      >
+                        Clear
+                      </Button>
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
+                    <TextField
+                      size="small"
+                      placeholder="Add AMC name (e.g. Helios, Navi)…"
+                      value={newAmcInput}
+                      onChange={(e) => setNewAmcInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          addCustomAmc()
+                        }
+                      }}
+                      sx={{
+                        flex: 1,
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: '10px',
+                          bgcolor: 'rgba(255,255,255,0.04)',
+                          color: '#F8FAFC',
+                          fontSize: '0.8rem',
+                          '& fieldset': { borderColor: 'rgba(255,255,255,0.12)' },
+                          '&:hover fieldset': { borderColor: '#F59E0B' },
+                        },
+                      }}
+                    />
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={addCustomAmc}
+                      disabled={!newAmcInput.trim()}
+                      sx={{
+                        borderRadius: '10px',
+                        color: '#F59E0B',
+                        borderColor: 'rgba(245, 158, 11, 0.45)',
+                        textTransform: 'none',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </Box>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8 }}>
+                    {Array.from(new Set([...customAmcs, ...BUILTIN_AMCS])).map((amc) => {
+                      const active = customAmcs.includes(amc)
                       return (
-                        <Button
-                          key={item.id}
+                        <Chip
+                          key={amc}
+                          label={amc}
                           size="small"
-                          onClick={() => setSyncScope(item.id as any)}
-                          sx={{
-                            borderRadius: '10px',
-                            px: 1.8,
-                            py: 0.6,
-                            textTransform: 'none',
-                            fontWeight: 700,
-                            fontSize: '0.8rem',
-                            bgcolor: isSelected ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.04)',
-                            color: isSelected ? '#38BDF8' : '#94A3B8',
-                            border: isSelected ? '1px solid #38BDF8' : '1px solid rgba(255, 255, 255, 0.08)',
-                            '&:hover': {
-                              bgcolor: isSelected ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.08)',
-                              color: '#fff',
-                            },
+                          onClick={() => {
+                            setCustomAmcs((prev) =>
+                              prev.includes(amc) ? prev.filter((a) => a !== amc) : [...prev, amc]
+                            )
                           }}
-                        >
-                          {item.label}
-                        </Button>
+                          icon={active ? <CheckIcon sx={{ fontSize: '14px !important', color: '#F59E0B !important' }} /> : undefined}
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: active ? 700 : 500,
+                            bgcolor: active ? 'rgba(245, 158, 11, 0.16)' : 'rgba(255,255,255,0.03)',
+                            color: active ? '#F59E0B' : '#64748B',
+                            border: active ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid rgba(255,255,255,0.06)',
+                            cursor: 'pointer',
+                          }}
+                        />
                       )
                     })}
                   </Box>
-
-                  {/* Collapsible Custom AMCs Selection */}
-                  {syncScope === 'custom' && (
-                    <Box sx={{ mt: 2, pt: 1.5, borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-                      <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
-                        <TextField
-                          size="small"
-                          placeholder="Add new AMC (e.g. Zerodha, Jio, Helios, Navi)..."
-                          value={newAmcInput}
-                          onChange={(e) => setNewAmcInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault()
-                              const trimmed = newAmcInput.trim()
-                              if (trimmed && !customAmcs.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
-                                setCustomAmcs((prev) => [...prev, trimmed])
-                                setNewAmcInput('')
-                              }
-                            }
-                          }}
-                          sx={{
-                            flex: 1,
-                            '& .MuiOutlinedInput-root': {
-                              borderRadius: '10px',
-                              bgcolor: 'rgba(255,255,255,0.04)',
-                              color: '#F8FAFC',
-                              fontSize: '0.8rem',
-                              '& fieldset': { borderColor: 'rgba(255,255,255,0.12)' },
-                              '&:hover fieldset': { borderColor: '#38BDF8' },
-                            },
-                          }}
-                        />
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => {
-                            const trimmed = newAmcInput.trim()
-                            if (trimmed && !customAmcs.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
-                              setCustomAmcs((prev) => [...prev, trimmed])
-                              setNewAmcInput('')
-                            }
-                          }}
-                          disabled={!newAmcInput.trim()}
-                          sx={{
-                            borderRadius: '10px',
-                            color: '#38BDF8',
-                            borderColor: 'rgba(56, 189, 248, 0.4)',
-                            textTransform: 'none',
-                            fontWeight: 700,
-                            fontSize: '0.78rem',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          + Add AMC
-                        </Button>
-                      </Box>
-
-                      <Typography variant="caption" sx={{ color: '#94A3B8', display: 'block', mb: 1 }}>
-                        Click to select/unselect AMCs to ingest:
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8 }}>
-                        {Array.from(new Set([
-                          ...customAmcs,
-                          'HDFC', 'SBI', 'ICICI Prudential', 'Nippon India', 'Kotak',
-                          'Axis', 'Quant', 'Parag Parikh', 'Mirae Asset', 'Tata',
-                          'Groww', 'Zerodha', 'DSP', 'Bandhan', 'Canara Robeco', 'UTI',
-                          'Motilal Oswal', 'Franklin Templeton', 'Aditya Birla Sun Life', 'Edelweiss', 'HSBC', 'Invesco'
-                        ])).map((amc) => {
-                          const active = customAmcs.includes(amc)
-                          return (
-                            <Chip
-                              key={amc}
-                              label={amc}
-                              size="small"
-                              onClick={() => {
-                                setCustomAmcs((prev) =>
-                                  prev.includes(amc) ? prev.filter((a) => a !== amc) : [...prev, amc]
-                                )
-                              }}
-                              icon={active ? <CheckIcon sx={{ fontSize: '14px !important', color: '#38BDF8 !important' }} /> : undefined}
-                              sx={{
-                                fontSize: '0.75rem',
-                                fontWeight: active ? 700 : 500,
-                                bgcolor: active ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255,255,255,0.03)',
-                                color: active ? '#38BDF8' : '#64748B',
-                                border: active ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(255,255,255,0.06)',
-                                cursor: 'pointer',
-                                '&:hover': { bgcolor: 'rgba(56, 189, 248, 0.25)', color: '#fff' },
-                              }}
-                            />
-                          )
-                        })}
-                      </Box>
-                    </Box>
-                  )}
                 </Box>
-              </Grid>
+              )}
 
-              {/* Action Buttons */}
-              <Grid item xs={12} lg={5} sx={{ display: 'flex', flexDirection: 'column', alignItems: { xs: 'flex-start', lg: 'flex-end' }, gap: 1.5, mt: { xs: 1, lg: 0 } }}>
-                <Button
-                  variant="contained"
-                  size="large"
-                  onClick={handleTriggerMfSync}
-                  disabled={mfTriggering || mfStatusLoading || (syncScope === 'custom' && customAmcs.length === 0)}
-                  startIcon={mfTriggering ? <CircularProgress size={18} color="inherit" /> : <BoltIcon sx={{ color: '#0F172A' }} />}
-                  sx={{
-                    px: 3.5,
-                    py: 1.4,
-                    width: { xs: '100%', sm: 'auto' },
-                    borderRadius: '16px',
-                    bgcolor: '#38BDF8',
-                    color: '#0F172A',
-                    fontWeight: 800,
-                    textTransform: 'none',
-                    fontSize: '0.95rem',
-                    boxShadow: '0 4px 24px rgba(56, 189, 248, 0.35)',
-                    transition: 'all 0.2s ease-in-out',
-                    '&:hover': { bgcolor: '#0284C7', color: '#fff', transform: 'translateY(-1px)', boxShadow: '0 6px 28px rgba(56, 189, 248, 0.45)' },
-                  }}
-                >
-                  {mfTriggering ? 'Syncing Snapshots...' : `Sync ${syncScope === 'all' ? 'All AMCs' : syncScope === 'top10' ? 'Top 10 AMCs' : syncScope === 'top5' ? 'Top 5 AMCs' : `${customAmcs.length} AMCs`}`}
-                </Button>
-
-                <Button
-                  variant="outlined"
-                  size="medium"
-                  onClick={() => setPurgeDialogOpen(true)}
-                  disabled={mfTriggering || mfStatusLoading}
-                  startIcon={<DeleteSweepIcon sx={{ color: '#F43F5E' }} />}
-                  sx={{
-                    px: 2.5,
-                    py: 1.1,
-                    width: { xs: '100%', sm: 'auto' },
-                    borderRadius: '14px',
-                    color: '#F43F5E',
-                    borderColor: 'rgba(244, 63, 94, 0.35)',
-                    bgcolor: 'rgba(244, 63, 94, 0.06)',
-                    fontWeight: 700,
-                    textTransform: 'none',
-                    fontSize: '0.85rem',
-                    '&:hover': {
-                      borderColor: '#F43F5E',
-                      bgcolor: 'rgba(244, 63, 94, 0.15)',
-                      color: '#FDA4AF',
-                    },
-                  }}
-                >
-                  Database Storage & Purge
-                </Button>
-
-                {syncedAmcs.length > 0 && (
-                  <Typography variant="caption" sx={{ color: '#64748B', textAlign: { xs: 'left', lg: 'right' } }}>
-                    Currently loaded: <strong style={{ color: '#94A3B8' }}>{syncedAmcs.length} AMCs</strong> ({mfStatus?.total_schemes?.toLocaleString() || 0} schemes)
-                  </Typography>
-                )}
-              </Grid>
-            </Grid>
-          </Paper>
-
-          {/* Engine Operational KPI Cards */}
-          <Grid container spacing={2.5} sx={{ mb: 3.5 }}>
-            {/* 1. Total Schemes */}
-            <Grid item xs={12} sm={6} md={3}>
-              <Paper
+              {/* Action summary */}
+              <Box
                 sx={{
-                  p: 2.5,
-                  borderRadius: '20px',
-                  bgcolor: 'rgba(15, 23, 42, 0.65)',
-                  border: '1px solid rgba(56, 189, 248, 0.15)',
-                  transition: 'all 0.2s',
-                  '&:hover': { borderColor: 'rgba(56, 189, 248, 0.35)', bgcolor: 'rgba(15, 23, 42, 0.8)' },
+                  p: 2,
+                  borderRadius: '14px',
+                  bgcolor: 'rgba(2, 6, 23, 0.5)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex',
+                  flexDirection: { xs: 'column', md: 'row' },
+                  alignItems: { xs: 'stretch', md: 'center' },
+                  justifyContent: 'space-between',
+                  gap: 2,
                 }}
               >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, letterSpacing: '0.04em' }}>
-                    MASTER SCHEMES
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 700, letterSpacing: '0.04em' }}>
+                    READY TO RUN
                   </Typography>
-                  <StorageIcon sx={{ fontSize: 20, color: '#38BDF8' }} />
-                </Box>
-                <Typography variant="h4" sx={{ fontWeight: 800, color: '#38BDF8', mt: 0.8 }}>
-                  {mfStatusLoading ? <CircularProgress size={24} sx={{ color: '#38BDF8' }} /> : (mfStatus?.total_schemes?.toLocaleString() ?? '14,067')}
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#64748B', display: 'block', mt: 0.5 }}>
-                  PostgreSQL Indexed Universe
-                </Typography>
-              </Paper>
-            </Grid>
-
-            {/* 2. Disclosure Period */}
-            <Grid item xs={12} sm={6} md={3}>
-              <Paper
-                sx={{
-                  p: 2.5,
-                  borderRadius: '20px',
-                  bgcolor: 'rgba(15, 23, 42, 0.65)',
-                  border: '1px solid rgba(16, 185, 129, 0.15)',
-                  transition: 'all 0.2s',
-                  '&:hover': { borderColor: 'rgba(16, 185, 129, 0.35)', bgcolor: 'rgba(15, 23, 42, 0.8)' },
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#10B981', fontWeight: 700, letterSpacing: '0.04em' }}>
-                    DISCLOSURE CYCLE
+                  <Typography sx={{ color: '#F8FAFC', fontWeight: 700, mt: 0.3 }}>
+                    {selectedScope.title}
+                    {syncScope === 'custom' ? ` · ${customAmcs.length} AMC${customAmcs.length === 1 ? '' : 's'}` : ''}
                   </Typography>
-                  <CheckCircleOutlineIcon sx={{ fontSize: 20, color: '#10B981' }} />
-                </Box>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#10B981', mt: 1.1 }}>
-                  {mfStatusLoading ? <CircularProgress size={24} sx={{ color: '#10B981' }} /> : mfStatus?.latest_portfolio_month ?? 'July 2026'}
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#64748B', display: 'block', mt: 0.5 }}>
-                  AMFI Regulatory Disclosures
-                </Typography>
-              </Paper>
-            </Grid>
-
-            {/* 3. Sync Health */}
-            <Grid item xs={12} sm={6} md={3}>
-              <Paper
-                sx={{
-                  p: 2.5,
-                  borderRadius: '20px',
-                  bgcolor: 'rgba(15, 23, 42, 0.65)',
-                  border: '1px solid rgba(168, 85, 247, 0.15)',
-                  transition: 'all 0.2s',
-                  '&:hover': { borderColor: 'rgba(168, 85, 247, 0.35)', bgcolor: 'rgba(15, 23, 42, 0.8)' },
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#A855F7', fontWeight: 700, letterSpacing: '0.04em' }}>
-                    DATABASE ENGINE
+                  <Typography variant="caption" sx={{ color: '#94A3B8' }}>
+                    {selectedScope.estimate}
+                    {syncedAmcs.length > 0
+                      ? ` · DB currently has ${syncedAmcs.length} AMC${syncedAmcs.length === 1 ? '' : 's'}`
+                      : ''}
                   </Typography>
-                  <SpeedIcon sx={{ fontSize: 20, color: '#A855F7' }} />
                 </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1.1 }}>
-                  <Box
+                <Box sx={{ display: 'flex', gap: 1.2, flexWrap: 'wrap' }}>
+                  <Button
+                    variant="contained"
+                    onClick={handleTriggerMfSync}
+                    disabled={mfTriggering || mfStatusLoading || (syncScope === 'custom' && customAmcs.length === 0)}
+                    startIcon={mfTriggering ? <CircularProgress size={18} color="inherit" /> : <BoltIcon />}
                     sx={{
-                      width: 9,
-                      height: 9,
-                      borderRadius: '50%',
-                      bgcolor: '#10B981',
-                      boxShadow: '0 0 10px #10B981',
+                      px: 3,
+                      py: 1.2,
+                      borderRadius: '12px',
+                      bgcolor: '#38BDF8',
+                      color: '#0F172A',
+                      fontWeight: 800,
+                      textTransform: 'none',
+                      fontSize: '0.92rem',
+                      boxShadow: '0 4px 20px rgba(56, 189, 248, 0.3)',
+                      '&:hover': { bgcolor: '#0EA5E9', color: '#fff' },
+                      '&.Mui-disabled': { bgcolor: 'rgba(56, 189, 248, 0.2)', color: 'rgba(15,23,42,0.5)' },
+                    }}
+                  >
+                    {mfTriggering ? 'Syncing…' : syncActionLabel}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setPurgeDialogOpen(true)}
+                    disabled={mfTriggering || mfStatusLoading}
+                    startIcon={<DeleteSweepIcon />}
+                    sx={{
+                      px: 2.2,
+                      py: 1.1,
+                      borderRadius: '12px',
+                      color: '#F87171',
+                      borderColor: 'rgba(244, 63, 94, 0.35)',
+                      textTransform: 'none',
+                      fontWeight: 700,
+                      '&:hover': { borderColor: '#F43F5E', bgcolor: 'rgba(244, 63, 94, 0.1)' },
+                    }}
+                  >
+                    Purge data
+                  </Button>
+                </Box>
+              </Box>
+
+              {mfTriggering && (
+                <Box sx={{ mt: 2 }}>
+                  <LinearProgress
+                    sx={{
+                      height: 4,
+                      borderRadius: 2,
+                      bgcolor: 'rgba(56, 189, 248, 0.12)',
+                      '& .MuiLinearProgress-bar': { bgcolor: '#38BDF8' },
                     }}
                   />
-                  <Typography variant="h5" sx={{ fontWeight: 800, color: '#F8FAFC' }}>
-                    Operational
+                  <Typography variant="caption" sx={{ color: '#94A3B8', mt: 1, display: 'block' }}>
+                    Fetching AMFI feed and upserting schemes — this can take a minute for large scopes.
                   </Typography>
                 </Box>
-                <Typography variant="caption" sx={{ color: '#64748B', display: 'block', mt: 0.5 }}>
-                  0ms Fast Factsheet Cache
-                </Typography>
-              </Paper>
-            </Grid>
+              )}
+            </Paper>
+          )}
 
-            {/* 4. Last Sync Execution */}
-            <Grid item xs={12} sm={6} md={3}>
-              <Paper
+          {/* ── Explore panel ────────────────────────────────────────────── */}
+          {mfPanel === 'explore' && (
+            <Paper
+              sx={{
+                p: { xs: 2.5, md: 3 },
+                mb: 2.5,
+                borderRadius: '20px',
+                bgcolor: 'rgba(15, 23, 42, 0.7)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <Box
                 sx={{
-                  p: 2.5,
-                  borderRadius: '20px',
-                  bgcolor: 'rgba(15, 23, 42, 0.65)',
-                  border: '1px solid rgba(245, 158, 11, 0.15)',
-                  transition: 'all 0.2s',
-                  '&:hover': { borderColor: 'rgba(245, 158, 11, 0.35)', bgcolor: 'rgba(15, 23, 42, 0.8)' },
+                  display: 'flex',
+                  flexDirection: { xs: 'column', md: 'row' },
+                  alignItems: { xs: 'stretch', md: 'center' },
+                  justifyContent: 'space-between',
+                  gap: 2,
+                  mb: 2,
                 }}
               >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#F59E0B', fontWeight: 700, letterSpacing: '0.04em' }}>
-                    LAST SYNC RUN
+                <Box>
+                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem' }}>
+                    Scheme explorer
                   </Typography>
-                  <SyncIcon sx={{ fontSize: 20, color: '#F59E0B' }} />
+                  <Typography variant="caption" sx={{ color: '#94A3B8' }}>
+                    {mfSchemesLoading
+                      ? 'Searching…'
+                      : `${mfSchemesTotal.toLocaleString()} match${mfSchemesTotal === 1 ? '' : 'es'} · showing ${mfSchemes.length}`}
+                  </Typography>
                 </Box>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#F59E0B', mt: 1.1 }}>
-                  {mfStatus?.recent_logs?.[0]
-                    ? `${mfStatus.recent_logs[0].duration_seconds}s Speed`
-                    : 'Ready'}
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#64748B', display: 'block', mt: 0.5 }}>
-                  {mfStatus?.recent_logs?.[0]?.created_at
-                    ? `Synced at ${new Date(mfStatus.recent_logs[0].created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                    : 'Audit Trail Active'}
-                </Typography>
-              </Paper>
-            </Grid>
-          </Grid>
-
-          {/* Sync Audit History */}
-          <Paper sx={{ p: 2.5, mb: 3.5, borderRadius: '20px', bgcolor: 'rgba(15, 23, 42, 0.65)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <StorageIcon sx={{ color: '#38BDF8', fontSize: 20 }} />
-                <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1rem' }}>
-                  Sync Audit History
-                </Typography>
+                <TextField
+                  size="small"
+                  placeholder="Search name, ISIN, or AMC…"
+                  value={mfSearchQuery}
+                  onChange={(e) => handleSearchMf(e.target.value)}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ color: '#64748B', fontSize: 19 }} />
+                      </InputAdornment>
+                    ),
+                  }}
+                  sx={{ ...adminFieldSx, minWidth: { xs: '100%', md: 340 } }}
+                />
               </Box>
-              <Typography variant="caption" sx={{ color: '#64748B' }}>
-                Last 10 executions
-              </Typography>
-            </Box>
 
-            <TableContainer sx={{ overflow: 'hidden' }}>
-              <Table size="small">
-                <TableHead sx={{ bgcolor: 'rgba(2, 6, 23, 0.4)' }}>
-                  <TableRow>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>LOG ID</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>TRIGGERED BY</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>STATUS</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>SCHEMES UPDATED</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>DURATION</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>PERIOD</TableCell>
-                    <TableCell align="right" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>TIMESTAMP</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(!mfStatus?.recent_logs || mfStatus.recent_logs.length === 0) ? (
+              <Box sx={{ mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.2 }}>
+                  <FilterListIcon sx={{ fontSize: 16, color: '#94A3B8' }} />
+                  <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.72rem', mr: 0.5 }}>
+                    CATEGORY
+                  </Typography>
+                  {MF_CATEGORIES.map((cat) => {
+                    const active = mfCategoryFilter === cat
+                    return (
+                      <Chip
+                        key={cat}
+                        label={cat === 'All' ? 'All' : cat}
+                        size="small"
+                        onClick={() => handleSelectFilter('category', cat)}
+                        sx={{
+                          height: 24,
+                          fontSize: '0.72rem',
+                          fontWeight: active ? 800 : 500,
+                          bgcolor: active ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
+                          color: active ? '#38BDF8' : '#94A3B8',
+                          border: active ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255,255,255,0.06)',
+                          cursor: 'pointer',
+                        }}
+                      />
+                    )
+                  })}
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <AccountBalanceIcon sx={{ fontSize: 16, color: '#94A3B8' }} />
+                  <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.72rem', mr: 0.5 }}>
+                    AMC
+                  </Typography>
+                  {MF_AMC_FILTERS.map((amc) => {
+                    const active = mfAmcFilter === amc
+                    return (
+                      <Chip
+                        key={amc}
+                        label={amc === 'All' ? 'All' : amc}
+                        size="small"
+                        onClick={() => handleSelectFilter('amc', amc)}
+                        sx={{
+                          height: 24,
+                          fontSize: '0.72rem',
+                          fontWeight: active ? 800 : 500,
+                          bgcolor: active ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255,255,255,0.04)',
+                          color: active ? '#10B981' : '#94A3B8',
+                          border: active ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255,255,255,0.06)',
+                          cursor: 'pointer',
+                        }}
+                      />
+                    )
+                  })}
+                </Box>
+              </Box>
+
+              <TableContainer
+                component={Paper}
+                sx={{ borderRadius: '14px', bgcolor: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}
+              >
+                <Table sx={{ minWidth: 760 }}>
+                  <TableHead sx={{ bgcolor: 'rgba(2, 6, 23, 0.5)' }}>
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 3, color: '#64748B' }}>
-                        No sync logs recorded yet. Trigger a sync above to create the first audit entry.
-                      </TableCell>
+                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>SCHEME</TableCell>
+                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>CATEGORY</TableCell>
+                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>AUM</TableCell>
+                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>RISK</TableCell>
+                      <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>COVERAGE</TableCell>
+                      <TableCell align="right" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }} />
                     </TableRow>
-                  ) : (
-                    mfStatus.recent_logs.map((log) => (
-                      <TableRow key={log.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
-                        <TableCell sx={{ color: '#94A3B8', fontFamily: 'monospace', fontSize: '0.8rem' }}>#{log.id}</TableCell>
-                        <TableCell sx={{ color: '#F8FAFC', fontWeight: 600, fontSize: '0.82rem' }}>{log.triggered_by}</TableCell>
-                        <TableCell>
-                          <Chip
-                            label={log.status.toUpperCase()}
-                            size="small"
-                            sx={{
-                              height: 20,
-                              fontSize: '0.68rem',
-                              fontWeight: 800,
-                              bgcolor: log.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : log.status === 'failed' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                              color: log.status === 'completed' ? '#10B981' : log.status === 'failed' ? '#EF4444' : '#F59E0B',
-                            }}
-                          />
-                        </TableCell>
-                        <TableCell sx={{ color: '#38BDF8', fontWeight: 700 }}>{log.schemes_updated?.toLocaleString() ?? 0}</TableCell>
-                        <TableCell sx={{ color: '#CBD5E1', fontSize: '0.8rem' }}>{log.duration_seconds}s</TableCell>
-                        <TableCell sx={{ color: '#94A3B8', fontSize: '0.8rem' }}>{log.portfolio_month || '—'}</TableCell>
-                        <TableCell align="right" sx={{ color: '#64748B', fontSize: '0.78rem' }}>
-                          {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
+                  </TableHead>
+                  <TableBody>
+                    {mfSchemesLoading && mfSchemes.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                          <CircularProgress size={28} sx={{ color: '#38BDF8' }} />
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Paper>
-
-          {/* Synced Schemes Explorer */}
-          <Paper sx={{ p: 3, mb: 2, borderRadius: '22px', bgcolor: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between', gap: 2, mb: 2.5 }}>
-              <Box>
-                <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem' }}>
-                  Synced Portfolio Factsheet Explorer
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#94A3B8' }}>
-                  Instant search across all 14,067+ official AMC disclosures, sector weights, and verified holdings.
-                </Typography>
-              </Box>
-
-              <TextField
-                size="small"
-                placeholder="Search scheme name, ISIN, or AMC..."
-                value={mfSearchQuery}
-                onChange={(e) => handleSearchMf(e.target.value)}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon sx={{ color: '#64748B', fontSize: 19 }} />
-                    </InputAdornment>
-                  ),
-                }}
-                sx={{ ...adminFieldSx, minWidth: { xs: '100%', md: 360 } }}
-              />
-            </Box>
-
-            {/* Quick AMC & Category Filter Chips */}
-            <Box sx={{ mb: 3 }}>
-              {/* Category Filters */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mr: 0.5 }}>
-                  <FilterListIcon sx={{ fontSize: 16, color: '#94A3B8' }} />
-                  <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.72rem' }}>
-                    CATEGORY:
-                  </Typography>
-                </Box>
-                {['All', 'Large Cap', 'Flexi Cap', 'Small Cap', 'Mid Cap', 'Multi Cap', 'ELSS', 'Hybrid', 'Index', 'Debt'].map((cat) => {
-                  const active = mfCategoryFilter === cat
-                  return (
-                    <Chip
-                      key={cat}
-                      label={cat === 'All' ? 'All Categories' : cat}
-                      size="small"
-                      onClick={() => handleSelectFilter('category', cat)}
-                      sx={{
-                        height: 24,
-                        fontSize: '0.72rem',
-                        fontWeight: active ? 800 : 500,
-                        bgcolor: active ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
-                        color: active ? '#38BDF8' : '#94A3B8',
-                        border: active ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255,255,255,0.06)',
-                        cursor: 'pointer',
-                        '&:hover': { bgcolor: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8' },
-                      }}
-                    />
-                  )
-                })}
-              </Box>
-
-              {/* Top AMCs Filters */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mr: 0.5 }}>
-                  <AccountBalanceIcon sx={{ fontSize: 16, color: '#94A3B8' }} />
-                  <Typography variant="caption" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.72rem' }}>
-                    TOP AMCS:
-                  </Typography>
-                </Box>
-                {['All', 'Groww', 'SBI', 'HDFC', 'ICICI Prudential', 'Nippon India', 'Kotak', 'Axis', 'Quant', 'Parag Parikh', 'Mirae Asset', 'Tata', 'Zerodha', 'DSP'].map((amc) => {
-                  const active = mfAmcFilter === amc
-                  return (
-                    <Chip
-                      key={amc}
-                      label={amc === 'All' ? 'All AMCs' : amc}
-                      size="small"
-                      onClick={() => handleSelectFilter('amc', amc)}
-                      sx={{
-                        height: 24,
-                        fontSize: '0.72rem',
-                        fontWeight: active ? 800 : 500,
-                        bgcolor: active ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255,255,255,0.04)',
-                        color: active ? '#10B981' : '#94A3B8',
-                        border: active ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255,255,255,0.06)',
-                        cursor: 'pointer',
-                        '&:hover': { bgcolor: 'rgba(16, 185, 129, 0.15)', color: '#10B981' },
-                      }}
-                    />
-                  )
-                })}
-              </Box>
-            </Box>
-
-            <TableContainer component={Paper} sx={{ borderRadius: '16px', bgcolor: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-              <Table sx={{ minWidth: 800 }}>
-                <TableHead sx={{ bgcolor: 'rgba(2, 6, 23, 0.5)' }}>
-                  <TableRow>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>SCHEME & ISIN</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>CATEGORY</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>AUM (₹ CR)</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>RISK</TableCell>
-                    <TableCell sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>DATA COVERAGE</TableCell>
-                    <TableCell align="right" sx={{ color: '#94A3B8', fontWeight: 700, fontSize: '0.74rem' }}>ACTIONS</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {mfSchemesLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
-                        <CircularProgress size={28} sx={{ color: '#38BDF8' }} />
-                        <Typography variant="body2" sx={{ color: '#94A3B8', mt: 1.5 }}>
-                          Loading mutual fund disclosures...
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ) : mfSchemes.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
-                        <Typography variant="body1" sx={{ color: '#E2E8F0', fontWeight: 700 }}>
-                          No mutual funds found
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: '#64748B', mt: 0.5 }}>
-                          {mfSearchQuery ? 'Try a different search query.' : 'Click "Sync AMFI Snapshots" above to ingest schemes.'}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    mfSchemes.map((scheme) => (
-                      <TableRow key={scheme.isin} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
-                        <TableCell sx={{ py: 1.8 }}>
-                          <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.88rem' }}>
-                            {scheme.scheme_name}
+                    ) : mfSchemes.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                          <Typography sx={{ color: '#E2E8F0', fontWeight: 700 }}>No schemes found</Typography>
+                          <Typography variant="body2" sx={{ color: '#64748B', mt: 0.5, mb: 1.5 }}>
+                            {mfSearchQuery || mfAmcFilter !== 'All' || mfCategoryFilter !== 'All'
+                              ? 'Try clearing filters or searching something else.'
+                              : 'Ingest an AMC scope first, then browse here.'}
                           </Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.3 }}>
-                            <Typography sx={{ color: '#38BDF8', fontSize: '0.75rem', fontFamily: 'monospace' }}>
-                              {scheme.isin}
-                            </Typography>
-                            <Typography sx={{ color: '#64748B', fontSize: '0.75rem' }}>
-                              • {scheme.amc}
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={scheme.category || 'Equity'}
-                            size="small"
-                            sx={{ bgcolor: 'rgba(56, 189, 248, 0.1)', color: '#38BDF8', fontWeight: 700, fontSize: '0.72rem', borderRadius: '8px' }}
-                          />
-                        </TableCell>
-                        <TableCell sx={{ color: '#10B981', fontWeight: 800, fontSize: '0.9rem' }}>
-                          {scheme.aum_formatted}
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={scheme.risk_level}
-                            size="small"
-                            sx={{
-                              bgcolor: scheme.risk_level.includes('VERY HIGH') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                              color: scheme.risk_level.includes('VERY HIGH') ? '#F87171' : '#F59E0B',
-                              fontWeight: 800,
-                              fontSize: '0.68rem',
-                              borderRadius: '8px',
-                            }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="caption" sx={{ color: '#CBD5E1', display: 'block' }}>
-                            <strong>{scheme.holdings_count}</strong> holdings • <strong>{scheme.sectors_count}</strong> sectors
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: '#64748B' }}>
-                            TER: {scheme.expense_ratio ? `${scheme.expense_ratio}%` : 'N/A'}
-                          </Typography>
-                        </TableCell>
-                        <TableCell align="right">
                           <Button
                             size="small"
                             variant="outlined"
-                            startIcon={<VisibilityIcon sx={{ fontSize: 14 }} />}
-                            onClick={() => setSelectedScheme(scheme)}
-                            sx={{
-                              borderRadius: '10px',
-                              borderColor: 'rgba(56, 189, 248, 0.3)',
-                              color: '#38BDF8',
-                              fontSize: '0.75rem',
-                              fontWeight: 700,
-                              textTransform: 'none',
-                              '&:hover': { bgcolor: 'rgba(56, 189, 248, 0.08)', borderColor: '#38BDF8' },
-                            }}
+                            onClick={() => setMfPanel('ingest')}
+                            sx={{ textTransform: 'none', borderColor: 'rgba(56,189,248,0.4)', color: '#38BDF8' }}
                           >
-                            Factsheet
+                            Go to Ingest
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                    ) : (
+                      mfSchemes.map((scheme) => (
+                        <TableRow key={scheme.isin} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' } }}>
+                          <TableCell sx={{ py: 1.6 }}>
+                            <Typography sx={{ color: '#F8FAFC', fontWeight: 700, fontSize: '0.86rem' }}>
+                              {scheme.scheme_name}
+                            </Typography>
+                            <Typography sx={{ color: '#64748B', fontSize: '0.74rem', mt: 0.2 }}>
+                              <span style={{ color: '#38BDF8', fontFamily: 'monospace' }}>{scheme.isin}</span>
+                              {' · '}{scheme.amc}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={scheme.category || 'Equity'}
+                              size="small"
+                              sx={{ bgcolor: 'rgba(56, 189, 248, 0.1)', color: '#38BDF8', fontWeight: 700, fontSize: '0.7rem', borderRadius: '8px' }}
+                            />
+                          </TableCell>
+                          <TableCell sx={{ color: '#10B981', fontWeight: 800, fontSize: '0.88rem' }}>
+                            {scheme.aum_formatted}
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={scheme.risk_level}
+                              size="small"
+                              sx={{
+                                bgcolor: scheme.risk_level.includes('VERY HIGH') ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                color: scheme.risk_level.includes('VERY HIGH') ? '#F87171' : '#F59E0B',
+                                fontWeight: 800,
+                                fontSize: '0.66rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" sx={{ color: '#CBD5E1', display: 'block' }}>
+                              {scheme.holdings_count} holdings · {scheme.sectors_count} sectors
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#64748B' }}>
+                              TER {scheme.expense_ratio != null ? `${scheme.expense_ratio}%` : 'N/A'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Button
+                              size="small"
+                              variant="text"
+                              startIcon={<VisibilityIcon sx={{ fontSize: 14 }} />}
+                              onClick={() => setSelectedScheme(scheme)}
+                              sx={{
+                                borderRadius: '10px',
+                                color: '#38BDF8',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                textTransform: 'none',
+                              }}
+                            >
+                              View
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              {mfSchemes.length < mfSchemesTotal && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    disabled={mfSchemesLoading}
+                    onClick={() => loadMfSchemes(mfSearchQuery, mfAmcFilter, mfCategoryFilter, true, mfSchemes.length)}
+                    sx={{
+                      textTransform: 'none',
+                      fontWeight: 700,
+                      borderColor: 'rgba(255,255,255,0.12)',
+                      color: '#94A3B8',
+                      borderRadius: '10px',
+                    }}
+                  >
+                    {mfSchemesLoading ? 'Loading…' : `Load more (${mfSchemesTotal - mfSchemes.length} remaining)`}
+                  </Button>
+                </Box>
+              )}
+            </Paper>
+          )}
+
+          {/* Audit — collapsed by default, lowest priority */}
+          <Paper
+            sx={{
+              mb: 2,
+              borderRadius: '14px',
+              bgcolor: 'rgba(15, 23, 42, 0.45)',
+              border: '1px solid rgba(255,255,255,0.05)',
+              overflow: 'hidden',
+            }}
+          >
+            <Button
+              fullWidth
+              onClick={() => setAuditExpanded((v) => !v)}
+              endIcon={auditExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              startIcon={<HistoryIcon sx={{ fontSize: 18 }} />}
+              sx={{
+                justifyContent: 'space-between',
+                px: 2,
+                py: 1.25,
+                color: '#64748B',
+                textTransform: 'none',
+                fontWeight: 600,
+                fontSize: '0.82rem',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.03)', color: '#94A3B8' },
+              }}
+            >
+              <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                Sync history
+                <Chip
+                  size="small"
+                  label={`${mfStatus?.recent_logs?.length ?? 0} recent`}
+                  sx={{ height: 20, fontSize: '0.65rem', bgcolor: 'rgba(255,255,255,0.06)', color: '#64748B' }}
+                />
+              </Box>
+            </Button>
+            <Collapse in={auditExpanded}>
+              <Box sx={{ px: 2, pb: 2 }}>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.7rem' }}>WHEN</TableCell>
+                        <TableCell sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.7rem' }}>BY</TableCell>
+                        <TableCell sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.7rem' }}>STATUS</TableCell>
+                        <TableCell sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.7rem' }}>SCHEMES</TableCell>
+                        <TableCell sx={{ color: '#64748B', fontWeight: 700, fontSize: '0.7rem' }}>DURATION</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(!mfStatus?.recent_logs || mfStatus.recent_logs.length === 0) ? (
+                        <TableRow>
+                          <TableCell colSpan={5} sx={{ color: '#64748B', py: 2 }}>
+                            No sync runs yet.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        mfStatus.recent_logs.map((log) => (
+                          <TableRow key={log.id}>
+                            <TableCell sx={{ color: '#94A3B8', fontSize: '0.78rem' }}>
+                              {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
+                            </TableCell>
+                            <TableCell sx={{ color: '#CBD5E1', fontSize: '0.78rem' }}>{log.triggered_by}</TableCell>
+                            <TableCell>
+                              <Chip
+                                label={log.status}
+                                size="small"
+                                sx={{
+                                  height: 20,
+                                  fontSize: '0.66rem',
+                                  fontWeight: 700,
+                                  bgcolor:
+                                    log.status === 'completed'
+                                      ? 'rgba(16, 185, 129, 0.12)'
+                                      : log.status === 'failed'
+                                        ? 'rgba(239, 68, 68, 0.12)'
+                                        : 'rgba(245, 158, 11, 0.12)',
+                                  color:
+                                    log.status === 'completed'
+                                      ? '#10B981'
+                                      : log.status === 'failed'
+                                        ? '#EF4444'
+                                        : '#F59E0B',
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell sx={{ color: '#94A3B8', fontSize: '0.78rem' }}>
+                              {log.schemes_updated?.toLocaleString() ?? 0}
+                            </TableCell>
+                            <TableCell sx={{ color: '#64748B', fontSize: '0.78rem' }}>
+                              {log.duration_seconds}s
+                              {log.error_message ? (
+                                <Tooltip title={log.error_message}>
+                                  <Typography component="span" sx={{ color: '#F87171', ml: 1, fontSize: '0.72rem', cursor: 'help' }}>
+                                    error
+                                  </Typography>
+                                </Tooltip>
+                              ) : null}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            </Collapse>
           </Paper>
 
-          {/* Factsheet Detailed Drawer / Modal */}
+          {/* Factsheet modal */}
           <Dialog
             open={Boolean(selectedScheme)}
             onClose={() => setSelectedScheme(null)}
@@ -1876,23 +2073,23 @@ export default function AdminConsole() {
             }}
             PaperProps={{
               sx: {
-                borderRadius: '24px',
+                borderRadius: '20px',
                 background: 'linear-gradient(180deg, #0F172A 0%, #0B132B 100%)',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                p: 2,
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                p: 1.5,
                 color: '#fff',
               },
             }}
           >
             <DialogTitle sx={{ pb: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
                 <Box>
                   <Typography variant="h6" sx={{ fontWeight: 800, color: '#F8FAFC' }}>
                     {selectedScheme?.scheme_name}
                   </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.5 }}>
-                    <Chip label={`ISIN: ${selectedScheme?.isin}`} size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.1)', color: '#38BDF8', fontWeight: 700, fontSize: '0.72rem' }} />
-                    <Chip label={selectedScheme?.source || 'AMFI Official Disclosure'} size="small" sx={{ bgcolor: 'rgba(16, 185, 129, 0.15)', color: '#10B981', fontWeight: 700, fontSize: '0.72rem' }} />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.8, flexWrap: 'wrap' }}>
+                    <Chip label={selectedScheme?.isin} size="small" sx={{ bgcolor: 'rgba(56, 189, 248, 0.1)', color: '#38BDF8', fontWeight: 700, fontSize: '0.7rem' }} />
+                    <Chip label={selectedScheme?.amc} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.06)', color: '#94A3B8', fontWeight: 600, fontSize: '0.7rem' }} />
                   </Box>
                 </Box>
                 <Chip
@@ -1906,72 +2103,67 @@ export default function AdminConsole() {
               </Box>
             </DialogTitle>
             <DialogContent dividers sx={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-              <Grid container spacing={3} sx={{ mb: 2 }}>
+              <Grid container spacing={2} sx={{ mb: 2.5 }}>
                 <Grid item xs={6} sm={3}>
                   <Typography variant="caption" sx={{ color: '#94A3B8' }}>AUM</Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#10B981' }}>{selectedScheme?.aum_formatted}</Typography>
+                  <Typography sx={{ fontWeight: 800, color: '#10B981', fontSize: '1.05rem' }}>{selectedScheme?.aum_formatted}</Typography>
                 </Grid>
                 <Grid item xs={6} sm={3}>
-                  <Typography variant="caption" sx={{ color: '#94A3B8' }}>EXPENSE RATIO (TER)</Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#F8FAFC' }}>{selectedScheme?.expense_ratio ? `${selectedScheme.expense_ratio}%` : 'N/A'}</Typography>
+                  <Typography variant="caption" sx={{ color: '#94A3B8' }}>TER</Typography>
+                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', fontSize: '1.05rem' }}>
+                    {selectedScheme?.expense_ratio != null ? `${selectedScheme.expense_ratio}%` : 'N/A'}
+                  </Typography>
                 </Grid>
                 <Grid item xs={6} sm={3}>
                   <Typography variant="caption" sx={{ color: '#94A3B8' }}>PORTFOLIO DATE</Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#CBD5E1' }}>{selectedScheme?.portfolio_date || 'July 2026'}</Typography>
+                  <Typography sx={{ fontWeight: 800, color: '#CBD5E1', fontSize: '1.05rem' }}>
+                    {selectedScheme?.portfolio_date || '—'}
+                  </Typography>
                 </Grid>
                 <Grid item xs={6} sm={3}>
                   <Typography variant="caption" sx={{ color: '#94A3B8' }}>CATEGORY</Typography>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#38BDF8' }}>{selectedScheme?.category}</Typography>
+                  <Typography sx={{ fontWeight: 800, color: '#38BDF8', fontSize: '1.05rem' }}>{selectedScheme?.category}</Typography>
                 </Grid>
               </Grid>
 
               <Grid container spacing={3}>
-                {/* Holdings Column */}
                 <Grid item xs={12} md={7}>
-                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', mb: 1.5, fontSize: '0.95rem' }}>
-                    Top 10 Holdings
+                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', mb: 1.2, fontSize: '0.92rem' }}>
+                    Top holdings
                   </Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {selectedScheme?.holdings?.map((h, idx) => (
-                      <Box key={idx} sx={{ p: 1.2, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)' }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                          <Typography sx={{ fontSize: '0.84rem', fontWeight: 600, color: '#E2E8F0' }}>
+                      <Box key={idx} sx={{ p: 1.1, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.03)' }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.4 }}>
+                          <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: '#E2E8F0' }}>
                             {idx + 1}. {h.name}
                           </Typography>
-                          <Typography sx={{ fontSize: '0.84rem', fontWeight: 800, color: '#38BDF8' }}>
-                            {h.pct}%
-                          </Typography>
+                          <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: '#38BDF8' }}>{h.pct}%</Typography>
                         </Box>
                         <LinearProgress
                           variant="determinate"
                           value={Math.min(100, h.pct * 8)}
-                          sx={{ height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)', '& .MuiLinearProgress-bar': { bgcolor: '#38BDF8' } }}
+                          sx={{ height: 3, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)', '& .MuiLinearProgress-bar': { bgcolor: '#38BDF8' } }}
                         />
                       </Box>
                     ))}
                   </Box>
                 </Grid>
-
-                {/* Sectors Column */}
                 <Grid item xs={12} md={5}>
-                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', mb: 1.5, fontSize: '0.95rem' }}>
-                    Sector Allocation
+                  <Typography sx={{ fontWeight: 800, color: '#F8FAFC', mb: 1.2, fontSize: '0.92rem' }}>
+                    Sector allocation
                   </Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {selectedScheme?.sectors?.map((s, idx) => (
-                      <Box key={idx} sx={{ p: 1.2, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)' }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                          <Typography sx={{ fontSize: '0.84rem', fontWeight: 600, color: '#CBD5E1' }}>
-                            {s.sector}
-                          </Typography>
-                          <Typography sx={{ fontSize: '0.84rem', fontWeight: 800, color: '#10B981' }}>
-                            {s.value}%
-                          </Typography>
+                      <Box key={idx} sx={{ p: 1.1, borderRadius: '10px', bgcolor: 'rgba(255,255,255,0.03)' }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.4 }}>
+                          <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: '#CBD5E1' }}>{s.sector}</Typography>
+                          <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: '#10B981' }}>{s.value}%</Typography>
                         </Box>
                         <LinearProgress
                           variant="determinate"
                           value={Math.min(100, s.value * 2)}
-                          sx={{ height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)', '& .MuiLinearProgress-bar': { bgcolor: '#10B981' } }}
+                          sx={{ height: 3, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)', '& .MuiLinearProgress-bar': { bgcolor: '#10B981' } }}
                         />
                       </Box>
                     ))}
@@ -1979,14 +2171,14 @@ export default function AdminConsole() {
                 </Grid>
               </Grid>
             </DialogContent>
-            <DialogActions sx={{ px: 3, py: 2 }}>
+            <DialogActions sx={{ px: 3, py: 1.5 }}>
               <Button onClick={() => setSelectedScheme(null)} sx={{ color: '#94A3B8', textTransform: 'none', fontWeight: 700 }}>
                 Close
               </Button>
             </DialogActions>
           </Dialog>
 
-          {/* Database Storage & Purge Safety Modal */}
+          {/* Purge dialog */}
           <Dialog
             open={purgeDialogOpen}
             onClose={() => !purgeLoading && setPurgeDialogOpen(false)}
@@ -1997,9 +2189,9 @@ export default function AdminConsole() {
             }}
             PaperProps={{
               sx: {
-                borderRadius: '24px',
+                borderRadius: '20px',
                 background: 'linear-gradient(180deg, #0F172A 0%, #0B132B 100%)',
-                border: '1px solid rgba(244, 63, 94, 0.35)',
+                border: '1px solid rgba(244, 63, 94, 0.3)',
                 p: 1.5,
                 color: '#fff',
               },
@@ -2007,44 +2199,26 @@ export default function AdminConsole() {
           >
             <DialogTitle sx={{ pb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Box sx={{ p: 1, borderRadius: '12px', bgcolor: 'rgba(244, 63, 94, 0.15)', color: '#F43F5E' }}>
-                  <DeleteSweepIcon sx={{ fontSize: 24 }} />
+                <Box sx={{ p: 1, borderRadius: '10px', bgcolor: 'rgba(244, 63, 94, 0.15)', color: '#F43F5E' }}>
+                  <DeleteSweepIcon sx={{ fontSize: 22 }} />
                 </Box>
                 <Box>
-                  <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#FDA4AF' }}>
-                    Database Storage & Purge Engine
-                  </Typography>
+                  <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#FDA4AF' }}>Purge snapshot data</Typography>
                   <Typography variant="caption" sx={{ color: '#94A3B8' }}>
-                    Manage PostgreSQL mutual fund snapshot footprint and remove unwanted records
+                    Remove schemes from PostgreSQL. This cannot be undone.
                   </Typography>
                 </Box>
               </Box>
             </DialogTitle>
 
             <DialogContent sx={{ pt: 2 }}>
-              {/* Mode selection Tabs */}
-              <Box sx={{ display: 'flex', gap: 1, mb: 2.5 }}>
-                <Button
-                  variant={purgeMode === 'all' ? 'contained' : 'outlined'}
-                  onClick={() => setPurgeMode('all')}
-                  sx={{
-                    flex: 1,
-                    borderRadius: '12px',
-                    textTransform: 'none',
-                    fontWeight: 700,
-                    bgcolor: purgeMode === 'all' ? 'rgba(244, 63, 94, 0.2)' : 'transparent',
-                    color: purgeMode === 'all' ? '#FDA4AF' : '#94A3B8',
-                    borderColor: purgeMode === 'all' ? '#F43F5E' : 'rgba(255,255,255,0.1)',
-                  }}
-                >
-                  Purge Entire Database
-                </Button>
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
                 <Button
                   variant={purgeMode === 'amc' ? 'contained' : 'outlined'}
                   onClick={() => setPurgeMode('amc')}
                   sx={{
                     flex: 1,
-                    borderRadius: '12px',
+                    borderRadius: '10px',
                     textTransform: 'none',
                     fontWeight: 700,
                     bgcolor: purgeMode === 'amc' ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
@@ -2052,17 +2226,32 @@ export default function AdminConsole() {
                     borderColor: purgeMode === 'amc' ? '#38BDF8' : 'rgba(255,255,255,0.1)',
                   }}
                 >
-                  Delete Specific AMC
+                  One AMC
+                </Button>
+                <Button
+                  variant={purgeMode === 'all' ? 'contained' : 'outlined'}
+                  onClick={() => setPurgeMode('all')}
+                  sx={{
+                    flex: 1,
+                    borderRadius: '10px',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    bgcolor: purgeMode === 'all' ? 'rgba(244, 63, 94, 0.2)' : 'transparent',
+                    color: purgeMode === 'all' ? '#FDA4AF' : '#94A3B8',
+                    borderColor: purgeMode === 'all' ? '#F43F5E' : 'rgba(255,255,255,0.1)',
+                  }}
+                >
+                  Everything
                 </Button>
               </Box>
 
               {purgeMode === 'all' ? (
-                <Box sx={{ p: 2, borderRadius: '16px', bgcolor: 'rgba(244, 63, 94, 0.08)', border: '1px solid rgba(244, 63, 94, 0.2)' }}>
+                <Box sx={{ p: 2, borderRadius: '14px', bgcolor: 'rgba(244, 63, 94, 0.08)', border: '1px solid rgba(244, 63, 94, 0.2)' }}>
                   <Alert severity="warning" sx={{ mb: 2, bgcolor: 'transparent', color: '#FDA4AF', p: 0 }}>
-                    This will truncate the <strong>mf_portfolio_snapshots</strong> table and clear all {mfStatus?.total_schemes?.toLocaleString() || 0} fund disclosures from PostgreSQL.
+                    Deletes all {(mfStatus?.total_schemes ?? 0).toLocaleString()} schemes. Seed data is not restored automatically.
                   </Alert>
-                  <Typography sx={{ fontSize: '0.8rem', color: '#94A3B8', fontWeight: 700, mb: 0.8 }}>
-                    TYPE <span style={{ color: '#F43F5E', fontWeight: 900 }}>PURGE</span> TO CONFIRM
+                  <Typography sx={{ fontSize: '0.78rem', color: '#94A3B8', fontWeight: 700, mb: 0.8 }}>
+                    Type <span style={{ color: '#F43F5E', fontWeight: 900 }}>PURGE</span> to confirm
                   </Typography>
                   <TextField
                     fullWidth
@@ -2074,14 +2263,12 @@ export default function AdminConsole() {
                   />
                 </Box>
               ) : (
-                <Box sx={{ p: 2, borderRadius: '16px', bgcolor: 'rgba(2, 6, 23, 0.6)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 1.5 }}>
-                    Select an AMC currently in your database to remove all its associated scheme records:
+                <Box sx={{ p: 2, borderRadius: '14px', bgcolor: 'rgba(2, 6, 23, 0.55)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <Typography sx={{ fontSize: '0.82rem', color: '#94A3B8', mb: 1.2 }}>
+                    Choose an AMC currently in the database:
                   </Typography>
                   {syncedAmcs.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#64748B', fontStyle: 'italic' }}>
-                      No AMCs found in the database.
-                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#64748B' }}>No AMCs in the database.</Typography>
                   ) : (
                     <FormControl fullWidth size="small">
                       <Select
@@ -2090,16 +2277,17 @@ export default function AdminConsole() {
                         sx={{
                           bgcolor: 'rgba(255,255,255,0.05)',
                           color: '#F8FAFC',
-                          borderRadius: '12px',
+                          borderRadius: '10px',
                           '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.15)' },
-                          '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#38BDF8' },
                           '& .MuiSvgIcon-root': { color: '#94A3B8' },
                         }}
                       >
                         {syncedAmcs.map((item) => (
-                          <MenuItem key={item.amc} value={item.amc} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{item.amc}</span>
-                            <span style={{ color: '#94A3B8', fontSize: '0.75rem', marginLeft: '12px' }}>({item.schemes_count} schemes)</span>
+                          <MenuItem key={item.amc} value={item.amc}>
+                            {item.amc}
+                            <Typography component="span" sx={{ color: '#64748B', fontSize: '0.75rem', ml: 1 }}>
+                              ({item.schemes_count})
+                            </Typography>
                           </MenuItem>
                         ))}
                       </Select>
@@ -2126,17 +2314,17 @@ export default function AdminConsole() {
                   (purgeMode === 'amc' && !purgeTargetAmc)
                 }
                 sx={{
-                  borderRadius: '12px',
+                  borderRadius: '10px',
                   bgcolor: '#F43F5E',
                   color: '#fff',
                   fontWeight: 700,
                   textTransform: 'none',
-                  px: 3,
+                  px: 2.5,
                   '&:hover': { bgcolor: '#E11D48' },
                   '&.Mui-disabled': { bgcolor: 'rgba(244, 63, 94, 0.2)', color: 'rgba(255,255,255,0.3)' },
                 }}
               >
-                {purgeLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : purgeMode === 'all' ? 'Confirm Full Purge' : 'Delete AMC Schemes'}
+                {purgeLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : purgeMode === 'all' ? 'Purge all' : 'Purge AMC'}
               </Button>
             </DialogActions>
           </Dialog>

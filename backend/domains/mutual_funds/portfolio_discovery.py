@@ -14,9 +14,9 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
     Fetch comprehensive fund metadata (sectors, holdings, risk, aum, ER).
     
     This acts as the core Multi-Tier Insights Engine:
-      - Tier 1: PostgreSQL-backed AMFI Official Snapshot (100% accurate Indian disclosures)
+      - Tier 1: PostgreSQL AMFI snapshots (seeded and/or sync ingest; may use category proxies)
       - Tier 2: Yahoo Finance Engine (Global / ETF / Foreign fund coverage)
-      - Tier 3: Deterministic Categorical Heuristic Engine (100% UI uptime safety net)
+      - Tier 3: Deterministic Categorical Heuristic Engine (UI uptime safety net)
     
     Args:
         isin (str): International Securities Identification Number.
@@ -36,7 +36,7 @@ def fetch_live_portfolio(isin: str, category: str, fund_name: str = "", refresh:
 
     result = None
 
-    # ── Tier 1: AMFI PostgreSQL Snapshot (Institutional Regulatory Data) ──────
+    # ── Tier 1: AMFI PostgreSQL Snapshot ───────────────────────────────────────
     try:
         from shared.services.providers.amfi_db import AMFIDatabaseProvider
         db_provider = AMFIDatabaseProvider()

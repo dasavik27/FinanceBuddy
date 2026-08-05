@@ -6,12 +6,10 @@ Fetches, normalizes, and stores official mutual fund disclosures into PostgreSQL
 
 import json
 import logging
-import re
 import time
 import urllib.request
-from datetime import datetime
-from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
 
 from shared import db
 from shared.cache import MarketCache
@@ -19,6 +17,53 @@ from shared.cache import MarketCache
 logger = logging.getLogger(__name__)
 
 AMFI_NAV_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
+
+# Search / purge aliases: UI labels that do not match the stored AMC string 1:1.
+AMC_ALIASES = {
+    "parag parikh": ["parag parikh", "ppfas"],
+    "ppfas": ["ppfas", "parag parikh"],
+    "grow": ["groww"],
+    "groww": ["groww"],
+}
+
+
+class AmfiFetchError(RuntimeError):
+    """Raised when the AMFI NAVAll feed cannot be fetched or parsed."""
+
+
+def _portfolio_as_of() -> date:
+    """Last day of the previous calendar month (AMFI disclosures lag ~1 month)."""
+    return date.today().replace(day=1) - timedelta(days=1)
+
+
+def _amc_match_terms(term: str) -> List[str]:
+    """Expand an AMC filter/search term into ILIKE patterns (alias-aware)."""
+    clean = (term or "").strip()
+    if not clean:
+        return []
+    aliases = AMC_ALIASES.get(clean.lower(), [clean])
+    # De-dupe while preserving order
+    seen = set()
+    out: List[str] = []
+    for a in aliases:
+        key = a.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(a)
+    return out
+
+
+def _invalidate_market_caches() -> None:
+    """Clear disk MarketCache and in-process market-data caches after sync/purge."""
+    try:
+        MarketCache.invalidate_all()
+    except Exception as exc:
+        logger.warning("[AMFI_INGEST] MarketCache.invalidate_all failed: %s", exc)
+    try:
+        from shared.services.market_data import clear_market_data_cache
+        clear_market_data_cache()
+    except Exception as exc:
+        logger.warning("[AMFI_INGEST] clear_market_data_cache failed: %s", exc)
 
 # Standard category benchmark templates for sector distribution and top holdings
 CATEGORY_BENCHMARKS = {
@@ -51,6 +96,34 @@ CATEGORY_BENCHMARKS = {
         ],
         "er_direct": 0.85,
         "er_regular": 1.70,
+    },
+    "Large & Mid Cap Fund": {
+        "cap": "Large & Mid Cap",
+        "risk": "VERY HIGH",
+        "sectors": [
+            {"sector": "Financial Services", "value": 28.40},
+            {"sector": "Information Technology", "value": 13.60},
+            {"sector": "Capital Goods & Engineering", "value": 12.20},
+            {"sector": "Automobile & Auto Components", "value": 9.80},
+            {"sector": "Healthcare & Pharma", "value": 8.40},
+            {"sector": "Oil, Gas & Consumable Fuels", "value": 7.50},
+            {"sector": "Consumer Discretionary", "value": 6.80},
+            {"sector": "Others & Cash", "value": 13.30},
+        ],
+        "holdings": [
+            {"name": "HDFC Bank Ltd", "pct": 7.40},
+            {"name": "ICICI Bank Ltd", "pct": 6.20},
+            {"name": "Reliance Industries Ltd", "pct": 5.80},
+            {"name": "Infosys Ltd", "pct": 4.60},
+            {"name": "Larsen & Toubro Ltd", "pct": 4.10},
+            {"name": "Persistent Systems Ltd", "pct": 3.40},
+            {"name": "Axis Bank Ltd", "pct": 3.20},
+            {"name": "Max Healthcare Institute Ltd", "pct": 2.90},
+            {"name": "Bharti Airtel Ltd", "pct": 2.80},
+            {"name": "Federal Bank Ltd", "pct": 2.60},
+        ],
+        "er_direct": 0.78,
+        "er_regular": 1.72,
     },
     "Mid Cap Fund": {
         "cap": "Mid Cap",
@@ -276,18 +349,27 @@ def _normalize_category(raw_category: str, scheme_name: str) -> str:
     """Normalize AMFI raw category string and scheme name to standard SEBI category."""
     name_lower = scheme_name.lower()
     cat_lower = raw_category.lower()
+    combined = f"{name_lower} {cat_lower}"
 
-    if "small cap" in name_lower or "small cap" in cat_lower:
+    if "small cap" in combined:
         return "Small Cap Fund"
-    if "mid cap" in name_lower or "mid cap" in cat_lower or "midcap" in name_lower:
+    # Must run before plain mid-cap / large-cap checks
+    if (
+        "large & mid" in combined
+        or "large and mid" in combined
+        or "large & midcap" in combined
+        or "large and midcap" in combined
+    ):
+        return "Large & Mid Cap Fund"
+    if "mid cap" in combined or "midcap" in combined:
         return "Mid Cap Fund"
-    if "flexi cap" in name_lower or "flexicap" in name_lower or "flexi cap" in cat_lower:
+    if "flexi cap" in combined or "flexicap" in combined:
         return "Flexi Cap Fund"
-    if "multi cap" in name_lower or "multicap" in name_lower or "multi cap" in cat_lower:
+    if "multi cap" in combined or "multicap" in combined:
         return "Multi Cap Fund"
-    if "large cap" in name_lower or "bluechip" in name_lower or "top 100" in name_lower or "large cap" in cat_lower:
+    if "large cap" in combined or "bluechip" in name_lower or "top 100" in name_lower:
         return "Large Cap Fund"
-    if "elss" in name_lower or "tax saver" in name_lower or "tax adv" in name_lower or "elss" in cat_lower:
+    if "elss" in combined or "tax saver" in name_lower or "tax adv" in name_lower:
         return "ELSS / Tax Saver"
     if "nifty" in name_lower or "sensex" in name_lower or "index" in name_lower:
         return "Index Fund"
@@ -329,6 +411,7 @@ def _extract_amc_name(scheme_name: str, raw_amc: str) -> str:
 def fetch_amfi_master_schemes() -> List[Dict[str, Any]]:
     """
     Fetch and parse full master scheme catalogue from AMFI official feed.
+    Raises AmfiFetchError when the feed cannot be downloaded or yields no schemes.
     """
     schemes: List[Dict[str, Any]] = []
     try:
@@ -339,7 +422,6 @@ def fetch_amfi_master_schemes() -> List[Dict[str, Any]]:
         lines = content.split("\n")
         current_category = ""
         current_amc = ""
-
         seen_isins = set()
 
         for line in lines:
@@ -369,9 +451,14 @@ def fetch_amfi_master_schemes() -> List[Dict[str, Any]]:
                                 "raw_amc": current_amc,
                                 "nav": nav_str,
                             })
-
+    except AmfiFetchError:
+        raise
     except Exception as exc:
         logger.error("[AMFI_INGEST] Failed to fetch AMFI master feed: %s", exc)
+        raise AmfiFetchError(f"Failed to fetch AMFI master feed: {exc}") from exc
+
+    if not schemes:
+        raise AmfiFetchError("AMFI master feed returned 0 parseable schemes")
 
     return schemes
 
@@ -422,7 +509,7 @@ def get_sync_status() -> Dict[str, Any]:
 
     return {
         "total_schemes": total_schemes,
-        "latest_portfolio_month": latest_date or "July 2026",
+        "latest_portfolio_month": latest_date or _portfolio_as_of().strftime("%B %Y"),
         "recent_logs": recent_logs,
     }
 
@@ -450,18 +537,34 @@ def search_synced_schemes(
             params = []
 
             if clean_amc and clean_amc.lower() != "all":
-                amc_pattern = "groww" if clean_amc.lower() == "grow" else clean_amc
-                where_clauses.append("amc ILIKE %s")
-                params.append(f"%{amc_pattern}%")
+                amc_terms = _amc_match_terms(clean_amc)
+                amc_parts = []
+                for term in amc_terms:
+                    amc_parts.append("(amc ILIKE %s OR scheme_name ILIKE %s)")
+                    params.extend([f"%{term}%", f"{term}%"])
+                where_clauses.append("(" + " OR ".join(amc_parts) + ")")
 
             if clean_cat and clean_cat.lower() != "all":
                 where_clauses.append("category ILIKE %s")
                 params.append(f"%{clean_cat}%")
 
             if clean_q:
-                amc_term = "groww" if clean_q.lower() == "grow" else clean_q
-                where_clauses.append("(scheme_name ILIKE %s OR isin ILIKE %s OR amc ILIKE %s OR amc ILIKE %s)")
-                params.extend([f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%", f"%{amc_term}%"])
+                q_terms = _amc_match_terms(clean_q)
+                q_parts = []
+                # Alias-only queries (e.g. "grow") must not substring-match "Growth" plans
+                if clean_q.lower() in AMC_ALIASES:
+                    for term in q_terms:
+                        q_parts.append("amc ILIKE %s")
+                        params.append(f"%{term}%")
+                        q_parts.append("scheme_name ILIKE %s")
+                        params.append(f"{term}%")
+                else:
+                    q_parts.extend(["scheme_name ILIKE %s", "isin ILIKE %s"])
+                    params.extend([f"%{clean_q}%", f"%{clean_q}%"])
+                    for term in q_terms:
+                        q_parts.append("amc ILIKE %s")
+                        params.append(f"%{term}%")
+                where_clauses.append("(" + " OR ".join(q_parts) + ")")
 
             where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -474,18 +577,19 @@ def search_synced_schemes(
             order_sql = "ORDER BY aum_cr DESC NULLS LAST"
             order_params = []
             if clean_q:
-                amc_term = "groww" if clean_q.lower() == "grow" else clean_q
-                order_sql = """
+                q_terms = _amc_match_terms(clean_q)
+                amc_rank_parts = " OR ".join(["amc ILIKE %s"] * len(q_terms))
+                order_sql = f"""
                 ORDER BY
                   CASE
-                    WHEN amc ILIKE %s OR amc ILIKE %s THEN 1
+                    WHEN {amc_rank_parts} THEN 1
                     WHEN scheme_name ILIKE %s THEN 2
                     WHEN isin ILIKE %s THEN 3
                     ELSE 4
                   END,
                   aum_cr DESC NULLS LAST
                 """
-                order_params = [f"%{clean_q}%", f"%{amc_term}%", f"{clean_q}%", f"{clean_q}%"]
+                order_params = [f"%{t}%" for t in q_terms] + [f"{clean_q}%", f"{clean_q}%"]
 
             query_sql = f"""
                 SELECT isin, scheme_code, scheme_name, amc, category, aum_cr, expense_ratio,
@@ -572,7 +676,7 @@ def purge_snapshots(amc: Optional[str] = None, purge_all: bool = False, admin_em
     """
     Purge mutual fund portfolio snapshots from PostgreSQL.
     If purge_all is True: truncates / deletes all rows.
-    If amc is provided: removes all schemes belonging to that AMC.
+    If amc is provided: removes all schemes belonging to that AMC (alias-aware).
     """
     deleted_count = 0
     try:
@@ -586,15 +690,23 @@ def purge_snapshots(amc: Optional[str] = None, purge_all: bool = False, admin_em
                     admin_email, deleted_count
                 )
             elif amc:
-                clean_amc = amc.strip()
+                terms = _amc_match_terms(amc)
+                if not terms:
+                    return {"status": "error", "message": "Specify purge_all=True or amc to purge"}
+                where_parts = []
+                params: List[Any] = []
+                for term in terms:
+                    where_parts.append("(amc ILIKE %s OR scheme_name ILIKE %s)")
+                    params.extend([f"%{term}%", f"{term}%"])
+                where_sql = " OR ".join(where_parts)
                 count_row = conn.execute(
-                    "SELECT COUNT(*) FROM mf_portfolio_snapshots WHERE amc ILIKE %s",
-                    (f"%{clean_amc}%",),
+                    f"SELECT COUNT(*) FROM mf_portfolio_snapshots WHERE {where_sql}",
+                    tuple(params),
                 ).fetchone()
                 deleted_count = count_row[0] if count_row else 0
                 conn.execute(
-                    "DELETE FROM mf_portfolio_snapshots WHERE amc ILIKE %s",
-                    (f"%{clean_amc}%",),
+                    f"DELETE FROM mf_portfolio_snapshots WHERE {where_sql}",
+                    tuple(params),
                 )
                 logger.info(
                     "[AMFI_INGEST] Admin %s purged %d schemes for AMC %s",
@@ -603,13 +715,8 @@ def purge_snapshots(amc: Optional[str] = None, purge_all: bool = False, admin_em
             else:
                 return {"status": "error", "message": "Specify purge_all=True or amc to purge"}
 
-        # Also purge application-level MarketCache to ensure consistency
-        try:
-            from shared.services.market_data import MarketCache
-            MarketCache.clear()
-            logger.info("[AMFI_INGEST] MarketCache cleared after snapshot purge")
-        except Exception:
-            pass
+        _invalidate_market_caches()
+        logger.info("[AMFI_INGEST] Market caches cleared after snapshot purge")
 
         return {
             "status": "success",
@@ -638,7 +745,9 @@ def trigger_amfi_sync(
     - amcs=['Groww', 'Zerodha', ...]: Ingests specific AMCs
     """
     start_time = time.time()
-    portfolio_month = "July 2026"
+    as_of = _portfolio_as_of()
+    portfolio_month = as_of.strftime("%B %Y")
+    portfolio_date = as_of.isoformat()
     log_id = None
     updated_count = 0
     total_in_db = 0
@@ -649,10 +758,20 @@ def trigger_amfi_sync(
         target_amcs = [a.lower() for a in TOP_5_AMCS]
     elif preset == "top10":
         target_amcs = [a.lower() for a in TOP_10_AMCS]
+    elif preset == "all":
+        target_amcs = None
     elif amcs and len(amcs) > 0:
         target_amcs = [a.strip().lower() for a in amcs if a.strip()]
 
-    scope_desc = f" ({preset.upper() if preset else ', '.join(amcs[:3]) + '...'})" if target_amcs else " (All AMCs)"
+    if preset and preset != "all":
+        scope_desc = f" ({preset.upper()})"
+    elif amcs:
+        shown = ", ".join(amcs[:3])
+        if len(amcs) > 3:
+            shown += "..."
+        scope_desc = f" ({shown})"
+    else:
+        scope_desc = " (All AMCs)"
 
     try:
         # Log start of sync
@@ -671,7 +790,7 @@ def trigger_amfi_sync(
         except Exception as exc:
             logger.warning("[AMFI_INGEST] Could not create sync log record: %s", exc)
 
-        # 2. Fetch official master schemes from AMFI
+        # 2. Fetch official master schemes from AMFI (raises on failure / empty feed)
         raw_schemes = fetch_amfi_master_schemes()
         logger.info("[AMFI_INGEST] Fetched %d master schemes from AMFI feed", len(raw_schemes))
 
@@ -688,18 +807,22 @@ def trigger_amfi_sync(
                 # Check if scheme matches selective AMC filter
                 if target_amcs is not None:
                     matched = False
+                    name_lower = name.lower()
+                    amc_lower = amc_name.lower()
                     for t in target_amcs:
                         t_clean = t.strip().lower()
                         if not t_clean:
                             continue
-                        # Match strictly against AMC name or recognized alias
-                        if t_clean in amc_name.lower() or (t_clean == "grow" and "groww" in amc_name.lower()):
-                            matched = True
-                            break
-                        # Or scheme name strictly starts with AMC brand (e.g. "Groww Nifty 50...")
-                        name_lower = name.lower()
-                        if name_lower.startswith(t_clean + " ") or (t_clean == "grow" and name_lower.startswith("groww ")):
-                            matched = True
+                        match_terms = _amc_match_terms(t_clean)
+                        for term in match_terms:
+                            term_l = term.lower()
+                            if term_l in amc_lower:
+                                matched = True
+                                break
+                            if name_lower.startswith(term_l + " "):
+                                matched = True
+                                break
+                        if matched:
                             break
                     if not matched:
                         continue
@@ -708,6 +831,7 @@ def trigger_amfi_sync(
                 is_direct = "direct" in name.lower()
                 er = bench["er_direct"] if is_direct else bench["er_regular"]
 
+                # Deterministic placeholder AUM — AMFI NAV feed does not publish AUM
                 base_hash = sum(ord(c) for c in isin) % 25000 + 1500
                 aum = round(float(base_hash), 2)
 
@@ -722,10 +846,10 @@ def trigger_amfi_sync(
                     er,
                     bench["risk"],
                     "1% within 365 days, Nil thereafter",
-                    "2026-07-31",
+                    portfolio_date,
                     json.dumps(bench["sectors"]),
                     json.dumps(bench["holdings"]),
-                    "AMFI Official Disclosure",
+                    "AMFI Catalogue (category benchmark proxies)",
                 ))
 
             if batch_data:
@@ -740,6 +864,15 @@ def trigger_amfi_sync(
                         scheme_name = EXCLUDED.scheme_name,
                         amc = EXCLUDED.amc,
                         category = EXCLUDED.category,
+                        cap_type = EXCLUDED.cap_type,
+                        aum_cr = EXCLUDED.aum_cr,
+                        expense_ratio = EXCLUDED.expense_ratio,
+                        risk_level = EXCLUDED.risk_level,
+                        exit_load = EXCLUDED.exit_load,
+                        portfolio_date = EXCLUDED.portfolio_date,
+                        sectors = EXCLUDED.sectors,
+                        holdings = EXCLUDED.holdings,
+                        source = EXCLUDED.source,
                         updated_at = now()
                 """
 
@@ -751,11 +884,8 @@ def trigger_amfi_sync(
             total_in_db = count_res[0] if count_res else len(batch_data)
             updated_count = len(batch_data)
 
-        # 4. Clear L1/L2 MarketCache so all users immediately get updated factsheets
-        try:
-            MarketCache.invalidate_all()
-        except Exception:
-            pass
+        # 4. Clear caches so clients pick up refreshed snapshots
+        _invalidate_market_caches()
 
         duration = round(time.time() - start_time, 2)
 
@@ -804,5 +934,6 @@ def trigger_amfi_sync(
             "schemes_updated": 0,
             "duration_seconds": duration,
             "error": error_msg,
+            "portfolio_month": portfolio_month,
         }
 
