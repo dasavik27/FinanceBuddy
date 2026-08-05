@@ -21,9 +21,9 @@ Your data persists to your own Postgres and is encrypted before it gets there.
 |---|---|
 | **[ONBOARDING.md](ONBOARDING.md)** | Setting it up — locally and in production. Every key, every console, in order. **Start here.** |
 | **[API.md](API.md)** | How to call the API, pass the Bearer token, and the full `/auth` endpoint catalog. |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, domain architecture (including Budget Analyzer), **authentication & access control**, security & privacy model, and design constraints. |
-| **[VERIFICATION.md](VERIFICATION.md)** | Verification checklist, environment validation, database schema checks, auth/admin deploy checks, and deployment verification scripts. |
-| **[HOW_TO_VERIFY_DOCUMENTATION.md](HOW_TO_VERIFY_DOCUMENTATION.md)** | Quick checklist to confirm documentation is complete and up to date. |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | **Single source of truth** — overall system diagram, all four domains, data flows, auth, security. |
+| **[VERIFICATION.md](VERIFICATION.md)** | Setup / deploy verification checklist and scripts. |
+| **[MIGRATION.md](MIGRATION.md)** | Moving off Supabase Auth, Postgres, or both. |
 
 ---
 

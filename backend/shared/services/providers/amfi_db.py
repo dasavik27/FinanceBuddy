@@ -3,7 +3,7 @@ shared/services/providers/amfi_db.py
 Tier 1 Metadata Provider: PostgreSQL-backed AMFI portfolio snapshots.
 
 Rows may be curated seed data or sync-time category benchmarks (AUM/sectors/holdings
-are not always live per-fund AMFI PDF disclosures — see AMFI_PIPELINE.md §9).
+are not always live per-fund AMFI PDF disclosures — see ARCHITECTURE.md → Mutual Funds).
 """
 
 import json

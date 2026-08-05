@@ -1,107 +1,207 @@
 # Finance Buddy — Architecture
 
-Complete personal finance analytics platform with four independent domains: Budget Analyzer (cash-flow analysis), Mutual Funds (portfolio analytics), Equity (direct stock tracking), and Tax Expert (income-tax computation).
+**Single source of truth** for how Finance Buddy is built and how its four domains
+work end-to-end. This describes the system as it is.
 
-This describes the system as it is. Where a design looks unusual, the reason is stated — most of the unusual choices trace back to one constraint (below) and are wrong to "clean up" without removing that constraint first.
+Companion docs (operations only — not architecture duplicates):
 
-Companion documents: **ONBOARDING.md** (setup), **API.md** (how to call APIs & pass tokens),
-and **VERIFICATION.md** (setup validation).
+| Doc | Role |
+|---|---|
+| [ONBOARDING.md](ONBOARDING.md) | Local + production setup |
+| [API.md](API.md) | How to call APIs & pass Bearer tokens (`/auth` catalog) |
+| [VERIFICATION.md](VERIFICATION.md) | Setup / deploy checks |
+| [MIGRATION.md](MIGRATION.md) | Moving off Supabase Auth, DB, or both |
 
 ---
 
-## API prefixes by domain
+## 1. System overview
 
-| Domain | Prefix | Routers | API Example |
+Finance Buddy is a personal finance analytics platform with **four independent
+domains** plus shared infrastructure:
+
+| Domain | Job |
+|---|---|
+| **Budget Analyzer** | Bank-statement cash-flow intelligence (50/30/20, categories, insights) |
+| **Mutual Funds** | CAS portfolio analytics (XIRR, allocation, peers, rebalance, tax-harvest) |
+| **Equity** | Direct stock holdings, P&L, sectors, stock research analyzer |
+| **Tax Expert** | AIS-driven income-tax computation, regime compare, broker reconcile |
+
+```mermaid
+flowchart TB
+  subgraph clients [Clients]
+    SPA[React SPA - Vite MUI Zustand]
+  end
+
+  subgraph edge [Edge]
+    AuthIdP[Supabase Auth - JWT IdP]
+  end
+
+  subgraph api [FastAPI Backend - single uvicorn worker]
+    MW[IdentityMiddleware - JWKS verify + users.resolve]
+    SharedR["/auth /market /accounts /history /admin"]
+    BudgetR["/budget/*"]
+    MFR["/mutual-funds/*"]
+    EqR["/equity/*"]
+    TaxR["/tax-expert/*"]
+  end
+
+  subgraph data [Data plane]
+    PG[(PostgreSQL - encrypted payloads)]
+    Mem[Resident LRU sessions - MF Equity Tax]
+    Cache[MarketCache L1 + disk]
+  end
+
+  subgraph ext [External market data]
+    AMFI[AMFI NAV TER catalogue]
+    MFAPI[mfapi.in NAV history]
+    YF[Yahoo Finance]
+    NSE[NSE disclosures]
+    BSE[BSE VWAP]
+    Kite[Zerodha Kite optional]
+  end
+
+  SPA -->|Bearer JWT| MW
+  AuthIdP -->|issue JWT| SPA
+  MW --> SharedR
+  MW --> BudgetR
+  MW --> MFR
+  MW --> EqR
+  MW --> TaxR
+
+  BudgetR --> PG
+  MFR --> Mem
+  MFR --> PG
+  EqR --> Mem
+  EqR --> PG
+  TaxR --> Mem
+  TaxR --> PG
+  SharedR --> PG
+
+  MFR --> AMFI
+  MFR --> MFAPI
+  MFR --> YF
+  EqR --> YF
+  EqR --> NSE
+  EqR --> BSE
+  EqR --> Kite
+  SharedR --> AMFI
+  SharedR --> Cache
+  Mem --> Cache
+```
+
+### Design constraint
+
+Domains must stay **independently removable**. Cross-domain fan-out goes through
+registries (`janitor`, `session_stores`), not hardcoded import lists. Unusual
+choices usually exist because of that constraint — do not “clean them up” without
+removing the constraint first.
+
+---
+
+## 2. API prefixes & frontend routes
+
+### API
+
+| Domain | Prefix | Routers | Example |
 |---|---|---|---|
-| Infrastructure | `/auth` `/market` `/accounts` `/history` | 4 routers | `GET /auth/me`, `GET /auth/users` (admin) |
-| **Budget Analyzer** | `/budget/{portfolio,analytics,rules,accounts,insights}` | 5 routers | `POST /budget/portfolio/upload` |
-| **Mutual Funds** | `/mutual-funds/*` | 9 routers | `GET /mutual-funds/overview/{sid}/summary` |
-| **Tax Expert** | `/tax-expert` | 6 routers | `GET /tax-expert/{sid}/tax/summary` |
-| **Equity** | `/equity/*` | 6 routers | `GET /equity/overview/{sid}/summary` |
+| Infrastructure | `/auth` `/market` `/accounts` `/history` `/admin` | shared | `GET /auth/me` |
+| Budget | `/budget/{portfolio,analytics,rules,accounts,insights}` | 5 | `POST /budget/portfolio/upload` |
+| Mutual Funds | `/mutual-funds/*` | 9 | `GET /mutual-funds/overview/{sid}/summary` |
+| Equity | `/equity/*` | 6 | `GET /equity/overview/{sid}/summary` |
+| Tax Expert | `/tax-expert` | 6 | `GET /tax-expert/{sid}/tax/summary` |
 
----
+Full `/auth` method catalog: **[API.md](API.md)**.
 
-## Frontend routes
-
-Each domain owns a top-level path. `/dashboard` is the hub — the grid of the four
-domains, and the way back out from inside one.
+### Frontend
 
 | Path | Renders |
 |---|---|
-| `/` | Landing (signed out) · redirects to `/dashboard` (signed in) |
+| `/` | Landing (out) · → `/dashboard` (in) |
 | `/dashboard` | Domain hub |
-| `/mutual-funds/*` | Mutual Funds (tabs: overview, holdings, performance, compare, journey, insights, history) |
-| `/equity/*` | Indian Stocks |
+| `/mutual-funds/*` | MF tabs |
+| `/equity/*` | Equity tabs |
 | `/tax-expert/*` | Tax Expert |
 | `/budget/*` | Budget Analyzer |
-| `/accounts` | Account settings, export, purge |
-| `/admin` | Admin Console (access requests, invites, user accounts) — shown in Topbar when `role=admin` |
+| `/accounts` | Export / purge |
+| `/profile` | Profile + PAN |
+| `/admin` | Admin Console (`role=admin`) |
 
-Domains previously sat under `/dashboard/<domain>`. Those URLs still resolve —
-`Dashboard.tsx` rewrites `/dashboard/<rest>` to `/<rest>`, preserving query and hash —
-but new links should use the top-level form. The redirect and the ranking of
-`dashboard` against `dashboard/*` are covered by `routes.test.ts`.
-
-OAuth redirect URLs point at `/dashboard` and are unaffected.
+Legacy `/dashboard/<domain>` rewrites to `/<domain>` (`routes.test.ts`).
 
 ---
 
-## Backend structure
+## 3. Repository layout
 
 ```
 backend/
-├── main.py                     # middleware, router mounting, lifespan
-├── migrations/                 # 0001-0009 numbered SQL migrations
+├── main.py                     # middleware, router mount, lifespan
+├── migrations/                 # 0001–0010 SQL
 ├── shared/
-│   ├── db.py                   # single psycopg 3 connection pool
-│   ├── crypto.py               # AES-256-GCM encryption
-│   ├── identity.py             # user auth, ownership checks
-│   ├── janitor.py              # periodic sweep registry (see below)
-│   ├── session_stores.py       # resident-state registry (see below)
-│   ├── reference/              # statutory data owned by no domain
-│   │   └── capital_gains.json  # LTCG/STCG rates, holding periods
-│   ├── services/
-│   │   ├── returns.py          # trailing returns on any price/NAV series
-│   │   ├── market_data.py      # AMFI / mfapi NAV bundles
-│   │   ├── market_indices.py   # benchmark index series
-│   │   └── cache.py            # in-process TTL cache
-│   └── routers/                # /auth, /market, /accounts, /history
+│   ├── db.py                   # psycopg 3 pool
+│   ├── crypto.py               # AES-256-GCM
+│   ├── identity.py / users.py / oidc.py
+│   ├── janitor.py              # periodic sweep registry
+│   ├── session_stores.py       # resident-state registry
+│   ├── storage.py              # MF/Equity payload codec + dedup
+│   ├── reference/              # statutory facts (capital gains, …)
+│   ├── services/               # market_data, amfi_ingest, cache, returns
+│   └── routers/                # auth, market, accounts, history, admin_mf
 └── domains/
-    ├── budget/                 # transaction parsing, categorization, rules, insights
-    ├── mutual_funds/           # XIRR, allocation, peer comparison
-    ├── tax_expert/             # capital gains, regime comparison
-    └── equity/                 # holdings sync, sector analysis, P&L
+    ├── budget/
+    ├── mutual_funds/
+    ├── equity/
+    └── tax_expert/
+
+frontend/src/
+├── domains/{budget,mutual-funds,equity,tax-expert}/
+└── shared/{auth,api,components/admin,store}/
 ```
 
-### Keeping the domains independent
-
-A domain must be removable without breaking the others. Two registries exist so
-that cross-domain fan-out is not written as a hardcoded list of imports:
+### Domain independence
 
 | Registry | Domains register | Consumed by |
 |---|---|---|
-| `shared/janitor.py` | a periodic sweep (`purge_expired`) | `main.py` lifespan starts one thread |
-| `shared/session_stores.py` | `evict_user` / `forget_session` / `clear_all` | logout, account purge, cache clear, history delete |
+| `shared/janitor.py` | periodic `purge_expired` | lifespan thread (~10 min) |
+| `shared/session_stores.py` | `evict_user` / `forget_session` / `clear_all` | logout, purge, cache clear |
 
-Both are populated as an import side effect of each domain's session module, and
-`main.py` logs the resulting roster at startup — a store that fails to register would
-otherwise mean a purge silently evicts nothing.
+Rules:
 
-Rules that hold today and are worth keeping:
-
-- **No domain imports another domain.** Currently zero, backend and frontend.
-- **`shared/` must not import from `domains/`.** One exception remains:
-  `shared/routers/history.py` pulls `compute_xirr` for its mutual-funds-specific
-  `/compare` handler, which belongs in that domain.
-- **Statutory facts go in `shared/reference/`,** not in the domain that happens to
-  need them first — capital-gains rates live there because Mutual Funds and Tax
-  Expert are equally entitled to them.
+- **No domain imports another domain** (backend or frontend).
+- **`shared/` must not import `domains/`** — exception: `history.py` uses MF
+  `compute_xirr` for `/history/compare`.
+- **Statutory facts** live in `shared/reference/` (shared by MF + Tax).
 
 ---
 
-## Database migrations
+## 4. Overall request lifecycle
 
-All migrations are idempotent and advisory-locked. Run with:
+```mermaid
+sequenceDiagram
+  participant U as Browser SPA
+  participant S as Supabase Auth
+  participant API as FastAPI
+  participant DB as Postgres
+
+  U->>S: Sign-in Google / password
+  S-->>U: access_token JWT
+  U->>API: API call + Authorization Bearer
+  API->>API: JWKS verify + users.resolve
+  alt not allowlisted
+    API-->>U: 403 not_authorized
+  else pending or suspended
+    API-->>U: block except /auth/me logout
+  else active
+    API->>DB: domain read/write encrypted payloads
+    API-->>U: JSON no-store
+  end
+```
+
+**Logout order:** `POST /auth/logout` (await — evicts resident stores) →
+Supabase `signOut` → clear Zustand.
+
+---
+
+## 5. Database migrations
 
 ```bash
 cd backend && python -m migrations.migrate
@@ -110,356 +210,382 @@ cd backend && python -m migrations.migrate
 | # | What |
 |---|---|
 | 0001 | `users`, `identities`, `profiles`, `sessions`, `session_payloads`, `tax_payloads`, `app_settings` |
-| 0002 | Row-level security, deny-all — a backstop behind the application's own authorization, not a replacement for it |
-| 0003 | Move PII into application-encrypted columns (PAN, metrics, payloads) |
-| 0004 | Budget: `budget_payloads`, `budget_rules` |
-| 0005 | Budget rule versioning |
-| 0006 | Budget hardening — brings the budget tables up to the schema conventions the rest already follow |
-| 0007 | Budget accounts: `budget_account_meta`, `budget_envelopes`, `budget_merchant_aliases`, `budget_txn_flags` |
-| 0008 | `access_requests` — public early-access form + admin allowlist |
-| 0009 | `users.status`, `users.role` — pending / active / suspended; user / admin |
-
-All are Postgres-validated by `test_sql_is_valid_postgres`.
+| 0002 | RLS deny-all backstop |
+| 0003 | Application-encrypted PII columns |
+| 0004–0007 | Budget tables / hardening / accounts |
+| 0008 | `access_requests` |
+| 0009 | `users.status`, `users.role` |
+| 0010 | `mf_portfolio_snapshots`, `mf_sync_logs` |
 
 ---
 
-## Frontend structure
+## 6. Budget Analyzer
 
-```
-frontend/src/
-├── domains/
-│   ├── budget/                 # BudgetDashboard, upload, sessions, insights
-│   ├── mutual-funds/           # MF portfolio, holdings, insights
-│   ├── tax-expert/             # Tax computation, ITR comparison
-│   └── equity/                 # Stock holdings, sector allocation
-└── shared/
-    ├── auth/authClient.ts      # Supabase OAuth + access-status helpers
-    ├── api/client.ts           # Axios + Bearer interceptor
-    ├── components/admin/       # AdminConsole (access control UI)
-    └── store/appStore.ts       # Zustand session store
-```
-
----
-
-## Budget Analyzer — Domain Architecture & Engines
-
-The **Budget Analyzer** is a multi-bank personal finance engine built for Indian bank statements and transaction ledgers. It converts raw PDF, CSV, and Excel statements into actionable cash flow intelligence without requiring open banking credentials or screen scraping.
-
-### Architecture & Data Pipeline
+Converts Indian bank statements into cash-flow intelligence — **no open banking**,
+no third-party scraping.
 
 ```mermaid
-graph TD
-    A[Bank Statement PDF / CSV / XLSX] --> B[Statement Parser & Bank Detector]
-    B --> C[Merchant Normalizer]
-    C --> D[Categorizer & Rules Engine]
-    D --> E[(Encrypted Storage & Session Ledger)]
-    E --> F[Analytics Engine - analytics.py]
-    F --> G[50/30/20 Health Suite]
-    F --> H[Category Spend & Drilldown]
-    F --> I[Monthly Velocity & Cash Flows]
-    F --> J[Transactions Ledger Tab]
-    G --> K[React 18 MUI UI Dashboard]
-    H --> K
-    I --> K
-    J --> K
+flowchart TD
+  A[Statement PDF CSV XLSX] --> B[parser.py bank detect]
+  B --> C[categorizer + user rules]
+  C --> D[(budget_payloads encrypted)]
+  D --> E[pipeline.py BudgetContext]
+  E --> F[analytics + insights]
+  F --> G[BudgetDashboard UI]
 ```
 
-#### Pipeline Lifecycle:
-1. **Upload**: User uploads a statement file via `UploadStatementModal.tsx`.
-2. **Extraction**: `parser.py` parses tables, normalizes dates (`YYYY-MM-DD`), splits debit/credit amounts, and extracts descriptions.
-3. **Enrichment**: `categorizer.py` matches keywords and custom rules to assign categories and payment modes (`UPI`, `NetBanking`, `Card`, `ATM`, `Cheque`).
-4. **Persistence**: `sessions.py` persists encrypted session records in PostgreSQL and updates the user's aggregated master ledger.
-5. **Analytics**: `analytics.py` executes vectorized pandas aggregations to deliver sub-millisecond KPI computations.
+### Pipeline
+
+1. **Upload** — `POST /budget/portfolio/upload`
+2. **Parse** — `parser.py` + `bank_config.json` → unified txn schema
+3. **Enrich** — categories, payment modes, merchant aliases
+4. **Persist** — encrypted `budget_payloads`; content-hash dedup
+5. **Analyze** — overview, categories, velocity, 50/30/20, insights
+6. **UI** — single `/budget` dashboard with tabs
+
+### Key modules
+
+| Path | Role |
+|---|---|
+| `domains/budget/parser.py` | Multi-bank PDF/CSV/XLSX |
+| `domains/budget/categorizer.py` / `rules_safety.py` | Rules engine |
+| `domains/budget/sessions.py` | Encrypted persistence + ownership |
+| `domains/budget/pipeline.py` | Session → analysable frame |
+| `domains/budget/insights.py` | Recurring, anomalies, forecast, envelopes, Sankey |
+| `domains/budget/transfers.py` | Internal transfer pairing |
+
+### API surface
+
+| Prefix | Purpose |
+|---|---|
+| `/budget/portfolio` | Upload, list/delete sessions |
+| `/budget/analytics` | Overview, transactions, categories |
+| `/budget/insights` | Transfers, recurring, forecast, anomalies, envelopes, Sankey, coverage |
+| `/budget/accounts` | Account meta / utilisation |
+| `/budget/rules` | CRUD, test, apply-all |
+
+`session_id` may be a specific upload or literal `overall`.
+
+### Storage
+
+- **DB-only** — not registered in `session_stores` (no resident LRU).
+- Tables: `budget_payloads`, `budget_rules`, `budget_account_meta`,
+  `budget_envelopes`, `budget_merchant_aliases`, `budget_txn_flags`.
+
+### Engines (summary)
+
+- **50/30/20 health** — Needs / Wants / Investments scoring.
+- **Category & merchant drilldown** — debit/credit toggles, ranked payees.
+- **Velocity & burn** — net savings rate, runway, MoM shifts.
+- **Rules** — priority keyword/regex; batch re-tag.
+
+### Frontend
+
+`BudgetDashboard.tsx` · `TransactionsTab` · `AccountsTab` · `InsightsTab` ·
+`RulesTab` · `BudgetHealth503020Card` · `MoneyFlowCard` · `UploadStatementModal` ·
+`hooks/useBudget.ts`.
+
+### External sources
+
+**None** — user uploads only.
 
 ---
 
-### Bank Statement Ingestion Pipeline
+## 7. Mutual Funds
 
-#### Parser Engine (`backend/domains/budget/parser.py`)
-- **Password Protection**: Supports encrypted PDFs (e.g. DOB, PAN, Account number combinations).
-- **Format Normalization**: Standardizes multi-column schemas into a unified transaction schema:
-  - `date`: Transaction posting date (`YYYY-MM-DD`).
-  - `narration`: Cleaned bank transaction description.
-  - `merchant`: Extracted merchant/payee entity name.
-  - `amount`: Absolute numeric transaction value.
-  - `txn_type`: `debit` or `credit`.
-  - `category`: Primary budget category.
-  - `payment_mode`: Payment channel (`UPI`, `NetBanking`, `Card`, `ATM`, `Cheque`, etc.).
-  - `balance`: Post-transaction balance (if provided).
+CAS-based portfolio analytics with live NAV enrichment and factsheet insights.
 
-#### Supported Banks (`backend/domains/budget/bank_config.json`)
-- **HDFC Bank**: Savings & Current Account statements.
-- **ICICI Bank**: Detailed transaction ledgers & Credit Card statements.
-- **State Bank of India (SBI)**: Standard savings passbooks & e-statements.
-- **Axis Bank**: Multi-column monthly statements.
-- **Kotak Mahindra Bank**: NetBanking exports & PDF statements.
-- **IndusInd & PNB**: Tabular statements.
-- **Generic CSV / XLSX**: User-defined CSV/XLSX ledgers.
-
----
-
-### Computational Engines & Financial Intelligence
-
-#### 1. 50 / 30 / 20 Budget Health Evaluation Suite
-Implements the macro-financial allocation framework:
-- **Needs ($\le 50\%$)**: Fixed living obligations (Rent, Utilities, Groceries, EMI, Insurance, Healthcare, Education).
-- **Wants ($\le 30\%$)**: Discretionary lifestyle spending (Dining, Shopping, Entertainment, Travel, Electronics, Hobbies).
-- **Investments / Savings ($\ge 20\%$)**: Wealth generation & debt payoff (Mutual Funds, Equity, SIP, PPF, FD, RD, Gold, Crypto).
-
-##### Health Scoring Algorithm:
-$$\text{Health Score} = \max\left(0, \min\left(100, 100 - (\text{Needs Penalty} \times 1.2) - (\text{Wants Penalty} \times 1.0) - (\text{Invest Gap} \times 1.5)\right)\right)$$
-- **Score $\ge 80$**: 🟢 *Excellent* (Prudent financial allocation)
-- **Score $65 - 79$**: 🟡 *Good* (Balanced with slight lifestyle drift)
-- **Score $50 - 64$**: 🟠 *Moderate* (Wants or fixed costs exceeding baseline)
-- **Score $< 50$**: 🔴 *Needs Attention* (Under-investing or critical overspending)
-
-#### 2. Category Spend Analytics & Payee Drilldown
-- **Dynamic Category Chips**: Populates direct category badges based on transaction data with live spend totals (`Shopping • ₹45.2k`, etc.).
-- **Debits (Outflows) vs Credits (Inflows)**: Dual-mode toggle.
-- **Deep Drilldown**: Payee / merchant volume, average ticket size, and ranked merchant breakdowns.
-
-#### 3. Cash Flow Velocity, Burn Rate & Liquidity Projections
-- **Net Savings Rate**: $(\text{Inflows} - \text{Outflows}) / \text{Inflows} \times 100$.
-- **Monthly Velocity**: Debit vs credit bar charts over time.
-- **Cash Flow Balance Trend**: Cumulative liquid balance progression.
-- **Burn Rate**: Average daily outflow and projected runway under existing cash balances.
-- **Spending Shifts**: Detects month-over-month category expansion.
-
-#### 4. Rule-Based Categorization Engine (`categorizer.py`, `rules_safety.py`)
-- **Pattern Matching**: Evaluates user-defined rules in priority order.
-- **Regex & Keyword Support**: Matches merchant names and raw narration text.
-- **Batch Re-Categorization**: Updates category tags across past and future transactions.
-
----
-
-### Multi-Level Dynamic Filtering System
-
-Contextual In-Card Filters eliminate global filter clutter:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 🌍 Global Filter Bar: Session (All vs Account) • Bank • Date Range          │
-└─────────────────────────────────────────────────────────────────────────────┘
-      │
-      ├─── 💳 Cash Flow Trends Card
-      │     └─ Local: [3M | 6M | 1Y | All] Range Toggle
-      │
-      ├─── 🏷️ Category Spend Analytics Card
-      │     └─ Local: [Debits / Credits] • Min Amount Filter • Direct Category Chips
-      │
-      ├─── 🏪 Top Merchants Card
-      │     └─ Local: [Outflows / Inflows] • Search Merchant • Sort By [₹ / Count]
-      │
-      └─── 📋 Transactions Tab
-            └─ Local: Multi-column Filter Bar • Category Tagger • Full-text Search
+```mermaid
+flowchart TD
+  A[CAS PDF] --> B[parser.py casparser]
+  B --> C[Portfolio model + AMFI NAV]
+  C --> D[Encrypted session_payloads]
+  D --> E[Resident LRU Portfolio]
+  E --> F[finance.py XIRR risk]
+  F --> G[MF Dashboard tabs]
+  H[AMFI sync admin] --> I[(mf_portfolio_snapshots)]
+  I --> J[fund-insights Tier1]
+  K[Yahoo] --> J
 ```
 
----
+### Pipeline
 
-### Budget Domain API Reference
+1. **Upload** — `POST /mutual-funds/portfolio/parse` (CAS + password)
+2. **Parse** — holdings, full txn ledger, SIPs; PDF deleted
+3. **Enrich** — AMFI live NAVs/TER; categories; fund insights
+4. **Persist** — compressed encrypted blob in `session_payloads`
+5. **Analyze** — XIRR, allocation, peers, rebalance, tax-harvest, journey
+6. **UI** — URL tabs under `/mutual-funds/*`
 
-The live OpenAPI schema at `GET /docs` is the source of truth for response contracts. Ownership is enforced inside `domains/budget/sessions.py` using verified user identities.
+### Key modules
 
-#### `/budget/accounts` — Bank & card accounts
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/budget/accounts` | Every account seen across the user's statements, with balances and card utilisation. |
-| `PUT` | `/budget/accounts/{account_key}` | Write fields a statement cannot supply. |
+| Path | Role |
+|---|---|
+| `domains/mutual_funds/parser.py` | CAMS/KFintech CAS |
+| `domains/mutual_funds/sessions.py` | LRU resident + rehydrate |
+| `domains/mutual_funds/models.py` | `Portfolio` |
+| `domains/mutual_funds/finance.py` | XIRR, simulation, drawdown, SIP |
+| `domains/mutual_funds/tax_lots.py` | FIFO lots / harvest |
+| `domains/mutual_funds/portfolio_discovery.py` | Factsheet cascade |
+| `shared/services/market_data.py` | AMFI NAV/TER, mfapi history |
+| `shared/services/amfi_ingest.py` | Admin catalogue sync |
 
-#### `/budget/analytics` — Overview, categories, transactions
-| Method | Path | Purpose |
-|---|---|---|
-| `PUT` | `/budget/analytics/transactions/update` | Update transaction metadata / tags. |
-| `GET` | `/budget/analytics/{session_id}/categories` | Category aggregation totals. |
-| `GET` | `/budget/analytics/{session_id}/overview` | Dashboard headline aggregation, memoized on frame and filter set. |
-| `GET` | `/budget/analytics/{session_id}/transactions` | Filtered transactions, paginated. |
+### Insights cascade
 
-#### `/budget/insights` — Transfers, recurring, forecast, anomalies, envelopes
-| Method | Path | Purpose |
-|---|---|---|
-| `PUT` | `/budget/insights/envelopes` | Set or clear one category's monthly cap. |
-| `PUT` | `/budget/insights/merchants/alias` | Remember a merchant rename. |
-| `POST` | `/budget/insights/transfers/flag` | Override the pairing heuristic for one transaction. |
-| `GET` | `/budget/insights/{session_id}/anomalies` | Duplicate charges, category spikes and unusual first-time merchants. |
-| `GET` | `/budget/insights/{session_id}/coverage` | Statement coverage months per account and missing gaps. |
-| `GET` | `/budget/insights/{session_id}/envelopes` | Spend against each monthly category cap with pace verdict. |
-| `GET` | `/budget/insights/{session_id}/forecast` | Month-end projection and daily safe-to-spend figure. |
-| `GET` | `/budget/insights/{session_id}/reconciliation` | Agreement between printed statement balance and transactions. |
-| `GET` | `/budget/insights/{session_id}/recurring` | Subscriptions and standing charges with price changes. |
-| `GET` | `/budget/insights/{session_id}/sankey` | Nodes and links for income → nature → category flow diagram. |
-| `GET` | `/budget/insights/{session_id}/transfers` | Internal account movements netted out of income/expense. |
+| Tier | Source |
+|---|---|
+| 1 | `mf_portfolio_snapshots` (AMFI admin sync / seed) |
+| 2 | Yahoo Finance |
+| — | Blank (no synthetic heuristics) |
 
-#### `/budget/portfolio` — Upload & sessions
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/budget/portfolio/sessions` | List the caller's budget uploads. |
-| `DELETE` | `/budget/portfolio/sessions/{session_id}` | Delete one budget upload. |
-| `POST` | `/budget/portfolio/upload` | Parse bank/card statement (CSV / XLS / XLSX) into budget session. |
+### API surface (selected)
 
-#### `/budget/rules` — Categorisation rules
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/budget/rules` | List user rules. |
-| `POST` | `/budget/rules` | Create rule. |
-| `POST` | `/budget/rules/apply-all` | Apply rules across transactions. |
-| `GET` | `/budget/rules/match-types` | Match types accepted by the server. |
-| `POST` | `/budget/rules/test` | Test regex/keyword pattern against sample text. |
-| `DELETE` | `/budget/rules/{rule_id}` | Delete rule. |
+| Prefix | Purpose |
+|---|---|
+| `/mutual-funds/portfolio` | Parse, sync |
+| `/mutual-funds/overview` | Summary, allocation, benchmark overlay |
+| `/mutual-funds/holdings` | Holdings, txns, fund-insights |
+| `/mutual-funds/performance` | Trailing/rolling/drawdown/SIP |
+| `/mutual-funds/compare` | Peer search & metrics |
+| `/mutual-funds/insights` `/rebalance` `/journey` `/planning` | Insights suite |
+| `/admin/mf-sync` | Catalogue sync / purge / explorer |
+| `/market` | Live NAV / config |
 
-*Note*: `session_id` accepts a specific upload session ID or the literal `overall` (aggregating all uploaded accounts).
+### Storage
 
----
+- Resident LRU: **3** sessions, ~4h idle TTL; janitor + `session_stores`.
+- Postgres: `sessions` + encrypted `session_payloads`.
+- Admin: `mf_portfolio_snapshots`, `mf_sync_logs` (migration 0010).
 
-### Budget Frontend Component Architecture
+### AMFI admin pipeline (brief)
 
-All Budget components reside in `frontend/src/domains/budget/`:
+`NAVAll.txt` → parse/ISIN dedup → AMC filter → upsert snapshots → Admin Explorer.
+Known limits: snapshot AUM is placeholder; sectors/holdings are category templates
+until real PDF disclosures are wired.
 
-| Component | Path | Responsibility |
-|---|---|---|
-| **BudgetDashboard** | `components/BudgetDashboard.tsx` | Master view: KPIs, charts, tab routing, and shared filter state. |
-| **BudgetHealth503020Card** | `components/BudgetHealth503020Card.tsx` | Health score, 3 bucket cards, macro allocation strip, recommendations. |
-| **TransactionsTab** | `components/TransactionsTab.tsx` | Transaction grid (client-paginated at 50 rows), inline category tagger, CSV export. |
-| **AccountsTab** | `components/AccountsTab.tsx` | Per-account balances, card utilisation, editable account metadata. |
-| **InsightsTab** | `components/InsightsTab.tsx` | Recurring charges, anomalies, envelope budgets, coverage gaps. |
-| **MoneyFlowCard** | `components/MoneyFlowCard.tsx` | Income → nature → category Sankey diagram. |
-| **TransfersExcludedCard** | `components/TransfersExcludedCard.tsx` | Net internal account transfer reconciliation. |
-| **RulesTab** | `components/RulesTab.tsx` | Auto-categorization rule editor (create, edit, delete, priority reorder). |
-| **UploadStatementModal** | `components/UploadStatementModal.tsx` | Multi-bank file uploader with password unlock support. |
-| **BudgetSessionsModal** | `components/BudgetSessionsModal.tsx` | Account management modal for switching and deleting uploaded statements. |
-| **useBudget** | `hooks/useBudget.ts` | Query hooks, cache keys, and invalidation for every budget endpoint. |
-| **types** | `types.ts` | Response contracts for the budget API surface. |
+### Frontend
+
+`MutualFundsDashboard` · Overview / Holdings / Performance / Compare / Journey /
+Insights · `MFUploadPanel` · `hooks/useData.ts`.
+
+### External sources
+
+AMFI · mfapi.in · Yahoo (tier-2 factsheets).
 
 ---
 
-### Adding Support for New Bank Formats
+## 8. Equity (Indian Stocks)
 
-To add support for a new bank or custom statement schema:
-1. Open `backend/domains/budget/bank_config.json`.
-2. Add a new configuration entry matching the bank's header signature:
-```json
-{
-  "bank_name": "NewBank",
-  "signatures": ["Txn Date", "Value Date", "Description", "Ref No", "Debit", "Credit", "Balance"],
-  "date_col": "Txn Date",
-  "date_formats": ["%d/%m/%Y", "%d-%m-%Y"],
-  "narration_col": "Description",
-  "debit_col": "Debit",
-  "credit_col": "Credit",
-  "balance_col": "Balance"
-}
+Broker holdings + tradebook analytics, plus a standalone Stock Analyzer.
+
+```mermaid
+flowchart TD
+  A[CSV XLSX or Kite sync] --> B[parser.py]
+  B --> C[EquityPortfolio + sector_map]
+  C --> D[quotes.py live LTP]
+  D --> E[Encrypted session_payloads]
+  E --> F[Resident LRU]
+  F --> G[Overview Holdings PnL Sectors]
+  H[Stock Analyzer] --> I[Yahoo NS then BO]
+  H --> J[NSE corporate actions]
+  H --> K[BSE VWAP]
+  H --> L[Math beta]
+  I --> M[StockAnalyzerTab + sources icons]
+  J --> M
+  K --> M
+  L --> M
 ```
-3. `parser.py` automatically detects and matches uploaded statements against the signature list.
+
+### Pipeline (portfolio)
+
+1. **Upload / Kite** — `POST /equity/portfolio/parse` or Kite OAuth sync
+2. **Parse** — holdings + tradebook; `sector_map.py`
+3. **Price** — batched `quotes.py`
+4. **Persist** — encrypted payload + resident LRU
+5. **Analyze** — summary, P&L (STCG/LTCG), sectors, performance, insights
+6. **UI** — `/equity/*` tabs
+
+Stock Analyzer (`/equity/analyzer`) works **without** a portfolio session.
+
+### Equity data sourcing (analyzer)
+
+| Metric | Primary | Fallback |
+|---|---|---|
+| LTP, day range, Market Cap, P/E, EPS, P/B | Yahoo `.NS` | Yahoo `.BO` |
+| Dividend yield | NSE corporate actions | Yahoo |
+| VWAP | BSE `StockTrading.WAP` | — |
+| Beta | Math vs Nifty 50 | Yahoo |
+| Charts | Yahoo OHLCV | — |
+| Corporate actions / filings | NSE | Yahoo / — |
+
+Payload includes `source`, per-field `sources`, and `as_of`. UI shows info-icon
+tooltips per card. Cache key: `equity_analysis_v3`. Degraded responses
+(P/E + mcap + EPS all null) use a short TTL (~30s).
+
+### Key modules
+
+| Path | Role |
+|---|---|
+| `domains/equity/parser.py` | Zerodha/Groww/NSDL/generic |
+| `domains/equity/sessions.py` | LRU + encrypt |
+| `domains/equity/models.py` | `EquityPortfolio` |
+| `domains/equity/quotes.py` | Batched LTP |
+| `domains/equity/stock_analyzer.py` | Research engine + sources |
+| `domains/equity/bse_client.py` | VWAP |
+| `domains/equity/nse_corporate.py` | Actions / events / announcements |
+| `domains/equity/kite_client.py` | Optional broker sync |
+
+### API surface
+
+| Prefix | Purpose |
+|---|---|
+| `/equity/portfolio` | Parse, Kite login/connect, sync |
+| `/equity/overview` | Summary, allocation |
+| `/equity/holdings` | Holdings, P&L |
+| `/equity/performance` | Performance series |
+| `/equity/insights` | Concentration / harvest nudges |
+| `/equity/analyzer` | Search, analyze, indices, corporate, impact |
+
+### Storage
+
+- Resident LRU: **3** sessions, ~4h TTL; janitor + `session_stores`.
+- Same `sessions` / `session_payloads` pattern as MF.
+
+### Frontend
+
+`EquityDashboard` · Overview / Holdings / P&L / Sectors / Performance / Analyzer /
+Insights · `EquityUploadPanel` · `hooks/useEquityData.ts`.
+
+### External sources
+
+Yahoo · NSE · BSE · Zerodha Kite (optional) · Nifty for beta.
 
 ---
 
-## Authentication & access control
+## 9. Tax Expert
 
-Finance Buddy uses **admin-gated provisioning**: a Supabase Auth session alone is
-not enough. The backend creates an app account only when the email is allowlisted.
+AIS-driven tax computation for Indian resident individuals — old vs new regime,
+capital gains, broker reconciliation, filed-ITR compare.
 
-### Two layers
+```mermaid
+flowchart TD
+  A[AIS PDF] --> B[ais_parser.py]
+  B --> C{Broker P and L?}
+  C -->|yes| D[broker_parser + reconciliation]
+  C -->|no| E[tax_sessions encrypt]
+  D --> E
+  E --> F[(tax_payloads)]
+  F --> G[Resident LRU]
+  G --> H[tax_engine.py regimes]
+  H --> I[computation_cache]
+  I --> J[TaxStrategyTab UI]
+  K[ITR PDF optional] --> L[itr_parser]
+  L --> J
+```
+
+### Pipeline
+
+1. **Upload** — `POST /tax-expert/parse-ais` (+ optional broker Excel)
+2. **Parse AIS** — income, TDS, CG buckets, deduction structure
+3. **Reconcile** — optional Zerodha Tax P&L cross-check
+4. **Persist** — encrypted `tax_payloads`; PAN match vs profile
+5. **Compute** — old/new regime; cache by `(session, version, regime)`
+6. **UI** — overview, income, savings, CG, ITR compare, history
+
+### Key modules
+
+| Path | Role |
+|---|---|
+| `domains/tax_expert/ais_parser.py` | AIS PDF tables |
+| `domains/tax_expert/tax_sessions.py` | LRU + encrypt |
+| `domains/tax_expert/tax_engine.py` | Regime computation |
+| `domains/tax_expert/computation_cache.py` | Memoize `compute_tax` |
+| `domains/tax_expert/reconciliation.py` | AIS vs broker |
+| `domains/tax_expert/broker_parser.py` | Zerodha Tax P&L |
+| `domains/tax_expert/itr_parser.py` | Filed ITR PDF |
+| `shared/reference/capital_gains.json` | Statutory CG rates |
+
+### API surface
+
+| Area | Endpoints |
+|---|---|
+| Session | `POST /parse-ais`, reconcile-broker, tax-history |
+| Compute | `GET .../summary`, compare-regimes, recalculate |
+| Detail | income, capital-gains, ITR upload/get |
+| Rules | `GET /rules` |
+
+### Storage
+
+- Resident LRU: **8** sessions, ~24h idle; lazy eviction (**no** janitor sweep).
+- Registers in `session_stores` (clears computation cache on `clear_all`).
+- Postgres: `tax_payloads`.
+
+### Frontend
+
+`TaxExpertDashboard` / `TaxStrategyTab` · Overview · Income · Savings · Capital
+Gains · ITR Compare · History · `TaxUploadPanel` · `hooks/useTaxExpert.ts`.
+
+### External sources
+
+**None at runtime** — user documents + local statutory JSON.
+
+---
+
+## 10. Shared infrastructure
+
+### Auth & access control
 
 | Layer | Store | Purpose |
 |---|---|---|
-| Auth | Supabase Auth | Sign-in (Google OAuth, email/password) |
-| App account | `users` + `identities` + optional `profiles` | Authorization, PAN, domain data ownership |
+| Auth | Supabase Auth | Sign-in (Google / email-password) |
+| App account | `users` + `identities` + `profiles` | Authorization, PAN, ownership |
 
-The `users` row is inserted on **first authenticated request** (`users.resolve()`
-in `IdentityMiddleware`), not when an admin clicks approve. Approval updates
-`access_requests` and Supabase; sign-in creates or updates the app account.
+Provisioning allowlist: `FINANCEBUDDY_ADMIN_EMAILS`, approved/pending
+`access_requests`. Bootstrap admins → `active` + `admin` on first provision.
 
-### Account status & role (`users` table, migration 0009)
-
-| Field | Values | Effect |
-|---|---|---|
-| `status` | `pending` | Signed in but blocked from app APIs except `/auth/me`, `/auth/logout`; frontend shows `PendingAccess` |
-| `status` | `active` | Full access (after PAN gate) |
-| `status` | `suspended` | Blocked like pending; frontend shows `SuspendedAccess` |
-| `role` | `user` | Normal user |
-| `role` | `admin` | Admin Console + admin-only `/auth/*` routes |
-
-Bootstrap admins: email in `FINANCEBUDDY_ADMIN_EMAILS` → `active` + `admin` on
-first provision. `_assert_admin()` denies all admin routes when the env list is
-empty and the caller is not already `role=admin`.
-
-### Allowlist rules (`users._may_provision`)
-
-Provisioning is permitted when the email matches any of:
-
-- `FINANCEBUDDY_ADMIN_EMAILS`
-- `access_requests` row with `status = approved`
-- `access_requests` row with `status = pending` (creates a pending app account so
-  the user sees the wait screen instead of “raise request” after OAuth)
-
-Otherwise `NotAuthorizedError` → `403 not_authorized` (no `users` row inserted).
-
-### Auth API (`/auth`)
-
-Full method/path catalog, rate limits, and curl examples:
-**[API.md](API.md)** (single source of truth — do not duplicate the table here).
-
-Future move off Supabase Auth/DB (OIDC + open source): **[MIGRATION_OIDC.md](MIGRATION_OIDC.md)**.
-
-Summary: public `access-status` / `request-access`; signed-in `me` / `logout` /
-`profile` / `profile/pan`; admin access-requests, invites, users (including hard delete).
-
-### Middleware gates (`main.py` → `IdentityMiddleware`)
-
-After identity resolution:
-
-1. **`not_authorized`** — email not allowlisted; no app account created
-2. **`pending`** — all paths blocked except `/auth/me`, `/auth/logout`
-3. **`suspended`** — same as pending
-4. **`active`** — normal routing; frontend may still gate on missing PAN
-
-`PendingAccess` polls `/auth/me` every 15s so users enter the app shortly after
-admin approval without a full page reload.
-
-### Frontend auth screens
-
-| Component | When |
+| `status` | Effect |
 |---|---|
-| `Landing.tsx` | Signed out; request access; OAuth error / not-authorized messaging |
-| `PendingAccess.tsx` | Signed in, `status=pending` |
-| `SuspendedAccess.tsx` | Signed in, `status=suspended` |
-| `AccountSetupPrompt` | First-time only: one panel — both fields, or password-only, or PAN-only |
-| `ProfilePage.tsx` | Route `/profile` (badge → Profile); display name, PAN, password; link to data vault |
-| `AccountsDashboard` | Route `/accounts` (badge → Data vault); export / delete account data |
-| `AdminConsole.tsx` | Route `/admin`; admin-only actions |
-| `AdminOnly` (`Dashboard.tsx`) | UI gate: non-admins hitting `/admin` redirect to `/dashboard` (APIs still enforce admin) |
+| `pending` / `suspended` | Only `/auth/me`, `/auth/logout` |
+| `active` | Full API (frontend may still require PAN) |
 
-**Logout order:** `POST /auth/logout` (await) → Supabase `signOut` → clear local store.
-Signing out without awaiting the backend can drop the Bearer token before resident
-sessions are evicted.
+Admin UI: `/admin` · API admin routes under `/auth/*` (see API.md).
 
----
+### Security & privacy
 
-## Security, Data Encryption & Privacy
+- **JWT**: JWKS via `shared/oidc.py` (`exp`, `iss`, `aud`).
+- **Encryption**: AES-256-GCM (`shared/crypto.py`); AAD binds `session_id` /
+  `user_id`; fatal without `FINANCEBUDDY_ENCRYPTION_KEYS`.
+- **Authz**: fail closed — unowned resources → **404** (not 403).
+- **Cache-Control**: default `no-store`; public only for user-independent market data.
+- **No third-party statement scraping** — parse in-process; temp files deleted.
 
-### 1. Authentication & Identity
-- **Bearer Token Verification**: `Authorization: Bearer <Supabase access_token JWT>` verified against the provider JWKS in `shared/oidc.py` with mandatory `exp`, `iss`, and `aud` checks. See [API.md](API.md) for how clients obtain and send the token.
-- **Admin-gated provisioning**: First-time app accounts require an allowlisted email (see *Authentication & access control* above). Supabase public sign-up must be disabled in production.
-- **PAN is Not Identity**: User identity is strictly keyed on UUID `users.id`. PAN is stored encrypted (`profiles.pan_encrypted`) solely for CAS/AIS matching; two users sharing a PAN cannot access each other's data.
-- **Fail-Closed Authorization**: Handled at data retrieval layers (`sessions.py`, `identity.owns_record`). Unowned or unauthorized requests respond with `404 Not Found` (never 403) to prevent resource enumeration. Admin routes and unprovisioned sign-ins use explicit `403` responses where appropriate.
+### Market data (shared)
 
-### 2. Encryption at Rest (AES-256-GCM)
-- **Application-Level Envelope Encryption**: Sensitive columns (`profiles.pan_encrypted`, `sessions.metrics`, `session_payloads`, `tax_payloads.data`, `budget_payloads`) are encrypted via `shared/crypto.py` before hitting Postgres.
-- **Randomized Nonces & Row-Binding**: Fresh nonce per write prevents ciphertext equality leakage. Ciphertexts are authenticated against `session_id`/`user_id` as GCM associated data, preventing row-swapping attacks.
-- **No Plaintext Fallback**: The backend raises a fatal error if `FINANCEBUDDY_ENCRYPTION_KEYS` is unconfigured.
+| Source | Consumers |
+|---|---|
+| AMFI NAV / TER | MF valuation, `/market` |
+| mfapi.in | MF NAV history |
+| Yahoo | Equity quotes/analyzer; MF factsheet tier-2 |
+| NSE / BSE | Equity analyzer |
+| Indices | Benchmarks (MF + Equity) |
 
-### 3. Data Retention & DPDP Compliance
-- **Zero Third-Party Scraping**: Statements are parsed locally in-process without sharing credentials with aggregators. Uploaded raw PDFs/spreadsheets are cleaned up immediately from temporary storage upon parsing.
-- **User-Controlled Retention**: Data persists until explicitly purged by the user (`DELETE /accounts/me`, `DELETE /history/{id}`, or `DELETE /budget/portfolio/sessions/{session_id}`).
-- **Access & Portability**: Supported via full account data export (`GET /accounts/me/export`).
+`MarketCache` (L1 + disk) + optional refresh sweep via janitor.
 
-### 4. Response Caching & Logging Hygiene
-- **Strict Anti-Caching Default**: All dynamic route responses default to `Cache-Control: no-store` via `DefaultCacheControlMiddleware`. `public` cache is restricted to user-independent market data.
-- **PII Masking**: PAN and sensitive identifiers are masked to the last 4 characters (`identity.mask_pan`) in server logs.
+### Resident session caps (defaults)
+
+| Domain | Cap | TTL | Janitor |
+|---|---|---|---|
+| Mutual Funds | 3 | ~4h | yes |
+| Equity | 3 | ~4h | yes |
+| Tax Expert | 8 | ~24h | lazy only |
+| Budget | — | DB-only | — |
 
 ---
 
-## Stack
+## 11. Stack
 
-FastAPI · PostgreSQL 11+ (psycopg 3, no ORM) · pandas · React 18 · Vite · MUI · Zustand
+FastAPI · PostgreSQL 11+ (psycopg 3, no ORM) · pandas · React 18 · Vite · MUI ·
+Zustand · Supabase Auth (IdP).
 
-Single uvicorn worker, ~512 MB RAM. See ONBOARDING.md for full setup and VERIFICATION.md to validate deployment.
+Single uvicorn worker, ~512 MB RAM typical. Setup: [ONBOARDING.md](ONBOARDING.md).
+Validate: [VERIFICATION.md](VERIFICATION.md). Leave Supabase: [MIGRATION.md](MIGRATION.md).
