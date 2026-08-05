@@ -90,8 +90,19 @@ export default function AccountsDashboard() {
   const clearCacheMutation = useMutation({
     mutationFn: () => apiClient.clearSystemCaches(),
     onSuccess: () => {
-      void logout()
-      queryClient.clear()
+      queryClient.invalidateQueries()
+      setSnack({
+        open: true,
+        msg: 'Global market and system caches cleared successfully.',
+        severity: 'success',
+      })
+    },
+    onError: (err: any) => {
+      setSnack({
+        open: true,
+        msg: err?.response?.data?.detail || 'Failed to clear system caches.',
+        severity: 'error',
+      })
     }
   })
 

@@ -19,7 +19,10 @@ import type {
   BudgetEnvelope,
 } from '../../domains/budget/types'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api' })
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || '/api',
+  timeout: 30000, // 30s timeout to prevent requests from hanging indefinitely
+})
 
 /**
  * Attach the signed-in user's bearer token.
@@ -36,15 +39,25 @@ api.interceptors.request.use(async (config) => {
 
 /**
  * A 401 means the credential is gone or no longer valid, so clear local state
- * rather than leaving the UI showing a signed-in shell over failing requests.
+ * and auth client session rather than leaving the UI hanging or in a broken shell.
  */
+let _handling401 = false
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (error?.response?.status === 401) {
       const store = useAppStore.getState()
-      if (store.pan || store.userId) {
-        store.clearIdentity()
+      if ((store.pan || store.userId) && !_handling401) {
+        _handling401 = true
+        try {
+          await authClient.signOut()
+          store.clearIdentity()
+        } catch (e) {
+          console.warn('Error during 401 session cleanup:', e)
+        } finally {
+          _handling401 = false
+        }
       }
     }
     return Promise.reject(error)

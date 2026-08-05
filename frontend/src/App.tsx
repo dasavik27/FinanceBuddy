@@ -117,6 +117,45 @@ export default function App() {
     }
   }, [setIdentity, clearIdentity])
 
+  // Proactively verify session health when waking from sleep, focusing tab, or idle
+  useEffect(() => {
+    if (!isAuthenticated || !authClient.isConfigured) return
+
+    let isChecking = false
+    const verifySessionHealth = async () => {
+      if (isChecking) return
+      isChecking = true
+      try {
+        const isHealthy = await authClient.checkSessionHealth()
+        if (!isHealthy) {
+          console.warn('Session expired or invalidated after idle. Signing out...')
+          await authClient.signOut()
+          clearIdentity()
+        }
+      } catch (e) {
+        console.warn('Session health check error:', e)
+      } finally {
+        isChecking = false
+      }
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void verifySessionHealth()
+      }
+    }
+
+    const interval = setInterval(verifySessionHealth, 2 * 60 * 1000)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [isAuthenticated, clearIdentity])
+
   if (resolvingSession) return <TabFallback />
 
   // Wait for /auth/me so we know status + whether PAN is already set. Showing

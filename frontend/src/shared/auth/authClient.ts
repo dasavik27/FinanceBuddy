@@ -305,7 +305,14 @@ export const authClient = {
     _accessTokenCache = null
     if (!supabase) return
     clearPasswordSetupRequired()
-    await supabase.auth.signOut()
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ])
+    } catch (e) {
+      console.warn('Supabase signOut error/timeout:', e)
+    }
   },
 
   /** Set / replace password for the current session (invite or recovery links). */
@@ -333,6 +340,7 @@ export const authClient = {
    *
    * Soft-cached until ~60s before JWT exp so bursts of API calls (admin console,
    * dashboards) do not each await getSession(). Cleared on signOut.
+   * Uses a timeout race to prevent hanging when waking from sleep or on dead connections.
    */
   getAccessToken: async (): Promise<string | null> => {
     if (!supabase) return null
@@ -340,12 +348,42 @@ export const authClient = {
     if (_accessTokenCache && _accessTokenCache.freshUntilMs > now) {
       return _accessTokenCache.token
     }
-    const { data } = await supabase.auth.getSession()
-    const token = data.session?.access_token ?? null
-    _accessTokenCache = token
-      ? { token, freshUntilMs: _tokenFreshUntilMs(token, now) }
-      : null
-    return token
+    try {
+      const sessionResult = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<{ data: { session: null }; error: Error }>((_, reject) =>
+          setTimeout(() => reject(new Error('Session retrieval timed out')), 6000),
+        ),
+      ])
+      const { data, error } = sessionResult
+      if (error || !data.session) {
+        _accessTokenCache = null
+        return null
+      }
+      const token = data.session.access_token ?? null
+      _accessTokenCache = token
+        ? { token, freshUntilMs: _tokenFreshUntilMs(token, now) }
+        : null
+      return token
+    } catch (e) {
+      console.warn('getAccessToken failed or timed out:', e)
+      _accessTokenCache = null
+      return null
+    }
+  },
+
+  /**
+   * Checks whether the current session is valid and active.
+   * If the token is expired and cannot be refreshed, returns false.
+   */
+  checkSessionHealth: async (): Promise<boolean> => {
+    if (!supabase) return true
+    try {
+      const token = await authClient.getAccessToken()
+      return Boolean(token)
+    } catch {
+      return false
+    }
   },
 
   getUser: async (): Promise<AuthUser | null> => {
