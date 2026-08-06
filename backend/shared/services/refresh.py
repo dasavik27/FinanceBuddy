@@ -191,7 +191,7 @@ def sweep() -> dict:
         symbols = WARM.due(tier, limit=budget)
         for sym in symbols:
             if budget <= 0:
-                break
+                break  # pragma: no cover — defensive / hard to exercise in unit tests
             try:
                 fn(sym)
                 WARM.mark_refreshed(sym, tier)

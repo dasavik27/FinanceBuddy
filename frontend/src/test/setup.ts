@@ -97,6 +97,22 @@ window.IntersectionObserver = IntersectionObserverMock as unknown as typeof Inte
 // Polyfill scrollTo
 window.scrollTo = vi.fn()
 
+// jsdom omits blob URL helpers used by export/download flows
+if (typeof URL.createObjectURL !== 'function') {
+  Object.defineProperty(URL, 'createObjectURL', {
+    writable: true,
+    configurable: true,
+    value: vi.fn(() => 'blob:mock'),
+  })
+}
+if (typeof URL.revokeObjectURL !== 'function') {
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    writable: true,
+    configurable: true,
+    value: vi.fn(),
+  })
+}
+
 // Polyfill HTMLCanvasElement.prototype.getContext
 HTMLCanvasElement.prototype.getContext = vi.fn().mockImplementation(() => ({
   fillRect: vi.fn(),

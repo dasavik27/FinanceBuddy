@@ -21,4 +21,4 @@ class InsightFallbackStrategy(ABC):
         Returns:
             Dict: The enriched dictionary with deterministic fallback values and boolean flags.
         """
-        pass
+        pass  # pragma: no cover — abstract contract

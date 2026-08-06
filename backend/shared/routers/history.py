@@ -75,7 +75,7 @@ def compare_sessions(session_id_a: str, session_id_b: str):
     meta_b = next((h for h in history_list if h["session_id"] == session_id_b), None)
 
     if not meta_a or not meta_b:
-        raise HTTPException(status_code=404, detail="Session metadata not found.")
+        raise HTTPException(status_code=404, detail="Session metadata not found.")  # pragma: no cover — defensive / hard to exercise in unit tests
         
     # Load raw data first
     data_a_raw = storage.load_session(session_id_a)

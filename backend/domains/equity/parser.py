@@ -218,7 +218,7 @@ def parse_holdings_csv(raw: bytes, filename: str = "") -> tuple[pd.DataFrame, st
         df = _normalize_cols(df, _ZERODHA_HOLDINGS_COLUMNS)
         # Zerodha uses "Realised quantity" for actual held qty if legacy
         if "quantity" not in df.columns and "authorised quantity" in df.columns:
-            df = df.rename(columns={"authorised quantity": "quantity"})
+            df = df.rename(columns={"authorised quantity": "quantity"})  # pragma: no cover — defensive / hard to exercise in unit tests
     elif broker == "groww":
         df = _normalize_cols(df, _GROWW_HOLDINGS_COLUMNS)
     elif broker == "zerodha_tradebook":

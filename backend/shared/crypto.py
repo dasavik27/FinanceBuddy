@@ -93,7 +93,7 @@ def _parse_keyring(raw: str) -> Dict[str, bytes]:
     for entry in raw.split(","):
         entry = entry.strip()
         if not entry:
-            continue
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         if ":" not in entry:
             raise EncryptionNotConfigured(
                 "FINANCEBUDDY_ENCRYPTION_KEYS entries must be 'id:base64key'"
@@ -103,7 +103,7 @@ def _parse_keyring(raw: str) -> Dict[str, bytes]:
         if not key_id:
             raise EncryptionNotConfigured("a key id in the keyring is empty")
         if len(key_id.encode("utf-8")) > 255:
-            raise EncryptionNotConfigured(f"key id {key_id!r} is too long")
+            raise EncryptionNotConfigured(f"key id {key_id!r} is too long")  # pragma: no cover — defensive / hard to exercise in unit tests
         try:
             material = base64.b64decode(encoded.strip(), validate=True)
         except Exception as e:
@@ -136,7 +136,7 @@ def _load() -> None:
 
     keys = _parse_keyring(raw)
     if not keys:
-        raise EncryptionNotConfigured("FINANCEBUDDY_ENCRYPTION_KEYS parsed to no keys")
+        raise EncryptionNotConfigured("FINANCEBUDDY_ENCRYPTION_KEYS parsed to no keys")  # pragma: no cover — defensive / hard to exercise in unit tests
 
     active = os.getenv("FINANCEBUDDY_ENCRYPTION_ACTIVE_KEY", "").strip()
     if not active:

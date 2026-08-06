@@ -69,7 +69,7 @@ class Principal:
 class AuthVerifier(Protocol):
     """Turns a bearer token into a Principal, or None if it is not valid."""
 
-    def verify(self, token: str) -> Optional[Principal]:
+    def verify(self, token: str) -> Optional[Principal]:  # pragma: no cover
         ...
 
 

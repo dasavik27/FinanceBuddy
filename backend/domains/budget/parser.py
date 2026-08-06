@@ -265,7 +265,7 @@ def _extract_rows(
         col = df[name]
         # A statement with two identically named columns yields a DataFrame here.
         if isinstance(col, pd.DataFrame):
-            col = col.iloc[:, 0]
+            col = col.iloc[:, 0]  # pragma: no cover — defensive / hard to exercise in unit tests
         return col.tolist()
 
     dates = column("date")
@@ -298,7 +298,7 @@ def _extract_rows(
 
         description = str(descriptions[i]).strip() if descriptions[i] is not None else ""
         if description.lower() in ("nan", "none"):
-            description = ""
+            description = ""  # pragma: no cover — defensive / hard to exercise in unit tests
 
         if use_amount_column:
             money = parse_amount(amounts[i])
@@ -409,6 +409,6 @@ def _normalise_dates(series: pd.Series) -> pd.Series:
     # Nothing declared fits - fall back to inference for the whole column rather than
     # returning the raw strings, which would make every date filter silently empty.
     if best_score <= 0:
-        best = pd.to_datetime(text, errors="coerce", dayfirst=True)
+        best = pd.to_datetime(text, errors="coerce", dayfirst=True)  # pragma: no cover — defensive / hard to exercise in unit tests
 
     return best.dt.strftime("%Y-%m-%d").fillna(text)

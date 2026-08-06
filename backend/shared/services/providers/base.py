@@ -34,7 +34,7 @@ class BaseMetadataProvider(ABC):
                     "expense_ratio_fallback": bool,
                 }
         """
-        pass
+        pass  # pragma: no cover — abstract contract
     
     def _get_empty_result(self) -> Dict:
         """Returns the base empty result template."""
@@ -63,14 +63,14 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def fetch_nav_series(self, scheme_code: str, days: int) -> pd.Series:
         """Fetch NAV history and return it as a pandas Series."""
-        pass
+        pass  # pragma: no cover — abstract contract
         
     @abstractmethod
     def fetch_fund_meta(self, scheme_code: str) -> Dict[str, Any]:
         """Fetch fund metadata (name, house, type)."""
-        pass
+        pass  # pragma: no cover — abstract contract
         
     @abstractmethod
     def search_funds(self, query: str) -> List[Dict[str, Any]]:
         """Search the provider's registry."""
-        pass
+        pass  # pragma: no cover — abstract contract

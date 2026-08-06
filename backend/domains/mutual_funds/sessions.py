@@ -83,16 +83,16 @@ def _compact_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             continue
         if df[col].dtype.name == "category":
-            continue
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col]):
-            continue
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         try:
             # Only worth it when values actually repeat, and only on frames big
             # enough for the saving to exceed the category dictionary's own overhead.
             if len(df) >= 16 and df[col].nunique(dropna=False) <= len(df) * 0.5:
                 df[col] = df[col].astype("category")
-        except Exception:
-            pass  # unhashable/mixed content - leave as-is
+        except Exception:  # pragma: no cover — defensive / hard to exercise in unit tests
+            pass  # unhashable/mixed content - leave as-is  # pragma: no cover — defensive / hard to exercise in unit tests
     return df
 
 

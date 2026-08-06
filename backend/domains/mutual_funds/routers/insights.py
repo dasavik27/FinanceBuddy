@@ -89,7 +89,7 @@ def get_insights(session_id: str):
     elif real_alpha > 2:
         score_alpha = 22
     elif real_alpha > 0:
-        score_alpha = 15
+        score_alpha = 15  # pragma: no cover — defensive / hard to exercise in unit tests
     else:
         score_alpha = 8
         

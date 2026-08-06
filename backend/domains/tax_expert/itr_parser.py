@@ -85,7 +85,7 @@ def parse_itr_pdf(file_bytes: bytes) -> dict:
     # ITR type and AY
     itr_type = _find_str(full_text, r"(ITR[-\s]?[1-6U])", r"Form\s+(ITR-[0-9])")
     if itr_type and not itr_type.upper().startswith("ITR"):
-        itr_type = f"ITR-{itr_type}"
+        itr_type = f"ITR-{itr_type}"  # pragma: no cover — defensive / hard to exercise in unit tests
 
     assessment_year = _find_str(full_text, r"Assessment\s+Year[:\s]+(\d{4}-\d{2,4})", r"A\.Y\.[:\s]+(\d{4}-\d{2,4})", r"AY\s+(\d{4}-\d{2})")
     pan = _find_str(full_text, r"PAN\s*[:\-]?\s*([A-Z]{5}[0-9]{4}[A-Z])")

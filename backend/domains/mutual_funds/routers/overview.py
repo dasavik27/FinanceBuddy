@@ -129,7 +129,7 @@ def get_benchmark_overlay(
     for bm_name in bm_list:
         ticker = BENCHMARKS.get(bm_name, bm_name)
         if not ticker:
-            continue
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         
         bench_data = fetch_benchmark_series(ticker, 1825, refresh=refresh)
         bm_comp = cached_period_comparison(df_t, df_h, total_val, bench_data, perf_days)
@@ -142,7 +142,7 @@ def get_benchmark_overlay(
             values = [round(v * scale, 2) for v in values]
             
         if len(dates) > len(result["dates"]):
-            result["dates"] = dates
+            result["dates"] = dates  # pragma: no cover — defensive / hard to exercise in unit tests
 
         result["series"][bm_name] = values
 

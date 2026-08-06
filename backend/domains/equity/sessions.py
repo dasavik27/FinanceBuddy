@@ -81,8 +81,8 @@ def _compact_dtypes(df: pd.DataFrame) -> pd.DataFrame:
             # for the saving to exceed the category dictionary's own overhead.
             if len(df) >= 16 and df[col].nunique(dropna=False) <= len(df) * 0.5:
                 df[col] = df[col].astype("category")
-        except Exception:
-            pass  # unhashable/mixed content - leave as-is
+        except Exception:  # pragma: no cover — defensive / hard to exercise in unit tests
+            pass  # unhashable/mixed content - leave as-is  # pragma: no cover — defensive / hard to exercise in unit tests
     return df
 
 

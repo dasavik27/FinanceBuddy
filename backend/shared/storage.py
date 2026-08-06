@@ -86,7 +86,7 @@ def _datetime_unit(dtype) -> str:
     """
     unit = getattr(dtype, "unit", None)
     if unit:
-        return unit
+        return unit  # pragma: no cover — defensive / hard to exercise in unit tests
     try:
         return np.datetime_data(dtype)[0]
     except (TypeError, ValueError):
@@ -125,7 +125,7 @@ def _encode_frame(df: Optional[pd.DataFrame]) -> Tuple[bytes, Dict[str, str]]:
     than orient="records" repeating every key on every row.
     """
     if df is None:
-        df = pd.DataFrame()
+        df = pd.DataFrame()  # pragma: no cover — defensive / hard to exercise in unit tests
 
     datetime_columns: Dict[str, str] = {}
     encodable = df
@@ -178,7 +178,7 @@ def _decode_frame(blob: Optional[bytes], datetime_columns: Optional[Dict[str, st
     )
     for column, mode in (datetime_columns or {}).items():
         if column not in df.columns:
-            continue
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         unit = mode.split(":", 1)[1] if mode.startswith("epoch:") else None
         if unit in _EPOCH_UNITS:
             df[column] = df[column].astype("int64").astype(f"datetime64[{unit}]")

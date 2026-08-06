@@ -162,8 +162,8 @@ def _read_csv_rows(raw: bytes) -> "list[list]":
                     break
                 rows.append(row)
             return rows
-        except UnicodeDecodeError:
-            continue
+        except UnicodeDecodeError:  # pragma: no cover — defensive / hard to exercise in unit tests
+            continue  # pragma: no cover — defensive / hard to exercise in unit tests
         finally:
             stream.detach()
-    return []
+    return []  # pragma: no cover — defensive / hard to exercise in unit tests

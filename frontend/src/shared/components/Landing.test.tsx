@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/utils'
 import Landing from './Landing'
@@ -54,15 +54,17 @@ describe('Landing Page', () => {
 
     renderWithProviders(<Landing />)
 
-    const emailInput = screen.getByPlaceholderText(/Email address/i)
-    const pwInput = screen.getByPlaceholderText(/Password/i)
-    const submitBtn = screen.getByRole('button', { name: /Sign In to Dashboard/i })
+    fireEvent.change(screen.getByPlaceholderText(/Email address/i), {
+      target: { value: 'investor@example.com' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Password/i), {
+      target: { value: 'SecretPassword123!' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Sign In to Dashboard/i }))
 
-    await userEvent.type(emailInput, 'investor@example.com')
-    await userEvent.type(pwInput, 'SecretPassword123!')
-    await userEvent.click(submitBtn)
-
-    expect(authClient.signInWithEmail).toHaveBeenCalledWith('investor@example.com', 'SecretPassword123!')
+    await waitFor(() => {
+      expect(authClient.signInWithEmail).toHaveBeenCalledWith('investor@example.com', 'SecretPassword123!')
+    })
   })
 
   it('triggers Google OAuth on button click', async () => {
@@ -81,19 +83,20 @@ describe('Landing Page', () => {
     renderWithProviders(<Landing />)
 
     const reqAccessBtn = screen.getByRole('button', { name: /Request Early Access/i })
-    await userEvent.click(reqAccessBtn)
+    fireEvent.click(reqAccessBtn)
 
-    expect(await screen.findByText('Join the private wealth intelligence beta')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Request Access/i })).toBeInTheDocument()
+    expect(screen.getByText(/Join the private wealth intelligence beta/i)).toBeInTheDocument()
 
     const nameInput = screen.getByPlaceholderText('e.g. Rahul Sharma')
     const emailInput = screen.getByPlaceholderText('name@example.com')
     const submitModalBtn = screen.getByRole('button', { name: /Submit Access Request/i })
 
-    await userEvent.type(nameInput, 'Alex Investor')
-    await userEvent.type(emailInput, 'alex@example.com')
-    await userEvent.click(submitModalBtn)
+    fireEvent.change(nameInput, { target: { value: 'Alex Investor' } })
+    fireEvent.change(emailInput, { target: { value: 'alex@example.com' } })
+    fireEvent.click(submitModalBtn)
 
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(authClient.submitAccessRequest).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'Alex Investor',

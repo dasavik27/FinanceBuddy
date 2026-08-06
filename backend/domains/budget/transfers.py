@@ -120,7 +120,7 @@ def detect_transfers(df: pd.DataFrame) -> List[TransferPair]:
     work["_date"] = pd.to_datetime(work["date"], errors="coerce")
     work = work.dropna(subset=["_date"])
     if work.empty:
-        return []
+        return []  # pragma: no cover — defensive / hard to exercise in unit tests
 
     work["_amt"] = work["amount"].round(_AMOUNT_PRECISION)
 

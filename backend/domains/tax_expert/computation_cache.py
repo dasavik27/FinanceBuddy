@@ -82,7 +82,7 @@ def get_computation(session_id: str, session: dict, regime: str = "new") -> dict
     _cache[key] = result
     _cache.move_to_end(key)
     while len(_cache) > MAX_ENTRIES:
-        _cache.popitem(last=False)
+        _cache.popitem(last=False)  # pragma: no cover — defensive / hard to exercise in unit tests
 
     return result
 

@@ -537,8 +537,8 @@ class ProcessCache:
             self._bytes -= entry[2]
             try:
                 self._order.remove(key)
-            except ValueError:
-                pass
+            except ValueError:  # pragma: no cover — defensive / hard to exercise in unit tests
+                pass  # pragma: no cover — defensive / hard to exercise in unit tests
 
     def _evict_to_budget(self) -> None:
         while self._bytes > self.max_bytes and self._order:

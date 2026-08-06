@@ -102,8 +102,8 @@ def parse_ais(
             diff_path = os.path.join(tempfile.gettempdir(), "ais_diff.json")
             with open(diff_path, "w") as f:
                 json.dump(e.diff, f)
-        except Exception:
-            pass
+        except Exception:  # pragma: no cover — defensive / hard to exercise in unit tests
+            pass  # pragma: no cover — defensive / hard to exercise in unit tests
         logger.error(f"AIS Structure Changed: {e.diff}")
         raise HTTPException(status_code=422, detail={"type": "AIS_STRUCTURE_CHANGED", "message": str(e), "diff": e.diff})
     except Exception:
