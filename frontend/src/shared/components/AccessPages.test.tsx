@@ -7,11 +7,17 @@ import SuspendedAccess from './SuspendedAccess'
 import { useAppStore } from '../store/appStore'
 import { apiClient } from '../api/client'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    getMe: vi.fn(),
-  },
-}))
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<any>()
+  return {
+    ...actual,
+    default: actual.default ?? actual.apiClient,
+    apiClient: {
+      ...actual.apiClient,
+      getMe: vi.fn(),
+    },
+  }
+})
 
 describe('Access Status Gate Pages', () => {
   beforeEach(() => {

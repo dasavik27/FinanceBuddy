@@ -64,7 +64,7 @@ describe('authNotice', () => {
   })
 
   it('clears auth notice and cleans all landing cache', () => {
-    writeAuthNotice({ message: 'foo', access_request_status: 'denied' })
+    writeAuthNotice({ message: 'foo', access_request_status: 'pending' })
     rememberAccessRequestEmail('user@test.com')
 
     clearAuthNotice()

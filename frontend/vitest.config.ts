@@ -28,15 +28,16 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       // Aim near-full app coverage; exclude entry/bootstrap and type-only files.
       thresholds: {
-        lines: 0,
-        functions: 0,
-        statements: 0,
-        branches: 0,
+        lines: 90,
+        functions: 90,
+        statements: 90,
+        branches: 85,
       },
       exclude: [
         'node_modules/',
         'src/test/',
         '**/*.d.ts',
+        '**/types.ts',
         '**/*.test.{ts,tsx}',
         'src/main.tsx',
         'src/vite-env.d.ts',

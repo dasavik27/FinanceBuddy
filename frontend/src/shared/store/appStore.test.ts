@@ -271,4 +271,61 @@ describe('appStore', () => {
     const { result } = renderHook(() => useSessionId())
     expect(result.current).toBeNull()
   })
+
+  it('logout error-catch branch: handles error when authClient.signOut throws', async () => {
+    vi.mocked(authClient.signOut).mockRejectedValueOnce(new Error('signOut error'))
+    act(() => {
+      useAppStore.getState().setIdentity({ userId: 'u-err-2', pan: 'ABCDE1234F' })
+    })
+    await act(async () => {
+      await useAppStore.getState().logout()
+    })
+    expect(useAppStore.getState().userId).toBeNull()
+  })
+
+  it('exercises all selector hooks', () => {
+    act(() => {
+      useAppStore.setState({
+        mfSessionId: 'mf-100',
+        taxSessionId: 'tax-100',
+        equitySessionId: 'eq-100',
+        parseData: { sample: 'data' } as any,
+        isPartial: true,
+        lastSynced: 12345678,
+        taxSlab: 25,
+        taxRegime: 'old',
+      })
+    })
+
+    expect(renderHook(() => useMfSessionId()).result.current).toBe('mf-100')
+    expect(renderHook(() => useTaxSessionId()).result.current).toBe('tax-100')
+    expect(renderHook(() => useEquitySessionId()).result.current).toBe('eq-100')
+    expect(renderHook(() => useFilters()).result.current.benchmark).toBe('Nifty 50')
+    expect(renderHook(() => useParseData()).result.current).toEqual({ sample: 'data' })
+    expect(renderHook(() => useIsPartial()).result.current).toBe(true)
+    expect(renderHook(() => useLastSynced()).result.current).toBe(12345678)
+    expect(renderHook(() => useTaxSlab()).result.current).toBe(25)
+    expect(renderHook(() => useTaxRegime()).result.current).toBe('old')
+
+    const { result: refreshHook } = renderHook(() => useRefreshTrigger())
+    act(() => {
+      refreshHook.current()
+    })
+
+    const { result: setSlabHook } = renderHook(() => useSetTaxSlab())
+    act(() => {
+      setSlabHook.current(15)
+    })
+    expect(useAppStore.getState().taxSlab).toBe(15)
+
+    const { result: setRegimeHook } = renderHook(() => useSetTaxRegime())
+    act(() => {
+      setRegimeHook.current('new')
+    })
+    expect(useAppStore.getState().taxRegime).toBe('new')
+
+    const { result: logoutHook } = renderHook(() => useLogout())
+    expect(typeof logoutHook.current).toBe('function')
+  })
 })
+

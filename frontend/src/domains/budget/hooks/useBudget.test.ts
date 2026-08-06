@@ -145,7 +145,7 @@ describe('useBudget utilities and hooks', () => {
       const mockTxns = { items: [{ id: 'tx1', description: 'Groceries', amount: 500 }], total: 1, page: 1, total_pages: 1 }
       vi.mocked(apiClient.getBudgetTransactions).mockResolvedValue(mockTxns as any)
 
-      const { result } = renderHook(() => useBudgetTransactions('s1', {}, 1, 20, 'date', 'desc'), {
+      const { result } = renderHook(() => useBudgetTransactions('s1', {}, 20), {
         wrapper: createWrapper(),
       })
 

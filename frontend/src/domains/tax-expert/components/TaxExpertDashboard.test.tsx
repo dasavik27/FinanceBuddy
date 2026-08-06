@@ -6,8 +6,7 @@ import TaxExpertDashboard from './TaxExpertDashboard'
 import { useAppStore } from '../../../shared/store/appStore'
 import { apiClient } from '../../../shared/api/client'
 
-const { mockSummary } = vi.hoisted(() => ({
-  mockSummary: {
+const mockSummary = {
   ay: '2025-26',
   fy: '2024-25',
   itr_type: 'ITR-2',
@@ -31,16 +30,7 @@ const { mockSummary } = vi.hoisted(() => ({
   rebate_87a: 0,
   rebate_87a_on_cg: 0,
   reconciliation_flags: {},
-  },
-}))
-
-vi.mock('../hooks/useTaxExpert', () => ({
-  useTaxExpertSummary: vi.fn(() => ({
-    data: mockSummary,
-    isLoading: false,
-    error: null,
-  })),
-}))
+}
 
 vi.mock('../../../shared/api/client', () => ({
   apiClient: {
@@ -50,6 +40,8 @@ vi.mock('../../../shared/api/client', () => ({
     getTaxExpertCapitalGains: vi.fn(),
     getTaxHistory: vi.fn(),
     parseAIS: vi.fn(),
+    getTaxRules: vi.fn(),
+    getITRData: vi.fn(),
   },
 }))
 
@@ -65,9 +57,30 @@ describe('TaxExpertDashboard', () => {
     vi.mocked(apiClient.getTaxExpertIncome).mockResolvedValue({ salary: { gross: 1200000 } } as any)
     vi.mocked(apiClient.getTaxExpertCapitalGains).mockResolvedValue({ equity_shares: [] } as any)
     vi.mocked(apiClient.getTaxHistory).mockResolvedValue({ sessions: [] } as any)
+    vi.mocked(apiClient.getTaxRules).mockResolvedValue({} as any)
+    vi.mocked(apiClient.getITRData).mockResolvedValue({} as any)
   })
 
-  it('renders TaxUploadPanel when no session is active', () => {
+  it('renders validating spinner when loading with active session', () => {
+    useAppStore.setState({ taxSessionId: 'tax-sid-1', activeModule: 'tax_expert' })
+    vi.mocked(apiClient.getTaxExpertSummary).mockReturnValue(new Promise(() => {}))
+
+    renderWithProviders(<TaxExpertDashboard />)
+    expect(screen.getByText('Restoring your session...')).toBeInTheDocument()
+  })
+
+  it('handles 404 error by clearing session and flagging expired', async () => {
+    useAppStore.setState({ taxSessionId: 'tax-sid-1', activeModule: 'tax_expert' })
+    vi.mocked(apiClient.getTaxExpertSummary).mockRejectedValueOnce({ response: { status: 404 } })
+
+    renderWithProviders(<TaxExpertDashboard />)
+    await waitFor(() => {
+      expect(useAppStore.getState().taxSessionId).toBeNull()
+      expect(screen.getByText(/Your previous session was lost/i)).toBeInTheDocument()
+    })
+  })
+
+  it('renders TaxUploadPanel when no session is active and creates new session', async () => {
     useAppStore.setState({ taxSessionId: null, activeModule: 'tax_expert', userId: 'u1' })
     renderWithProviders(<TaxExpertDashboard />)
 
@@ -108,5 +121,66 @@ describe('TaxExpertDashboard', () => {
 
     clickSpy.mockRestore()
     vi.unstubAllGlobals()
+  })
+
+  it('handles onSessionCreated callback when new session is uploaded and analyzed', async () => {
+    useAppStore.setState({ taxSessionId: null, activeModule: 'tax_expert', userId: 'u1' })
+    renderWithProviders(<TaxExpertDashboard />)
+
+    const file = new File(['%PDF-mock'], 'ais.pdf', { type: 'application/pdf' })
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    vi.mocked(apiClient.parseAIS).mockResolvedValueOnce({
+      session_id: 'new-tax-sid-99',
+      financial_year: '2024-25',
+      assessment_year: '2025-26',
+    } as any)
+
+    await userEvent.upload(fileInput, file)
+
+    const computeBtn = await screen.findByRole('button', { name: /Compute My Taxes/i })
+    await userEvent.click(computeBtn)
+
+    await waitFor(() => {
+      expect(useAppStore.getState().taxSessionId).toBe('new-tax-sid-99')
+    })
+  })
+
+  it('exports tax report with partial API failures and fallback metadata values', async () => {
+    useAppStore.setState({ taxSessionId: 'tax-sid-1', activeModule: 'tax_expert', userId: 'u1' })
+    vi.mocked(apiClient.getTaxExpertSummary).mockResolvedValueOnce({} as any) // missing ay, fy, itr_type
+    vi.mocked(apiClient.compareTaxRegimes).mockRejectedValueOnce(new Error('Comparison service offline'))
+    vi.mocked(apiClient.getTaxExpertIncome).mockRejectedValueOnce(new Error('Income service offline'))
+    vi.mocked(apiClient.getTaxExpertCapitalGains).mockRejectedValueOnce(new Error('CG offline'))
+
+    const createObjectURL = vi.fn(() => 'blob:mock')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    renderWithProviders(<TaxExpertDashboard />, { initialEntries: ['/'] })
+    await screen.findByText('TAX EXPERT')
+
+    await userEvent.click(screen.getByRole('button', { name: /Export Report/i }))
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalled()
+    })
+
+    clickSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('handles export failure catch block gracefully', async () => {
+    useAppStore.setState({ taxSessionId: 'tax-sid-1', activeModule: 'tax_expert', userId: 'u1' })
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+      throw new Error('Blob URL creation error')
+    })
+
+    renderWithProviders(<TaxExpertDashboard />, { initialEntries: ['/'] })
+    await screen.findByText('TAX EXPERT')
+
+    await userEvent.click(screen.getByRole('button', { name: /Export Report/i }))
+    createObjectURLSpy.mockRestore()
   })
 })

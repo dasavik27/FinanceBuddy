@@ -1,14 +1,9 @@
-import React, { useState } from 'react'
-import { Box, Typography, Paper, Grid, Chip, Stack, Skeleton, alpha, Divider, Snackbar, Alert } from '@mui/material'
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance'
-import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
-import ShieldIcon from '@mui/icons-material/Shield'
+import React from 'react'
+import { Box, Typography, Paper, Grid, Chip, Stack, Skeleton, alpha, Divider } from '@mui/material'
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows'
-import GavelIcon from '@mui/icons-material/Gavel'
-import { useTaxExpertSummary, useTaxRegimeComparison, useTaxExpertOverrides } from '../../hooks/useTaxExpert'
+import { useTaxExpertSummary, useTaxRegimeComparison } from '../../hooks/useTaxExpert'
 import { fmtInr } from '../../../../shared/utils/fmt'
 import TaxAuditorFindings from './TaxAuditorFindings'
-import { InlineEdit } from '../../../../shared/components/ui/InlineEdit'
 
 const ComputeRow = ({ label, valueOld, valueNew, indent = false, bold = false, color = '#fff', highlight = false, hideIfZero = true }: any) => {
   const isZero = (v: any) => v === '₹0' || v === '- ₹0' || v === '₹ 0' || v === '- ₹ 0';
@@ -63,19 +58,6 @@ export default function TaxOverviewTab() {
   const { data: newRegime, isLoading: loadNew } = useTaxExpertSummary('new')
   const { data: oldRegime, isLoading: loadOld } = useTaxExpertSummary('old')
   const { data: comparison } = useTaxRegimeComparison()
-  const overridesMut = useTaxExpertOverrides()
-
-  const [snack, setSnack] = useState<{open: boolean, msg: string, severity: 'success'|'error'}>({open: false, msg: '', severity: 'success'})
-
-  const handleTdsSave = (val: string) => {
-    const num = parseFloat(val.replace(/,/g, ''))
-    if (!isNaN(num)) {
-      overridesMut.mutate({ manual_tds: num }, {
-        onSuccess: () => setSnack({ open: true, msg: `TDS updated to ₹${num.toLocaleString('en-IN')}. Tax recalculated!`, severity: 'success' }),
-        onError: () => setSnack({ open: true, msg: 'Failed to save TDS override. Please try again.', severity: 'error' }),
-      })
-    }
-  }
 
   if (loadNew || loadOld || !newRegime || !oldRegime) {
     return (
@@ -295,9 +277,6 @@ export default function TaxOverviewTab() {
           </Box>
         </Grid>
       </Grid>
-      <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack(s => ({...s, open: false}))} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
-        <Alert severity={snack.severity} onClose={() => setSnack(s => ({...s, open: false}))} sx={{ fontWeight: 600 }}>{snack.msg}</Alert>
-      </Snackbar>
     </Box>
   )
 }

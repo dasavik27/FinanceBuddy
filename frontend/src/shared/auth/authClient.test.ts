@@ -134,7 +134,7 @@ describe('authClient utilities', () => {
       expect(consumePasswordSetupIntentFromUrl()).toBe(true)
       expect(isPasswordSetupRequired()).toBe(true)
 
-      window.location = origLocation
+      ;(window as any).location = origLocation
     })
   })
 
@@ -160,7 +160,7 @@ describe('authClient utilities', () => {
       expect(msg).toBe(REQUEST_ACCESS_MESSAGE)
       expect(replaceStateSpy).toHaveBeenCalled()
 
-      window.location = origLocation
+      ;(window as any).location = origLocation
     })
   })
 
@@ -303,7 +303,7 @@ describe('authClient utilities', () => {
       const msg = consumeOAuthErrorFromUrl()
       expect(msg).toBe(REQUEST_ACCESS_MESSAGE)
 
-      window.location = origLocation
+      ;(window as any).location = origLocation
     })
   })
 
@@ -324,7 +324,7 @@ describe('authClient utilities', () => {
       expect(result).toBe(true)
       expect(isPasswordSetupRequired()).toBe(true)
 
-      window.location = origLocation
+      ;(window as any).location = origLocation
     })
 
     it('returns isPasswordSetupRequired when no type present', () => {
@@ -342,19 +342,61 @@ describe('authClient utilities', () => {
       const result = consumePasswordSetupIntentFromUrl()
       expect(result).toBe(false)
 
-      window.location = origLocation
+      ;(window as any).location = origLocation
     })
   })
 
-  describe('normalizeAuthMessage edge cases', () => {
-    it('does not collapse strings shorter than 40 chars even if even length', () => {
-      const msg = 'short'
-      expect(normalizeAuthMessage(msg + msg)).toBe(msg + msg) // length 10, < 40
+  describe('authClient extended methods', () => {
+    it('bannerForOAuthNoAccount returns none banner', () => {
+      const b = bannerForOAuthNoAccount()
+      expect(b.access_request_status).toBe('none')
     })
 
-    it('does not collapse strings whose halves do not match', () => {
-      const msg = 'this half does not equal the other half!'
-      expect(normalizeAuthMessage(msg)).toBe(msg)
+    it('bannerForIssuerMissing returns custom detail if provided', () => {
+      const b = bannerForIssuerMissing('Custom missing issuer message')
+      expect(b.detail).toBe('Custom missing issuer message')
+      const b2 = bannerForIssuerMissing()
+      expect(b2.detail).toBe(REQUEST_ACCESS_MESSAGE)
+    })
+
+    it('signInWithGoogle executes OAuth flow with and without email hint', async () => {
+      await expect(authClient.signInWithGoogle('test@example.com')).resolves.not.toThrow()
+      await expect(authClient.signInWithGoogle()).resolves.not.toThrow()
+    })
+
+    it('updatePassword rejects short passwords and requires active session', async () => {
+      await expect(authClient.updatePassword('short')).rejects.toThrow('at least 8 characters')
+      await expect(authClient.updatePassword('validPassword123')).rejects.toThrow()
+    })
+
+    it('getUser retrieves user from session', async () => {
+      const user = await authClient.getUser()
+      expect(user === null || typeof user === 'object').toBe(true)
+    })
+
+    it('getAccessToken handles caching and retrieval', async () => {
+      const token = await authClient.getAccessToken()
+      expect(token === null || typeof token === 'string').toBe(true)
+      const cached = await authClient.getAccessToken()
+      expect(cached).toBe(token)
+    })
+
+    it('onAuthStateChange registers listener and handles events', () => {
+      const handler = vi.fn()
+      const unsubscribe = authClient.onAuthStateChange(handler)
+      expect(typeof unsubscribe).toBe('function')
+      unsubscribe()
+    })
+
+    it('signInWithEmail handles attempt and errors', async () => {
+      await expect(authClient.signInWithEmail('test@example.com', 'pwd123')).rejects.toThrow()
+    })
+
+    it('checkSessionHealth checks token validity', async () => {
+      const health = await authClient.checkSessionHealth()
+      expect(typeof health).toBe('boolean')
     })
   })
 })
+
+

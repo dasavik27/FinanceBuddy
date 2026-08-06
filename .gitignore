@@ -4,18 +4,29 @@ frontend/node_modules/
 
 # Build & Cache
 dist/
+frontend/dist/
 build/
 .vite/
 *.pyc
 __pycache__/
 .cache/
+backend/.cache/
 .pytest_cache/
 test-results/
+
+# Test Coverage
+coverage/
+frontend/coverage/
+htmlcov/
+.coverage
+.coverage.*
 
 # Environment & IDE
 .env
 .env.local
+backend/.env
 .DS_Store
+**/.DS_Store
 .idea/
 .vscode/
 .claude/settings.local.json
@@ -25,11 +36,15 @@ venv/
 .venv/
 env/
 venv_finance/
-.env
 
-# Local Databases & Scratch
+# Local Databases, Data & Scratch
 *.db
 *.sqlite
 *.sqlite3
+backend/data/*.sqlite3
 *.parquet
 backend/check_db.py
+
+# Logs
+*.log
+

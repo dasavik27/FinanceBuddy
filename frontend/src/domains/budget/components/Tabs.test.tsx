@@ -6,6 +6,7 @@ import TransactionsTab from './TransactionsTab'
 import InsightsTab from './InsightsTab'
 import RulesTab from './RulesTab'
 import { apiClient } from '../../../shared/api/client'
+import type { BudgetTransaction } from '../types'
 
 vi.mock('../../../shared/api/client', () => ({
   apiClient: {
@@ -112,15 +113,16 @@ describe('Budget Domain Tabs', () => {
 
   describe('TransactionsTab', () => {
     it('renders transaction table rows with description and category', () => {
-      const mockTransactions = [
+      const mockTransactions: BudgetTransaction[] = [
         {
-          id: 'tx-1',
-          txn_date: '2026-01-15',
+          txn_id: 'tx-1',
+          session_id: 'sess-1',
+          date: '2026-01-15',
           description: 'ZOMATO ONLINE ORDER',
           category: 'Dining',
           amount: 450,
-          flow: 'debit' as const,
-          bank: 'HDFC',
+          type: 'debit',
+          source_bank: 'HDFC',
           account_type: 'Savings Account',
           notes: 'Dinner',
         },

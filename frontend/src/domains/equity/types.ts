@@ -119,6 +119,7 @@ export interface EquityInsights {
 export interface StockSearchResult {
   symbol: string
   name: string
+  exchange?: string
 }
 
 export interface MarketIndex {

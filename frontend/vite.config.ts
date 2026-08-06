@@ -1,10 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-// Force Vite to clear its cache to fix the styled_default bug
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    force: true,
     include: [
       '@emotion/react', 
       '@emotion/styled', 

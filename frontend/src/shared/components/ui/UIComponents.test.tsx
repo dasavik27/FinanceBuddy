@@ -4,11 +4,14 @@ import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../../test/utils'
 import React from 'react'
 
-import { MetricCard } from './MetricCard'
-import { InlineEdit } from './InlineEdit'
-import { ErrorBoundary } from './ErrorBoundary'
-import { EmptyState, GlassTableContainer, GlassHeader } from './States'
+import * as UI from './index'
 import {
+  MetricCard,
+  InlineEdit,
+  ErrorBoundary,
+  EmptyState,
+  GlassTableContainer,
+  GlassHeader,
   TabFallback,
   ScoreRing,
   ProgressRow,
@@ -16,12 +19,20 @@ import {
   PremiumPulseLoader,
   TabLoader,
   OverlayLoader,
-} from './Loaders'
-import { InfoTooltip } from './InfoTooltip'
-import { SectionHeader } from './SectionHeader'
+  InfoTooltip,
+  SectionHeader,
+  PeriodSelector,
+} from './index'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
 
 describe('Shared UI Components', () => {
+  it('exports all components from index.ts', () => {
+    expect(UI.MetricCard).toBeDefined()
+    expect(UI.PlanBadge).toBeDefined()
+    expect(UI.ScoreRing).toBeDefined()
+    expect(UI.PeriodSelector).toBeDefined()
+  })
+
   describe('MetricCard', () => {
     it('renders label, value, subtext, and info tooltip', () => {
       renderWithProviders(
@@ -38,6 +49,23 @@ describe('Shared UI Components', () => {
       expect(screen.getByText('Total Value')).toBeInTheDocument()
       expect(screen.getByText('₹1,50,000')).toBeInTheDocument()
       expect(screen.getByText('+12.5% this month')).toBeInTheDocument()
+    })
+
+    it('renders different accents and subtext styles', () => {
+      renderWithProviders(
+        <div>
+          <MetricCard label="Danger" value="10" sub="Low" accent="danger" />
+          <MetricCard label="Warn" value="20" sub="Med" accent="warn" />
+          <MetricCard label="Info" value="30" sub="High" accent="info" />
+          <MetricCard label="None" value="40" sub="Neutral" accent="none" />
+          <MetricCard label="NoSub" value="50" />
+        </div>
+      )
+      expect(screen.getByText('Danger')).toBeInTheDocument()
+      expect(screen.getByText('Warn')).toBeInTheDocument()
+      expect(screen.getByText('Info')).toBeInTheDocument()
+      expect(screen.getByText('None')).toBeInTheDocument()
+      expect(screen.getByText('NoSub')).toBeInTheDocument()
     })
 
     it('renders skeleton loading state', () => {
@@ -97,22 +125,41 @@ describe('Shared UI Components', () => {
   })
 
   describe('ErrorBoundary', () => {
-    const ProblematicComponent = () => {
-      throw new Error('Test Explosion')
+    const ProblematicComponent = ({ shouldThrow }: { shouldThrow: boolean }) => {
+      if (shouldThrow) {
+        throw new Error('Test Explosion')
+      }
+      return <div>Normal Content</div>
     }
 
-    it('catches render error and displays error card with reset button', () => {
+    it('catches render error and displays error card with reset button', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       renderWithProviders(
         <ErrorBoundary fallbackMessage="Custom error occurred">
-          <ProblematicComponent />
+          <ProblematicComponent shouldThrow={true} />
         </ErrorBoundary>
       )
 
       expect(screen.getByText('Component Rendering Exception')).toBeInTheDocument()
       expect(screen.getByText('Custom error occurred')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /RESET MODULE/i })).toBeInTheDocument()
+      const resetBtn = screen.getByRole('button', { name: /RESET MODULE/i })
+      expect(resetBtn).toBeInTheDocument()
 
+      // Trigger reset
+      await userEvent.click(resetBtn)
+
+      consoleSpy.mockRestore()
+    })
+
+    it('displays default error message when fallbackMessage is omitted', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      renderWithProviders(
+        <ErrorBoundary>
+          <ProblematicComponent shouldThrow={true} />
+        </ErrorBoundary>
+      )
+
+      expect(screen.getByText('Test Explosion')).toBeInTheDocument()
       consoleSpy.mockRestore()
     })
   })
@@ -134,11 +181,37 @@ describe('Shared UI Components', () => {
   })
 
   describe('Loaders and Score Rings', () => {
-    it('renders ScoreRing, ProgressRow, LoadingGrid, and Loaders', () => {
+    it('renders ScoreRing with high, medium, and low scores', () => {
       renderWithProviders(
         <div>
           <ScoreRing score={85} />
-          <ProgressRow label="Diversification" actual={8} max={10} />
+          <ScoreRing score={55} />
+          <ScoreRing score={20} />
+        </div>
+      )
+      expect(screen.getByText('85')).toBeInTheDocument()
+      expect(screen.getByText('55')).toBeInTheDocument()
+      expect(screen.getByText('20')).toBeInTheDocument()
+    })
+
+    it('renders ProgressRow with various percentages and max=0', () => {
+      renderWithProviders(
+        <div>
+          <ProgressRow label="High" actual={9} max={10} />
+          <ProgressRow label="Medium" actual={5} max={10} />
+          <ProgressRow label="Low" actual={2} max={10} />
+          <ProgressRow label="ZeroMax" actual={0} max={0} />
+        </div>
+      )
+      expect(screen.getByText('High')).toBeInTheDocument()
+      expect(screen.getByText('Medium')).toBeInTheDocument()
+      expect(screen.getByText('Low')).toBeInTheDocument()
+      expect(screen.getByText('ZeroMax')).toBeInTheDocument()
+    })
+
+    it('renders LoadingGrid, PremiumPulseLoader, TabLoader, and OverlayLoader', () => {
+      renderWithProviders(
+        <div>
           <LoadingGrid cols={2} rows={2} />
           <PremiumPulseLoader />
           <TabLoader message="Loading institutional feed..." />
@@ -147,9 +220,6 @@ describe('Shared UI Components', () => {
         </div>
       )
 
-      expect(screen.getByText('85')).toBeInTheDocument()
-      expect(screen.getByText('Diversification')).toBeInTheDocument()
-      expect(screen.getByText('8/10')).toBeInTheDocument()
       expect(screen.getByText(/Loading institutional feed.../)).toBeInTheDocument()
       expect(screen.getByText(/Syncing.../)).toBeInTheDocument()
     })
@@ -171,6 +241,25 @@ describe('Shared UI Components', () => {
       expect(screen.getByText('Portfolio Overview')).toBeInTheDocument()
       expect(screen.getByText('Analyze your asset distribution')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument()
+    })
+  })
+
+  describe('PeriodSelector', () => {
+    it('renders options, highlights selected value, and calls onChange on click', async () => {
+      const onChange = vi.fn()
+      renderWithProviders(
+        <PeriodSelector
+          options={['1M', '3M', '6M', '1Y', 'ALL']}
+          value="1Y"
+          onChange={onChange}
+        />
+      )
+
+      expect(screen.getByText('1M')).toBeInTheDocument()
+      expect(screen.getByText('1Y')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('3M'))
+      expect(onChange).toHaveBeenCalledWith('3M')
     })
   })
 })

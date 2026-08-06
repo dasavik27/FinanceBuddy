@@ -10,7 +10,7 @@ vi.mock('../../../shared/api/client', () => ({
   apiClient: {
     getInsights: vi.fn(),
     getRebalancePlan: vi.fn(),
-    getTaxHarvesting: vi.fn(),
+    getTaxHarvest: vi.fn(),
     getGoalTimeline: vi.fn(),
     getWhatIfScenario: vi.fn(),
     getHoldings: vi.fn(),
@@ -41,7 +41,7 @@ describe('InsightsTab', () => {
         { category: 'Equity', goal: 'Long Term Wealth', timeline: '7+ Years', value: 850000, pct: 85.0, color: '#6366F1' },
       ],
     } as any)
-    vi.mocked(apiClient.getTaxHarvesting).mockResolvedValue({
+    vi.mocked(apiClient.getTaxHarvest).mockResolvedValue({
       ltcg_gain: 75000,
       stcg_gain: 15000,
       harvestable_gain: 50000,

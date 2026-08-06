@@ -94,8 +94,8 @@ class IntersectionObserverMock {
 }
 window.IntersectionObserver = IntersectionObserverMock as unknown as typeof IntersectionObserver
 
-// Polyfill scrollTo
-window.scrollTo = vi.fn()
+// Polyfill scrollTo — cast to satisfy both (options?) and (x, y) overloads
+window.scrollTo = vi.fn() as unknown as typeof window.scrollTo
 
 // jsdom omits blob URL helpers used by export/download flows
 if (typeof URL.createObjectURL !== 'function') {

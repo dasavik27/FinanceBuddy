@@ -67,7 +67,7 @@ describe('useEquityData hooks', () => {
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data?.total_portfolio_value).toBe(1200000)
+    expect((result.current.data as any)?.total_portfolio_value).toBe(1200000)
     expect(apiClient.getEquitySummary).toHaveBeenCalledWith('eq-sess-123')
   })
 
@@ -77,13 +77,13 @@ describe('useEquityData hooks', () => {
       total_count: 1,
     } as any)
 
-    const { result } = renderHook(() => useEquityHoldings('pnl', true), {
+    const { result } = renderHook(() => useEquityHoldings('unrealized_pnl', true), {
       wrapper: createWrapper(),
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(apiClient.getEquityHoldings).toHaveBeenCalledWith('eq-sess-123', {
-      sort_by: 'pnl',
+      sort_by: 'unrealized_pnl',
       ascending: true,
     })
   })

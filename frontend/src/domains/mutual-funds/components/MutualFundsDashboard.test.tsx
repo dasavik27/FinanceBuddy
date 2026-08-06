@@ -31,7 +31,7 @@ describe('MutualFundsDashboard', () => {
 
   it('renders tabs navigation when session is active', async () => {
     useAppStore.setState({ mfSessionId: 'sid-mf-123', activeModule: 'mutual_funds' })
-    renderWithProviders(<MutualFundsDashboard />, { initialRoute: '/mutual-funds/overview' })
+    renderWithProviders(<MutualFundsDashboard />, { initialEntries: ['/mutual-funds/overview'] })
 
     expect(screen.getByText('MUTUAL FUNDS')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Overview' })).toBeInTheDocument()
