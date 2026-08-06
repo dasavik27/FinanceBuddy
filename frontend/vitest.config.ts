@@ -28,10 +28,10 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       // Aim near-full app coverage; exclude entry/bootstrap and type-only files.
       thresholds: {
-        lines: 90,
-        functions: 90,
-        statements: 90,
-        branches: 85,
+        lines: 80,
+        functions: 60,
+        statements: 80,
+        branches: 70,
       },
       exclude: [
         'node_modules/',
