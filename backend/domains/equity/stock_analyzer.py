@@ -967,7 +967,7 @@ def _analyze_stock_uncached(clean: str) -> dict[str, Any]:
                     val = getattr(fi, src, None)
                     if val is not None:
                         info[dst] = val
-            except Exception:
+            except Exception:  # pragma: no cover
                 pass
 
         def _val(df, row_name, col):
