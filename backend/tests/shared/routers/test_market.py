@@ -24,15 +24,16 @@ def test_admin_mf_and_market_routes(auth_client, signed_in, monkeypatch):
         status="active",
     )
 
+    conn = FakeDbConn()
+    monkeypatch.setattr(db, "connect", lambda **kw: conn)
+
     # 1. Non-admin caller → 403
+    conn.queue_result(fetchone=("regular@test.com",))
     resp_denied = auth_client.get("/admin/mf-sync/status", headers=signed_in)
     assert resp_denied.status_code == 403
 
     # Elevate to admin
     monkeypatch.setattr("shared.identity.current_caller", lambda: admin_caller)
-
-    conn = FakeDbConn()
-    monkeypatch.setattr(db, "connect", lambda **kw: conn)
 
     # 2. GET /admin/mf-sync/status
     conn.queue_result(fetchone=("admin@test.com",))
