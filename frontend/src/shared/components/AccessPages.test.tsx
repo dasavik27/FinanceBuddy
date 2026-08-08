@@ -69,6 +69,30 @@ describe('Access Status Gate Pages', () => {
         expect(useAppStore.getState().pan).toBe('ABCDE1234F')
       })
     })
+
+    it('signs out and ignores poll errors / hidden tab ticks', async () => {
+      const logout = vi.fn().mockResolvedValue(undefined)
+      act(() => {
+        useAppStore.getState().setIdentity({
+          userId: 'u-1',
+          email: null,
+          status: 'pending',
+        })
+        useAppStore.setState({ logout })
+      })
+
+      vi.spyOn(apiClient, 'getMe').mockRejectedValue(new Error('offline'))
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+
+      renderWithProviders(<PendingAccess />)
+      expect(screen.getByText(/your email/i)).toBeInTheDocument()
+
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await userEvent.click(screen.getByRole('button', { name: /Sign out/i }))
+      expect(logout).toHaveBeenCalled()
+    })
   })
 
   describe('SuspendedAccess', () => {

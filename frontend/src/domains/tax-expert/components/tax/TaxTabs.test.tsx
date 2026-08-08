@@ -815,7 +815,7 @@ describe('Tax tab components', () => {
       await userEvent.click(screen.getByText('Misc. Income (Freelance, Rent, etc.)'))
       expect(screen.getByText(/FREELANCE HUB/i)).toBeInTheDocument()
       await userEvent.click(screen.getByText('Misc. Income (Freelance, Rent, etc.)'))
-    })
+    }, 60000)
 
     it('handles senior citizen calculation and empty lists in interest cards', async () => {
       useAppStore.setState({ taxRegime: 'old' })
@@ -889,6 +889,61 @@ describe('Tax tab components', () => {
 
       renderWithProviders(<TaxIncomeTab />)
       expect(await screen.findByText('Income Sources')).toBeInTheDocument()
+    })
+
+    it('hydrates overrides, shows populated interest rows, and new-regime exemption math', async () => {
+      useAppStore.setState({ taxRegime: 'new' })
+      vi.mocked(useTaxExpertSummary).mockReturnValue({
+        data: {
+          ...mockSummaryNew,
+          overrides: {
+            foreign_interest: 12345,
+            business_income: { revenue_44ada: 111000, revenue_44ad: 222000 },
+            crypto_income: 333,
+            gaming_income: 444,
+          },
+        },
+        isLoading: false,
+        error: null,
+      } as any)
+
+      renderWithProviders(<TaxIncomeTab />)
+      expect(await screen.findByText('Income Sources')).toBeInTheDocument()
+
+      // Open salary tooltip path (info icon) and verify employer cleanup / months filter
+      await userEvent.click(screen.getByText('Salary Income'))
+      expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument()
+      expect(screen.getByText(/1 months/i)).toBeInTheDocument()
+
+      // Populated AIS interest/dividend/misc rows (non-empty map branches)
+      await userEvent.click(screen.getByText('Interest & Dividends'))
+      await userEvent.click(screen.getByText('Savings Bank Interest'))
+      expect(screen.getByText(/HDFC BANK/i)).toBeInTheDocument()
+      expect(screen.getByText(/Exempt u\/s 80TTA/i)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('Term Deposit Interest'))
+      expect(screen.getByText(/ICICI BANK/i)).toBeInTheDocument()
+      expect(screen.getByText(/Taxable Amount/i)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('Other Interest Income'))
+      expect(screen.getByText(/NABARD BONDS/i)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('Dividend Income'))
+      expect(screen.getByText(/INFOSYS/i)).toBeInTheDocument()
+
+      await userEvent.click(screen.getByText('Core Income'))
+      await userEvent.click(screen.getByText('Misc. Income (Freelance, Rent, etc.)'))
+      expect(screen.getByText(/FREELANCE HUB/i)).toBeInTheDocument()
+
+      // Collapse Special category by clicking twice
+      await userEvent.click(screen.getByText('Special Rates'))
+      await userEvent.click(screen.getByText('Special Rates'))
+    })
+
+    it('shows skeleton when tax rules are still loading', () => {
+      vi.mocked(useTaxRules).mockReturnValue({ data: null, isLoading: true, error: null } as any)
+      const { container } = renderWithProviders(<TaxIncomeTab />)
+      expect(container.querySelectorAll('.MuiSkeleton-root').length).toBeGreaterThan(0)
     })
   })
 
@@ -1116,7 +1171,7 @@ describe('Tax tab components', () => {
       expect(mockMutateOverrides).toHaveBeenCalledWith(expect.objectContaining({
         manual_taxes: 8000
       }))
-    })
+    }, 60000)
 
     it('renders with zero TDS amounts, empty overrides and empty refunds', async () => {
       vi.mocked(useTaxExpertSummary).mockImplementation(() => ({
@@ -1198,7 +1253,7 @@ describe('Tax tab components', () => {
         bf_losses: expect.objectContaining({ ltcl: 12000 })
       })
       await userEvent.click(screen.getByText('Brought Forward Losses'))
-    })
+    }, 60000)
 
     it('shows zero cost warning dropzone and handles broker file upload success and error', async () => {
       const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})

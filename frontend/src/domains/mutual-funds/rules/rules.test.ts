@@ -35,15 +35,19 @@ describe('Mutual Funds Rules & Calculations', () => {
   describe('tabCommon', () => {
     it('calculates drawdown series correctly from peak', () => {
       expect(calculateDrawdown([])).toEqual([])
-      
+      expect(calculateDrawdown(null as any)).toEqual([])
+
       const prices = [100, 120, 90, 150, 135]
       const drawdowns = calculateDrawdown(prices)
-      
+
       expect(drawdowns[0]).toBe(0) // Peak is 100
       expect(drawdowns[1]).toBe(0) // New peak 120
       expect(drawdowns[2]).toBeCloseTo(((90 / 120) - 1) * 100) // -25%
       expect(drawdowns[3]).toBe(0) // New peak 150
       expect(drawdowns[4]).toBeCloseTo(((135 / 150) - 1) * 100) // -10%
+
+      // peak === 0 branch
+      expect(calculateDrawdown([0, 0, -10])[0]).toBe(0)
     })
 
     it('returns health signals based on gain thresholds', () => {

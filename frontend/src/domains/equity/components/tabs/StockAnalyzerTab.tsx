@@ -630,7 +630,8 @@ export default function StockAnalyzerTab() {
           }}
           onChange={(_, v, reason) => {
             if (reason === 'clear' || !v) {
-              clear()
+              // Route through handleSelect(null) so clear + null selection share one path.
+              void handleSelect(null)
             } else if (typeof v !== 'string') {
               handleSelect(v)
             }

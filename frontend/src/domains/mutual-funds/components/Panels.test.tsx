@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../../test/utils'
 import GoalProjectorPanel from './GoalProjectorPanel'
@@ -30,6 +30,7 @@ describe('Mutual Funds Analytical Panels', () => {
 
   describe('GoalProjectorPanel', () => {
     it('renders projection stats and updates on input change', async () => {
+      const user = userEvent.setup()
       vi.mocked(apiClient.getSipProjection).mockResolvedValue({
         final_value: 2500000,
         total_invested: 1200000,
@@ -47,8 +48,20 @@ describe('Mutual Funds Analytical Panels', () => {
       expect(screen.getByText('2.08x')).toBeInTheDocument()
 
       const yearsInput = screen.getByLabelText('Years')
-      await userEvent.clear(yearsInput)
-      await userEvent.type(yearsInput, '15')
+      await user.clear(yearsInput)
+      await user.type(yearsInput, '15')
+
+      const sipInput = screen.getByLabelText(/Monthly SIP/i)
+      await user.clear(sipInput)
+      await user.type(sipInput, '20000')
+
+      const retInput = screen.getByLabelText(/Expected Return/i)
+      await user.clear(retInput)
+      await user.type(retInput, '14')
+
+      const stepInput = screen.getByLabelText(/Annual Step-Up/i)
+      await user.clear(stepInput)
+      await user.type(stepInput, '8')
     })
   })
 
@@ -115,7 +128,16 @@ describe('Mutual Funds Analytical Panels', () => {
   })
 
   describe('WhatIfPanel', () => {
+    const selectCandidateFund = async (user: ReturnType<typeof userEvent.setup>) => {
+      const input = screen.getByLabelText('Candidate fund')
+      await user.type(input, 'HDF')
+      await waitFor(() => expect(apiClient.searchTicker).toHaveBeenCalledWith('HDF'), { timeout: 5000 })
+      const option = await screen.findByRole('option', { name: /HDFC Mid-Cap/i }, { timeout: 5000 })
+      await user.click(option)
+    }
+
     it('searches for candidate funds and simulates what-if historical SIP', async () => {
+      const user = userEvent.setup()
       vi.mocked(apiClient.searchTicker).mockResolvedValue({
         results: [
           { symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' },
@@ -136,6 +158,166 @@ describe('Mutual Funds Analytical Panels', () => {
 
       expect(screen.getByText('What-If Simulator')).toBeInTheDocument()
       expect(screen.getByText(/Search for a fund above to simulate/i)).toBeInTheDocument()
+
+      await selectCandidateFund(user)
+
+      expect(await screen.findByText('Final Value')).toBeInTheDocument()
+      expect(screen.getByText('₹8.50 L')).toBeInTheDocument()
+      expect(screen.getByText('₹6.00 L')).toBeInTheDocument()
+      expect(screen.getByText('1.42x')).toBeInTheDocument()
+      expect(screen.getByText('16.5%')).toBeInTheDocument()
+      expect(screen.getByText(/Simulated using real NAVs from 2021-01-01 to 2026-01-01/i)).toBeInTheDocument()
+
+      const monthly = screen.getByLabelText(/Monthly SIP/i)
+      await user.clear(monthly)
+      await user.type(monthly, '15000')
+
+      const years = screen.getByLabelText('Years')
+      await user.clear(years)
+      await user.type(years, '7')
+
+      await waitFor(() => {
+        expect(apiClient.getWhatIf).toHaveBeenCalled()
+      })
+    })
+
+    it('shows error message when simulation fails', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockResolvedValue({
+        results: [{ symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' }],
+      } as any)
+      vi.mocked(apiClient.getWhatIf).mockResolvedValue({
+        error: 'Insufficient NAV history for this scheme',
+      } as any)
+
+      renderWithProviders(<WhatIfPanel />)
+      await selectCandidateFund(user)
+
+      expect(await screen.findByText(/Insufficient NAV history/i)).toBeInTheDocument()
+    })
+
+    it('shows shorter-history notice and negative CAGR colour path', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockResolvedValue({
+        results: [{ symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' }],
+      } as any)
+      vi.mocked(apiClient.getWhatIf).mockResolvedValue({
+        final_value: 400000,
+        total_invested: 500000,
+        wealth_multiple: 0.8,
+        cagr_pct: -5.2,
+        actual_start_date: '2022-01-01',
+        actual_end_date: '2024-01-01',
+        installments: 24,
+        requested_years: 10,
+      } as any)
+
+      renderWithProviders(<WhatIfPanel />)
+      await selectCandidateFund(user)
+
+      expect(await screen.findByText('-5.2%')).toBeInTheDocument()
+      expect(screen.getByText(/fund history is shorter than the requested window/i)).toBeInTheDocument()
+    })
+
+    it('clears selection when search input is emptied', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockResolvedValue({
+        results: [{ symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' }],
+      } as any)
+      vi.mocked(apiClient.getWhatIf).mockResolvedValue({
+        final_value: 850000,
+        total_invested: 600000,
+        wealth_multiple: 1.42,
+        cagr_pct: 16.5,
+        actual_start_date: '2021-01-01',
+        actual_end_date: '2026-01-01',
+        installments: 60,
+        requested_years: 5,
+      } as any)
+
+      renderWithProviders(<WhatIfPanel />)
+      await selectCandidateFund(user)
+      expect(await screen.findByText('Final Value')).toBeInTheDocument()
+
+      const input = screen.getByLabelText('Candidate fund')
+      await user.clear(input)
+
+      expect(await screen.findByText(/Search for a fund above to simulate/i)).toBeInTheDocument()
+    })
+
+    it('shows loading spinner while what-if query is in flight', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockResolvedValue({
+        results: [{ symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' }],
+      } as any)
+      let resolveWhatIf: (v: unknown) => void
+      vi.mocked(apiClient.getWhatIf).mockReturnValue(
+        new Promise((resolve) => {
+          resolveWhatIf = resolve
+        }) as any,
+      )
+
+      renderWithProviders(<WhatIfPanel />)
+      await selectCandidateFund(user)
+
+      await waitFor(() => {
+        expect(document.querySelector('.MuiCircularProgress-root')).toBeTruthy()
+      })
+
+      resolveWhatIf!({
+        final_value: 100000,
+        total_invested: 80000,
+        wealth_multiple: 1.25,
+        cagr_pct: 10,
+        actual_start_date: '2020-01-01',
+        actual_end_date: '2025-01-01',
+        installments: 60,
+        requested_years: 5,
+      })
+
+      expect(await screen.findByText('Final Value')).toBeInTheDocument()
+    })
+
+    it('disables simulation when years is zero and handles empty result payload', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockResolvedValue({
+        results: [
+          { symbol: 'INF179K01BE2', name: 'HDFC Mid-Cap Opportunities Fund' },
+          { symbol: 'EMPTY', name: '' },
+        ],
+      } as any)
+      vi.mocked(apiClient.getWhatIf).mockResolvedValue({} as any)
+
+      renderWithProviders(<WhatIfPanel />)
+      await selectCandidateFund(user)
+
+      // Empty payload: selected but no final_value / error → null result branch
+      await waitFor(() => {
+        expect(screen.queryByText('Final Value')).not.toBeInTheDocument()
+      })
+
+      const years = screen.getByLabelText('Years')
+      await user.clear(years)
+      await user.type(years, '0')
+
+      const monthly = screen.getByLabelText(/Monthly SIP/i)
+      await user.clear(monthly)
+      await user.type(monthly, '0')
+
+      // Query disabled when amount/years invalid — UI stays without stats
+      expect(screen.queryByText('Final Value')).not.toBeInTheDocument()
+    })
+
+    it('shows search spinner adornment while ticker search is fetching', async () => {
+      const user = userEvent.setup()
+      vi.mocked(apiClient.searchTicker).mockReturnValue(new Promise(() => {}) as any)
+
+      renderWithProviders(<WhatIfPanel />)
+      await user.type(screen.getByLabelText('Candidate fund'), 'ABC')
+
+      await waitFor(() => {
+        expect(document.querySelector('.MuiCircularProgress-root')).toBeTruthy()
+      }, { timeout: 5000 })
     })
   })
 

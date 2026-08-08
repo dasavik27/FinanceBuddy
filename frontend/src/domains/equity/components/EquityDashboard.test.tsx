@@ -17,6 +17,7 @@ vi.mock('../../../shared/api/client', () => ({
     getEquityInsights: vi.fn(),
     getEquityHistory: vi.fn(),
     getMarketIndices: vi.fn(),
+    syncEquity: vi.fn(),
   },
 }))
 
@@ -49,7 +50,7 @@ describe('EquityDashboard & IndianStocksDashboard', () => {
   })
 
   it('renders EquityDashboard with tabs and default overview tab', async () => {
-    renderWithProviders(<EquityDashboard hasSession={true} />)
+    renderWithProviders(<EquityDashboard hasSession={true} />, { initialEntries: ['/equity/overview'] })
 
     expect(screen.getByRole('heading', { name: 'Equity Dashboard' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Overview' })).toBeInTheDocument()
@@ -60,8 +61,8 @@ describe('EquityDashboard & IndianStocksDashboard', () => {
     expect(screen.getByRole('tab', { name: 'Stock Analyzer' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Insights' })).toBeInTheDocument()
 
-    // Lazy overview content
-    expect(await screen.findByText('Executive Summary')).toBeInTheDocument()
+    // Lazy overview content — allow time for Suspense chunk under parallel pool
+    expect(await screen.findByText('Executive Summary', {}, { timeout: 10000 })).toBeInTheDocument()
     expect(screen.getByText('Total Market Value')).toBeInTheDocument()
   })
 

@@ -64,6 +64,39 @@ describe('apiClient & Interceptors', () => {
 
       await expect(errorHandler(error500)).rejects.toBe(error500)
     })
+
+    it('response interceptor ignores 401 when store has no identity', async () => {
+      const signOutSpy = vi.spyOn(authClient, 'signOut').mockResolvedValue()
+      const errorHandler = (api.interceptors.response as any).handlers[0].rejected
+      const error401 = { response: { status: 401 } }
+
+      await expect(errorHandler(error401)).rejects.toBe(error401)
+      expect(signOutSpy).not.toHaveBeenCalled()
+    })
+
+    it('response interceptor rejects errors without response status', async () => {
+      const errorHandler = (api.interceptors.response as any).handlers[0].rejected
+      const networkError = { message: 'Network Error' }
+      await expect(errorHandler(networkError)).rejects.toBe(networkError)
+    })
+
+    it('response interceptor skips nested 401 cleanup while already handling one', async () => {
+      useAppStore.getState().setIdentity({ userId: 'u1', email: 'test@example.com', status: 'active' })
+      let resolveSignOut!: () => void
+      const signOutSpy = vi.spyOn(authClient, 'signOut').mockImplementation(
+        () => new Promise<void>((resolve) => { resolveSignOut = resolve }),
+      )
+
+      const errorHandler = (api.interceptors.response as any).handlers[0].rejected
+      const first = errorHandler({ response: { status: 401 } })
+      const second = errorHandler({ response: { status: 401 } })
+
+      // Second 401 should not start another signOut while the first is in flight.
+      expect(signOutSpy).toHaveBeenCalledTimes(1)
+      resolveSignOut()
+      await expect(first).rejects.toBeTruthy()
+      await expect(second).rejects.toBeTruthy()
+    })
   })
 
   describe('API Methods', () => {
@@ -79,6 +112,18 @@ describe('apiClient & Interceptors', () => {
       const file = new File(['test'], 'cas.pdf')
       await apiClient.parseFile(file, 'pass123')
       expect(api.post).toHaveBeenCalledWith('/mutual-funds/portfolio/parse', expect.any(FormData), expect.any(Object))
+
+      await apiClient.parseFile(file, 'pass123', 'custom_type')
+      expect(api.post).toHaveBeenCalledWith(
+        '/mutual-funds/portfolio/parse',
+        expect.any(FormData),
+        expect.objectContaining({ headers: expect.objectContaining({ 'X-Upload-Type': 'custom_type' }) }),
+      )
+
+      await apiClient.getHistory()
+      expect(api.get).toHaveBeenCalledWith('/history/', expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Upload-Type': 'mutual_funds' }),
+      }))
 
       await apiClient.getHistory('mutual_funds')
       expect(api.get).toHaveBeenCalledWith('/history/', expect.any(Object))
@@ -146,8 +191,18 @@ describe('apiClient & Interceptors', () => {
       await apiClient.getBenchmarkHistory('NIFTY50', 180)
       expect(api.get).toHaveBeenCalledWith('/mutual-funds/compare/history', expect.any(Object))
 
+      await apiClient.getBenchmarkHistory('NIFTY50')
+      expect(api.get).toHaveBeenCalledWith('/mutual-funds/compare/history', {
+        params: { ticker: 'NIFTY50', days: 365 },
+      })
+
       await apiClient.getRollingReturns('sid-1', 'INF179K01BE2', 5)
       expect(api.get).toHaveBeenCalledWith('/mutual-funds/performance/sid-1/rolling/INF179K01BE2', expect.any(Object))
+
+      await apiClient.getRollingReturns('sid-1', 'INF179K01BE2')
+      expect(api.get).toHaveBeenCalledWith('/mutual-funds/performance/sid-1/rolling/INF179K01BE2', {
+        params: { window: 3 },
+      })
 
       await apiClient.getMarketSummary()
       expect(api.get).toHaveBeenCalledWith('/market/summary')
@@ -163,6 +218,9 @@ describe('apiClient & Interceptors', () => {
       const file = new File(['eq'], 'eq.csv')
       const tradebook = new File(['tb'], 'tb.csv')
       await apiClient.parseEquityCsv(file, tradebook)
+      expect(api.post).toHaveBeenCalledWith('/equity/portfolio/parse', expect.any(FormData))
+
+      await apiClient.parseEquityCsv(file)
       expect(api.post).toHaveBeenCalledWith('/equity/portfolio/parse', expect.any(FormData))
 
       await apiClient.getKiteLoginUrl()
@@ -325,6 +383,9 @@ describe('apiClient & Interceptors', () => {
       await apiClient.getTaxHistory(50, 10)
       expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-history', { params: { limit: 50, offset: 10 } })
 
+      await apiClient.getTaxHistory()
+      expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-history', { params: { limit: 200, offset: 0 } })
+
       await apiClient.deleteTaxSession('tax-1')
       expect(api.delete).toHaveBeenCalledWith('/tax-expert/tax-history/tax-1')
 
@@ -336,6 +397,9 @@ describe('apiClient & Interceptors', () => {
       expect(itrData.gross).toBe(1200000)
 
       await apiClient.getTaxExpertSummary('tax-1', 'new')
+      expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-1/tax/summary', { params: { regime: 'new' } })
+
+      await apiClient.getTaxExpertSummary('tax-1')
       expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-1/tax/summary', { params: { regime: 'new' } })
 
       await apiClient.getTaxExpertIncome('tax-1')
@@ -361,6 +425,9 @@ describe('apiClient & Interceptors', () => {
 
       await apiClient.getTaxDetails('tax-1', 'salary', 0, 100)
       expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-1/tax/details/salary', { params: { offset: 0, limit: 100 } })
+
+      await apiClient.getTaxDetails('tax-1', 'salary')
+      expect(api.get).toHaveBeenCalledWith('/tax-expert/tax-1/tax/details/salary', { params: { offset: 0, limit: 200 } })
     })
 
     it('Accounts, Profile & Admin endpoints', async () => {
@@ -428,6 +495,25 @@ describe('apiClient & Interceptors', () => {
       expect(api.get).toHaveBeenCalledWith('/admin/mf-sync/schemes', {
         params: { q: 'HDFC Top 100', limit: 25, offset: 0, amc: 'HDFC Mutual Fund', category: 'Equity' },
       })
+
+      await apiClient.searchMfSchemes('', 50, 0, 'All', 'All')
+      expect(api.get).toHaveBeenCalledWith('/admin/mf-sync/schemes', {
+        params: { q: '', limit: 50, offset: 0 },
+      })
+
+      await apiClient.searchMfSchemes()
+      expect(api.get).toHaveBeenCalledWith('/admin/mf-sync/schemes', {
+        params: { q: '', limit: 50, offset: 0 },
+      })
+
+      await apiClient.getBudgetAccounts()
+      expect(api.get).toHaveBeenCalledWith('/budget/accounts', { params: { session_id: 'overall' } })
+
+      await apiClient.setBudgetEnvelope('Dining', null)
+      expect(api.put).toHaveBeenCalledWith('/budget/insights/envelopes', { category: 'Dining', monthly_cap: null })
+
+      await apiClient.approveAccessRequest('req-2')
+      expect(api.post).toHaveBeenCalledWith('/auth/access-requests/req-2/approve', { method: 'invite' })
     })
   })
 })

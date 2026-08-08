@@ -115,4 +115,61 @@ describe('AccountSetupPrompt', () => {
       expect(onComplete).toHaveBeenCalled()
     })
   })
+
+  it('returns null when neither password nor PAN is required', () => {
+    const { container } = renderWithProviders(
+      <AccountSetupPrompt
+        requirePassword={false}
+        requirePan={false}
+        onPasswordComplete={vi.fn()}
+      />
+    )
+    expect(container.querySelector('form')).toBeNull()
+  })
+
+  it('shows password-only and PAN-only titles', () => {
+    const { unmount } = renderWithProviders(
+      <AccountSetupPrompt requirePassword={true} requirePan={false} onPasswordComplete={vi.fn()} />
+    )
+    expect(screen.getByText('Create your password')).toBeInTheDocument()
+    unmount()
+
+    renderWithProviders(
+      <AccountSetupPrompt requirePassword={false} requirePan={true} onPasswordComplete={vi.fn()} />
+    )
+    expect(screen.getByText('Link your PAN')).toBeInTheDocument()
+  })
+
+  it('requires PAN value before submit and surfaces API errors', async () => {
+    vi.mocked(apiClient.setProfilePan).mockRejectedValueOnce({
+      response: { data: { detail: 'PAN taken' } },
+    })
+    renderWithProviders(
+      <AccountSetupPrompt requirePassword={false} requirePan={true} onPasswordComplete={vi.fn()} />
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Continue to dashboard/i }))
+    expect(screen.getByText(/Please enter your 10-character PAN/i)).toBeInTheDocument()
+
+    await userEvent.type(screen.getByPlaceholderText('ABCDE1234F'), 'ABCDE1234F')
+    await userEvent.click(screen.getByRole('button', { name: /Continue to dashboard/i }))
+    expect(await screen.findByText('PAN taken')).toBeInTheDocument()
+  })
+
+  it('toggles password visibility and signs out', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    useAppStore.setState({ logout })
+    renderWithProviders(
+      <AccountSetupPrompt requirePassword={true} requirePan={false} onPasswordComplete={vi.fn()} />
+    )
+    const pw = screen.getByLabelText(/^New password/i)
+    expect(pw).toHaveAttribute('type', 'password')
+    const toggle = screen.getAllByRole('button').find((b) =>
+      b.querySelector('[data-testid="VisibilityIcon"]')
+    )!
+    await userEvent.click(toggle)
+    expect(pw).toHaveAttribute('type', 'text')
+
+    await userEvent.click(screen.getByRole('button', { name: /Sign out/i }))
+    expect(logout).toHaveBeenCalled()
+  })
 })

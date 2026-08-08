@@ -612,7 +612,7 @@ function PerformanceRow({ fund, color }: { fund: any, color: string }) {
                   </Grid>
                   
                   {/* Institutional Peer Strip */}
-                  {/* <FundPeers fund={fund} /> */}
+                  <FundPeers fund={fund} />
                 </Box>
               </motion.div>
             )}

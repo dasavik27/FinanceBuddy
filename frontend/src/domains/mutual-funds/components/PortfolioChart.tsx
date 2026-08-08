@@ -213,8 +213,8 @@ export default function PortfolioChart({
       point[primaryBenchmark] = isNaN(bk) ? 1000 : bk
     }
 
-    // Overlay benchmarks
-    Object.entries(overlaySeries).forEach(([bm, series]) => {
+    // Overlay benchmarks (null-safe — fetch banner path may pass before series arrive)
+    Object.entries(overlaySeries || {}).forEach(([bm, series]) => {
       if (selectedBenchmarks.includes(bm)) {
         const val = series[i] !== undefined ? series[i] : series[series.length - 1]
         let ovk = parseFloat(((val || 100) * 10).toFixed(2))

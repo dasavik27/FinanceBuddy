@@ -172,6 +172,156 @@ describe('Topbar', () => {
     })
     expect(screen.getByText(/2h ago/)).toBeInTheDocument()
   })
+
+  it('getSyncedText: minutes ago shows Nm ago', () => {
+    act(() => {
+      useAppStore.setState({ lastSynced: Date.now() - 5 * 60 * 1000, equitySessionId: 'eq-1' })
+    })
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />, {
+      initialEntries: ['/equity'],
+    })
+    expect(screen.getByText(/5m ago/)).toBeInTheDocument()
+  })
+
+  it('falls back to PAN label and "?" when identity fields are empty', () => {
+    act(() => {
+      useAppStore.setState({
+        userId: 'u-3',
+        email: null,
+        displayName: null,
+        pan: 'XYZAB9876C',
+      })
+    })
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />)
+    expect(screen.getByText('XYZAB9876C')).toBeInTheDocument()
+    expect(screen.getAllByText('XY').length).toBeGreaterThan(0)
+  })
+
+  it('syncs equity session on refresh click', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useAppStore.setState({ equitySessionId: 'eq-1', lastSynced: Date.now() })
+    })
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />, {
+      initialEntries: ['/equity/holdings'],
+    })
+    await user.click(screen.getByTestId('SyncIcon').closest('button')!)
+    await waitFor(() => {
+      expect(apiClient.syncEquity).toHaveBeenCalledWith('eq-1')
+    })
+  })
+
+  it('syncs mutual-funds session on refresh click', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useAppStore.setState({ mfSessionId: 'mf-1', lastSynced: Date.now() })
+    })
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />, {
+      initialEntries: ['/mutual-funds/holdings'],
+    })
+    await user.click(screen.getByTestId('SyncIcon').closest('button')!)
+    await waitFor(() => {
+      expect(apiClient.syncPortfolio).toHaveBeenCalledWith('mf-1')
+    })
+  })
+
+  it('logs sync failures without crashing', async () => {
+    const user = userEvent.setup()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(apiClient.syncEquity).mockRejectedValueOnce(new Error('sync boom'))
+    act(() => {
+      useAppStore.setState({ equitySessionId: 'eq-1', lastSynced: Date.now() })
+    })
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />, {
+      initialEntries: ['/equity'],
+    })
+    await user.click(screen.getByTestId('SyncIcon').closest('button')!)
+    await waitFor(() => {
+      expect(errSpy).toHaveBeenCalled()
+    })
+    errSpy.mockRestore()
+  })
+
+  it('navigates Profile, Data vault, Admin, and Sign Out from menu', async () => {
+    setUser({ role: 'admin', displayName: 'Admin User' })
+    const logoutSpy = vi.fn().mockResolvedValue(undefined)
+    act(() => {
+      useAppStore.setState({ logout: logoutSpy })
+    })
+    const user = userEvent.setup()
+    const { Routes, Route } = await import('react-router-dom')
+    renderWithProviders(
+      <Routes>
+        <Route path="/dashboard" element={<Topbar onMenuClick={vi.fn()} isPartial={false} />} />
+        <Route path="/profile" element={<div>Profile Route</div>} />
+        <Route path="/accounts" element={<div>Accounts Route</div>} />
+        <Route path="/admin" element={<div>Admin Route</div>} />
+        <Route path="/" element={<div>Home Route</div>} />
+      </Routes>,
+      { initialEntries: ['/dashboard'] },
+    )
+
+    await user.click(screen.getByText('Admin User'))
+    expect(await screen.findByText('ADMIN')).toBeInTheDocument()
+    await user.click(screen.getByText('Profile'))
+    expect(await screen.findByText('Profile Route')).toBeInTheDocument()
+  })
+
+  it('opens Data vault and Admin Console from profile menu', async () => {
+    setUser({ role: 'admin', displayName: 'Admin User' })
+    const user = userEvent.setup()
+    const { Routes, Route } = await import('react-router-dom')
+    renderWithProviders(
+      <Routes>
+        <Route path="/dashboard" element={<Topbar onMenuClick={vi.fn()} isPartial={false} />} />
+        <Route path="/accounts" element={<div>Accounts Route</div>} />
+      </Routes>,
+      { initialEntries: ['/dashboard'] },
+    )
+    await user.click(screen.getByText('Admin User'))
+    await user.click(await screen.findByText('Data vault'))
+    expect(await screen.findByText('Accounts Route')).toBeInTheDocument()
+  })
+
+  it('opens Admin Console from profile menu for admins', async () => {
+    setUser({ role: 'admin', displayName: 'Admin User' })
+    const user = userEvent.setup()
+    const { Routes, Route } = await import('react-router-dom')
+    renderWithProviders(
+      <Routes>
+        <Route path="/dashboard" element={<Topbar onMenuClick={vi.fn()} isPartial={false} />} />
+        <Route path="/admin" element={<div>Admin Route</div>} />
+      </Routes>,
+      { initialEntries: ['/dashboard'] },
+    )
+    await user.click(screen.getByText('Admin User'))
+    await user.click(await screen.findByText('Admin Console'))
+    expect(await screen.findByText('Admin Route')).toBeInTheDocument()
+  })
+
+  it('signs out from profile menu', async () => {
+    setUser({ displayName: 'Test User' })
+    const logoutSpy = vi.fn().mockResolvedValue(undefined)
+    act(() => {
+      useAppStore.setState({ logout: logoutSpy })
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />)
+    await user.click(screen.getByText('Test User'))
+    await user.click(await screen.findByText('Sign Out'))
+    await waitFor(() => expect(logoutSpy).toHaveBeenCalled())
+  })
+
+  it('closes profile menu via onClose', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<Topbar onMenuClick={vi.fn()} isPartial={false} />)
+    await user.click(screen.getByText('Test User'))
+    expect(await screen.findByText('Profile')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('menuitem', { name: /Profile/i })).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('layout/Dashboard routing', () => {

@@ -77,4 +77,36 @@ describe('FundDetailDrawer', () => {
     expect(screen.getByText('TAX INTELLIGENCE')).toBeInTheDocument()
     expect(screen.getByText(/Post Apr 2023: all debt mutual fund gains/i)).toBeInTheDocument()
   })
+
+  it('renders nothing meaningful when fund is null', () => {
+    renderWithProviders(<FundDetailDrawer fund={null} onClose={vi.fn()} />)
+    expect(screen.queryByText('TAX INTELLIGENCE')).not.toBeInTheDocument()
+  })
+
+  it('shows sector/holding insights and source attribution', async () => {
+    renderWithProviders(<FundDetailDrawer fund={mockFund} onClose={vi.fn()} />)
+    expect(await screen.findByText('SECTOR ALLOCATION')).toBeInTheDocument()
+    expect(screen.getByText('TOP INSTRUMENTS')).toBeInTheDocument()
+    expect(screen.getByText('HDFC BANK')).toBeInTheDocument()
+    expect(screen.getByText(/Official AMFI Disclosure/i)).toBeInTheDocument()
+  })
+
+  it('handles missing insights gracefully', async () => {
+    vi.mocked(apiClient.getFundInsights).mockRejectedValueOnce(new Error('insights down'))
+    renderWithProviders(<FundDetailDrawer fund={mockFund} onClose={vi.fn()} />)
+    expect(screen.getByText('Mirae Asset Large Cap Fund')).toBeInTheDocument()
+    expect(screen.getByText('TAX INTELLIGENCE')).toBeInTheDocument()
+  })
+
+  it('renders hybrid/other category tax intelligence', () => {
+    const hybrid = {
+      ...mockFund,
+      Fund: 'HDFC Balanced Advantage',
+      Category: 'Hybrid Scheme - Balanced Advantage',
+      'Cap Type': 'Hybrid',
+    }
+    renderWithProviders(<FundDetailDrawer fund={hybrid} onClose={vi.fn()} />)
+    expect(screen.getByText('HDFC Balanced Advantage')).toBeInTheDocument()
+    expect(screen.getByText('TAX INTELLIGENCE')).toBeInTheDocument()
+  })
 })

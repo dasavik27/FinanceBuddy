@@ -100,4 +100,86 @@ describe('AccountsDashboard', () => {
 
     expect(await screen.findByText(/Purge Account Data/i)).toBeInTheDocument()
   })
+
+  it('confirms purge and cancels purge dialog', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    useAppStore.setState({ logout })
+    renderWithProviders(<AccountsDashboard />)
+    await screen.findByText('ABCDE1234F')
+
+    const deleteButtons = screen.getAllByRole('button').filter((btn) =>
+      btn.querySelector('[data-testid="DeleteIcon"]')
+    )
+    await userEvent.click(deleteButtons[0])
+    expect(await screen.findByText(/Purge Account Data/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Cancel/i }))
+    await waitFor(() => {
+      expect(screen.queryByText(/Purge Account Data/i)).not.toBeInTheDocument()
+    })
+
+    await userEvent.click(deleteButtons[0])
+    await userEvent.click(await screen.findByRole('button', { name: /Delete Permanently/i }))
+    await waitFor(() => {
+      expect(apiClient.purgeAccount).toHaveBeenCalled()
+    })
+  })
+
+  it('navigates when an active module row is clicked', async () => {
+    renderWithProviders(
+      <>
+        <AccountsDashboard />
+      </>
+    )
+    await screen.findByText('Mutual Funds')
+    await userEvent.click(screen.getByText('Mutual Funds'))
+  })
+
+  it('renders unknown modules without a navigation path', async () => {
+    vi.mocked(apiClient.getAccountsSummary).mockResolvedValue({
+      accounts: [
+        {
+          pan: 'ABCDE1234F',
+          sessions: [{ module: 'custom_module' }, { module: 'mutual_funds' }],
+        },
+      ],
+    } as any)
+    renderWithProviders(<AccountsDashboard />)
+    expect(await screen.findByText('custom_module')).toBeInTheDocument()
+    expect(screen.getByText(/2 SESSIONS/i)).toBeInTheDocument()
+  })
+
+  it('shows singular SESSION label for one session', async () => {
+    vi.mocked(apiClient.getAccountsSummary).mockResolvedValue({
+      accounts: [{ pan: 'ABCDE1234F', sessions: [{ module: 'equity' }] }],
+    } as any)
+    renderWithProviders(<AccountsDashboard />)
+    expect(await screen.findByText(/1 SESSION$/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 session$/i)).toBeInTheDocument()
+  })
+
+  it('surfaces export and cache errors via snackbar', async () => {
+    vi.mocked(apiClient.exportAccount).mockRejectedValueOnce({
+      response: { data: { detail: 'Export denied' } },
+    })
+    vi.mocked(apiClient.clearSystemCaches).mockRejectedValueOnce({
+      response: { data: { detail: 'Cache clear failed' } },
+    })
+
+    renderWithProviders(<AccountsDashboard />)
+    await screen.findByText('Account Settings')
+
+    await userEvent.click(screen.getByRole('button', { name: /Export Account Data/i }))
+    expect(await screen.findByText('Export denied')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Clear All Caches/i }))
+    expect(await screen.findByText('Cache clear failed')).toBeInTheDocument()
+  })
+
+  it('closes snackbar on Alert dismiss', async () => {
+    renderWithProviders(<AccountsDashboard />)
+    await screen.findByText('Account Settings')
+    await userEvent.click(screen.getByRole('button', { name: /Clear All Caches/i }))
+    expect(await screen.findByText(/cleared successfully/i)).toBeInTheDocument()
+  })
 })

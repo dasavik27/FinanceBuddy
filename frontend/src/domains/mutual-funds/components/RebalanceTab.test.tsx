@@ -55,4 +55,64 @@ describe('RebalanceTab', () => {
     await userEvent.click(balancedBtn)
     expect(apiClient.getRebalancePlan).toHaveBeenCalledWith('sid-rebalance', { profile: 'Balanced' })
   })
+
+  it('filters directives by buy/sell and shows tax/exit-load chips', async () => {
+    vi.mocked(apiClient.getRebalancePlan).mockResolvedValue({
+      drift_score: 9.5,
+      status: 'Needs Attention',
+      drifts: { Equity: 12.0, Debt: -8.0 },
+      orders: [
+        {
+          action: 'SELL',
+          fund: 'Quant Small Cap Fund',
+          amount: 50000,
+          note: 'Trim equity',
+          tax_estimate: 2500,
+          exit_load_estimate: 400,
+        },
+        {
+          action: 'BUY',
+          fund: 'HDFC Corporate Bond Fund',
+          amount: 50000,
+          note: 'Add debt',
+        },
+        {
+          action: 'SWITCH',
+          fund: 'Parag Parikh Flexi Cap Fund',
+          amount: 20000,
+          note: 'Rotate mandate',
+        },
+      ],
+    } as any)
+
+    const user = userEvent.setup()
+    renderWithProviders(<RebalanceTab />)
+
+    expect(await screen.findByText('Quant Small Cap Fund')).toBeInTheDocument()
+    expect(screen.getByText(/~₹2,500 tax/i)).toBeInTheDocument()
+    expect(screen.getByText(/exit load/i)).toBeInTheDocument()
+
+    await user.click(screen.getByText('🔴 Trims'))
+    expect(screen.getByText('Quant Small Cap Fund')).toBeInTheDocument()
+    expect(screen.queryByText('HDFC Corporate Bond Fund')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('🟢 Buys'))
+    expect(screen.getByText('HDFC Corporate Bond Fund')).toBeInTheDocument()
+    expect(screen.queryByText('Quant Small Cap Fund')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('🔄 Switches'))
+    expect(screen.getByText('Parag Parikh Flexi Cap Fund')).toBeInTheDocument()
+  })
+
+  it('shows equilibrium empty state when there are no orders', async () => {
+    vi.mocked(apiClient.getRebalancePlan).mockResolvedValue({
+      drift_score: 1.2,
+      status: 'Balanced',
+      drifts: { Equity: 1.0, Debt: -1.0 },
+      orders: [],
+    } as any)
+
+    renderWithProviders(<RebalanceTab />)
+    expect(await screen.findByText(/Euclidean\/RMSD Equilibrium Achieved/i)).toBeInTheDocument()
+  })
 })

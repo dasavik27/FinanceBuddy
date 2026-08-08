@@ -12,11 +12,13 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    testTimeout: 15000,
-    hookTimeout: 15000,
-    pool: 'forks',
+    testTimeout: 30000,
+    hookTimeout: 30000,
+    // threads is much faster than single-fork on Windows and avoids 30s+ UI timeouts
+    // under serial coverage runs; keep maxThreads modest to limit memory pressure.
+    pool: 'threads',
     poolOptions: {
-      forks: { singleFork: true },
+      threads: { maxThreads: 4, minThreads: 1 },
     },
     env: {
       VITE_SUPABASE_URL: 'https://test-project.supabase.co',
@@ -25,13 +27,13 @@ export default defineConfig({
     },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'text-summary', 'json', 'json-summary', 'html'],
       // Aim near-full app coverage; exclude entry/bootstrap and type-only files.
       thresholds: {
-        lines: 80,
-        functions: 60,
-        statements: 80,
-        branches: 70,
+        lines: 90,
+        functions: 90,
+        statements: 90,
+        branches: 90,
       },
       exclude: [
         'node_modules/',

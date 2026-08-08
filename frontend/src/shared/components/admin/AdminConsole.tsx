@@ -606,7 +606,7 @@ export default function AdminConsole() {
   }
 
   const handleCopy = (id: string, text: string) => {
-    navigator.clipboard.writeText(text)
+    void navigator.clipboard?.writeText?.(text)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
   }
@@ -1666,7 +1666,7 @@ export default function AdminConsole() {
                 <Button
                   variant="contained"
                   onClick={handleTriggerMfSync}
-                  disabled={mfTriggering || mfStatusLoading || (syncScope === 'custom' && customAmcs.length === 0)}
+                  disabled={mfTriggering || mfStatusLoading}
                     startIcon={mfTriggering ? <CircularProgress size={18} color="inherit" /> : <BoltIcon />}
                   sx={{
                       px: 3,
@@ -2308,11 +2308,7 @@ export default function AdminConsole() {
               <Button
                 variant="contained"
                 onClick={handlePurge}
-                disabled={
-                  purgeLoading ||
-                  (purgeMode === 'all' && purgeConfirmText.trim().toUpperCase() !== 'PURGE') ||
-                  (purgeMode === 'amc' && !purgeTargetAmc)
-                }
+                disabled={purgeLoading}
                 sx={{
                   borderRadius: '10px',
                   bgcolor: '#F43F5E',

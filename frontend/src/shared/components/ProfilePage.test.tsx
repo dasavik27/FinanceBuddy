@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/utils'
 import ProfilePage from './ProfilePage'
@@ -87,5 +87,80 @@ describe('ProfilePage', () => {
     await vi.waitFor(() => {
       expect(authClient.updatePassword).toHaveBeenCalledWith('NewPass1234!')
     })
+  })
+
+  it('validates PAN format and password confirmation errors', async () => {
+    renderWithProviders(<ProfilePage />)
+
+    fireEvent.change(screen.getByPlaceholderText('ABCDE1234F'), { target: { value: 'BADPAN' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save PAN/i }))
+    expect(await screen.findByText(/does not look like a PAN/i)).toBeInTheDocument()
+
+    const newPwInput = screen.getByLabelText(/^New password/i)
+    const confirmPwInput = screen.getByLabelText(/^Confirm password/i)
+    fireEvent.change(newPwInput, { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: /Update password/i }))
+    expect(await screen.findByText(/at least 8 characters/i)).toBeInTheDocument()
+
+    fireEvent.change(newPwInput, { target: { value: 'LongEnough1' } })
+    fireEvent.change(confirmPwInput, { target: { value: 'Mismatch123' } })
+    fireEvent.click(screen.getByRole('button', { name: /Update password/i }))
+    expect(await screen.findByText(/do not match/i)).toBeInTheDocument()
+  })
+
+  it('surfaces API errors for name, PAN, and password saves', async () => {
+    vi.mocked(apiClient.updateProfile).mockRejectedValueOnce({
+      response: { data: { detail: 'Name rejected' } },
+    })
+    vi.mocked(apiClient.setProfilePan).mockRejectedValueOnce({
+      response: { data: { detail: 'PAN rejected' } },
+    })
+    vi.mocked(authClient.updatePassword).mockRejectedValueOnce(new Error('Password rejected'))
+
+    renderWithProviders(<ProfilePage />)
+
+    fireEvent.change(screen.getByLabelText(/Display name/i), { target: { value: 'X' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save name/i }))
+    expect(await screen.findByText('Name rejected')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('ABCDE1234F'), { target: { value: 'ABCDE1234F' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save PAN/i }))
+    expect(await screen.findByText('PAN rejected')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText(/^New password/i), { target: { value: 'ValidPass1' } })
+    fireEvent.change(screen.getByLabelText(/^Confirm password/i), { target: { value: 'ValidPass1' } })
+    fireEvent.click(screen.getByRole('button', { name: /Update password/i }))
+    expect(await screen.findByText('Password rejected')).toBeInTheDocument()
+  })
+
+  it('toggles password visibility and navigates privacy / back actions', async () => {
+    renderWithProviders(<ProfilePage />)
+
+    const newPwInput = screen.getByLabelText(/^New password/i)
+    expect(newPwInput).toHaveAttribute('type', 'password')
+    const toggles = screen.getAllByRole('button').filter((b) =>
+      b.querySelector('[data-testid="VisibilityIcon"]')
+    )
+    fireEvent.click(toggles[0])
+    expect(newPwInput).toHaveAttribute('type', 'text')
+
+    fireEvent.click(screen.getByRole('button', { name: /Open accounts vault/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/i }))
+  })
+
+  it('shows Admin role and syncs store-driven name/PAN updates', async () => {
+    useAppStore.getState().setIdentity({
+      userId: 'u-profile',
+      email: 'admin@example.com',
+      displayName: 'Admin Person',
+      pan: 'ABCDE1234F',
+      role: 'admin',
+      status: 'active',
+    })
+    renderWithProviders(<ProfilePage />)
+    expect(screen.getByText('Admin')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Admin Person')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('ABCDE1234F')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Update PAN/i })).toBeInTheDocument()
   })
 })

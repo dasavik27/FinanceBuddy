@@ -88,4 +88,92 @@ describe('Sidebar', () => {
 
     expect(screen.getAllByRole('button', { name: /Mutual Funds/i }).length).toBeGreaterThan(0)
   })
+
+  it('toggles sidebar on Ctrl+B keyboard shortcut', () => {
+    renderSidebar()
+    fireEvent.keyDown(window, { key: 'B', ctrlKey: true })
+    expect(onToggle).toHaveBeenCalled()
+  })
+
+  it('navigates when a domain nav item is clicked and closes mobile drawer', async () => {
+    renderSidebar({ open: true })
+    const equityBtns = screen.getAllByRole('button', { name: /Indian Stocks/i })
+    await userEvent.click(equityBtns[equityBtns.length - 1])
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('navigates home when brand link is clicked', async () => {
+    renderSidebar({ open: true })
+    const brand = screen.getAllByRole('link', { name: /Go to dashboard/i })
+    await userEvent.click(brand[brand.length - 1])
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('signs out from expanded footer', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    act(() => {
+      useAppStore.setState({ logout })
+    })
+    renderSidebar({ collapsed: false })
+    const signOutBtn = screen.getByRole('button', { name: /Sign Out/i })
+    await userEvent.click(signOutBtn)
+    expect(logout).toHaveBeenCalled()
+  })
+
+  it('signs out from collapsed icon and shows Guest when pan missing', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    act(() => {
+      useAppStore.setState({ logout, pan: null })
+    })
+    renderSidebar({ collapsed: true })
+    expect(screen.getByLabelText(/Account: Guest/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText(/Account: Guest/i))
+    expect(logout).toHaveBeenCalled()
+  })
+
+  it('marks Dashboard active only on exact /dashboard path', () => {
+    renderWithProviders(
+      <Sidebar
+        open={false}
+        onClose={onClose}
+        isPartial={false}
+        collapsed={false}
+        onToggle={onToggle}
+        onExpand={onExpand}
+      />,
+      { initialEntries: ['/dashboard'] }
+    )
+    expect(screen.getByRole('button', { name: /^Dashboard$/i })).toBeInTheDocument()
+  })
+
+  it('marks nested domain routes active and ignores unrelated keydowns', async () => {
+    renderWithProviders(
+      <Sidebar
+        open={false}
+        onClose={onClose}
+        isPartial={true}
+        collapsed={false}
+        onToggle={onToggle}
+        onExpand={onExpand}
+      />,
+      { initialEntries: ['/mutual-funds/compare'] },
+    )
+    expect(screen.getByRole('button', { name: /Mutual Funds/i })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'b' })
+    expect(onToggle).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    expect(onToggle).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: /Tax Expert/i }))
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('navigates Budget and Equity domains from collapsed rail', async () => {
+    renderSidebar({ collapsed: true })
+    await userEvent.click(screen.getByRole('button', { name: /Budget Analyzer/i }))
+    expect(onClose).toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: /Indian Stocks/i }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
 })

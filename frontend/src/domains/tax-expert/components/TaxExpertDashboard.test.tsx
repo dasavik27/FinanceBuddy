@@ -71,13 +71,14 @@ describe('TaxExpertDashboard', () => {
 
   it('handles 404 error by clearing session and flagging expired', async () => {
     useAppStore.setState({ taxSessionId: 'tax-sid-1', activeModule: 'tax_expert' })
-    vi.mocked(apiClient.getTaxExpertSummary).mockRejectedValueOnce({ response: { status: 404 } })
+    // Persist the rejection — react-query retries failed queries by default.
+    vi.mocked(apiClient.getTaxExpertSummary).mockRejectedValue({ response: { status: 404 } })
 
     renderWithProviders(<TaxExpertDashboard />)
     await waitFor(() => {
       expect(useAppStore.getState().taxSessionId).toBeNull()
       expect(screen.getByText(/Your previous session was lost/i)).toBeInTheDocument()
-    })
+    }, { timeout: 10000 })
   })
 
   it('renders TaxUploadPanel when no session is active and creates new session', async () => {

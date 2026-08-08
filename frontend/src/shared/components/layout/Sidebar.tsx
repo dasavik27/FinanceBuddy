@@ -42,16 +42,9 @@ interface SidebarProps {
   onExpand: () => void
 }
 
-export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpand }: SidebarProps) {
+export function Sidebar({ open, onClose, isPartial: _isPartial, collapsed, onToggle, onExpand: _onExpand }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const clearSession = useAppStore((s) => s.clearSession)
-  const logout = useAppStore((s) => s.logout)
-  const activeModule = useAppStore((s) => s.activeModule)
-
-  const handleSignOut = () => {
-    void logout().then(() => navigate('/'))
-  }
 
   // Keyboard shortcut: Cmd+B (Mac) or Ctrl+B (Windows/Linux) to toggle sidebar
   useEffect(() => {
@@ -86,13 +79,9 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
         <SidebarContent 
           location={location} 
           navigate={navigate} 
-          isPartial={isPartial}
-          clearSession={clearSession}
-          activeModule={activeModule}
-          onClose={() => {}} 
+          onClose={onClose} 
           collapsed={collapsed}
           onToggle={onToggle}
-          onExpand={onExpand}
         />
       </Drawer>
 
@@ -114,20 +103,16 @@ export function Sidebar({ open, onClose, isPartial, collapsed, onToggle, onExpan
         <SidebarContent 
           location={location} 
           navigate={navigate} 
-          isPartial={isPartial}
-          clearSession={clearSession}
-          activeModule={activeModule}
           onClose={onClose} 
           collapsed={false}
-          onToggle={() => {}}
-          onExpand={() => {}}
+          onToggle={onToggle}
         />
       </Drawer>
     </>
   )
 }
 
-function SidebarContent({ location, navigate, isPartial, clearSession, activeModule, onClose, collapsed, onToggle, onExpand }: any) {
+function SidebarContent({ location, navigate, onClose, collapsed, onToggle }: any) {
   const pan = useAppStore((s) => s.pan)
   const logout = useAppStore((s) => s.logout)
 
