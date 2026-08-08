@@ -289,7 +289,9 @@ class TestConsensus:
 
 
 def _make_price_hist(n: int = 300, *, multiindex: bool = False) -> pd.DataFrame:
-    dates = pd.date_range(end=pd.Timestamp.now(), periods=n, freq="B")
+    # Use a fixed start — `date_range(end=now, periods=n, freq="B")` can return
+    # n-1 rows when `end` falls outside a business-day boundary (pandas quirk).
+    dates = pd.date_range(start="2018-01-01", periods=n, freq="B")
     close = np.linspace(900, 1100, n) + np.random.default_rng(0).normal(0, 2, n)
     vol = np.full(n, 1_000_000)
     df = pd.DataFrame({"Close": close, "Open": close, "High": close + 5, "Low": close - 5, "Volume": vol}, index=dates)
@@ -1020,7 +1022,7 @@ class TestEdgeCasesForCoverage:
         assert "Yahoo Finance" in out["source"]
 
     def test_hist_close_dataframe_branch(self, monkeypatch, mock_nse, mock_nse_side, mock_bse, mock_quotes):
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq="B")
+        dates = pd.date_range(start="2018-01-01", periods=100, freq="B")
         close_vals = np.linspace(900, 1000, 100)
         hist = pd.DataFrame(
             {
@@ -1205,7 +1207,7 @@ class TestEdgeCasesForCoverage:
         assert out["symbol"] == "RELIANCE"
 
     def test_analyze_hist_close_dataframe_in_price_block(self, monkeypatch, mock_nse, mock_nse_side, mock_bse, mock_quotes):
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq="B")
+        dates = pd.date_range(start="2018-01-01", periods=100, freq="B")
         close_vals = np.linspace(900, 1000, 100)
         hist = pd.DataFrame({
             ("Close", "A"): close_vals,
@@ -1280,7 +1282,7 @@ class TestEdgeCasesForCoverage:
         assert charts["1Y"]["dates"]
 
     def test_analyze_price_block_dataframe_close(self, monkeypatch, mock_nse, mock_nse_side, mock_bse, mock_quotes):
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq="B")
+        dates = pd.date_range(start="2018-01-01", periods=100, freq="B")
         close_vals = np.linspace(900, 1000, 100)
         hist = pd.DataFrame(
             {("Close", "A"): close_vals, ("Close", "B"): close_vals},
