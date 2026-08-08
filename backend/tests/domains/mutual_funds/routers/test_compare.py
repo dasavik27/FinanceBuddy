@@ -96,3 +96,57 @@ def test_compare_metrics_from_sweep_gap(monkeypatch, sample_portfolio_session):
     monkeypatch.setattr("domains.mutual_funds.finance.compute_consistency_score", lambda *a, **k: 80.0)
     out = compare.get_comparison_metrics("120716", vs="120717", session_id=sid)
     assert "metrics" in out
+
+
+def test_compare_search_dedupes_and_skips_blank_symbols(monkeypatch):
+    monkeypatch.setattr(
+        compare,
+        "get_nse_indices",
+        lambda q: [
+            {"symbol": "^NSEI", "name": "Nifty 50"},
+            {"symbol": "", "name": "blank"},
+            {"symbol": "^nsei", "name": "Nifty 50 dupe"},
+        ],
+    )
+    monkeypatch.setattr(
+        compare,
+        "search_mutual_funds",
+        lambda q: [{"symbol": "122639", "name": "Fund A"}],
+    )
+    out = compare.search_ticker("nif")
+    symbols = [r["symbol"] for r in out["results"]]
+    assert symbols == ["^NSEI", "122639"]
+    assert out["peers"] == out["results"]
+
+
+def test_compare_history_ter_exception_and_nifty_benchmark(monkeypatch):
+    dates = pd.date_range("2020-01-01", periods=20, freq="ME")
+    s = pd.Series(np.linspace(100.0, 120.0, 20), index=dates)
+
+    def _series(ticker, days):
+        return s
+
+    monkeypatch.setattr(compare, "fetch_benchmark_series", _series)
+    monkeypatch.setattr(
+        compare,
+        "fetch_fund_ter",
+        MagicMock(side_effect=RuntimeError("ter down")),
+    )
+    monkeypatch.setattr(compare, "compute_trailing_returns", lambda series: {"1Y": 10.0})
+    risk_calls = []
+
+    def _risk(series, bench, risk_free_rate=6.5):
+        risk_calls.append(bench is series)
+        return {
+            "sharpe": 1.0, "sortino": 1.1, "alpha": 0.5, "beta": 1.0, "vol": 12.0, "max_dd": -10.0,
+        }
+
+    monkeypatch.setattr(compare, "compute_risk_metrics", _risk)
+    monkeypatch.setattr(compare, "compute_consistency_score", lambda *a, **k: 6.0)
+
+    broken_ter = compare.get_history("122639")
+    assert broken_ter["ter"] is None
+
+    nifty = compare.get_history("Nifty 50")
+    assert nifty["dates"]
+    assert risk_calls[-1] is True

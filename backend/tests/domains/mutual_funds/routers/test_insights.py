@@ -93,3 +93,41 @@ def test_insights_alpha_extreme_branches(monkeypatch):
     lo = insights.get_insights(sid)
     assert lo["score_breakdown"][0]["score"] == 8
 
+
+def test_insights_ter_coverage_when_ter_column_present(monkeypatch):
+    from domains.mutual_funds.routers import insights
+    from domains.mutual_funds.models import Portfolio
+    from domains.mutual_funds import sessions
+
+    df_h = pd.DataFrame([
+        {
+            "Fund": "Covered Fund",
+            "Category": "Large Cap",
+            "Cap Type": "Large Cap",
+            "Plan": "Direct",
+            "Market Value": 80000.0,
+            "Invested": 70000.0,
+            "Weight%": 80.0,
+            "AMC": "AMC1",
+            "TER": 0.8,
+        },
+        {
+            "Fund": "Missing TER",
+            "Category": "Mid Cap",
+            "Cap Type": "Mid Cap",
+            "Plan": "Direct",
+            "Market Value": 20000.0,
+            "Invested": 18000.0,
+            "Weight%": 20.0,
+            "AMC": "AMC2",
+            "TER": None,
+        },
+    ])
+    p = Portfolio(df_h=df_h, df_t=pd.DataFrame(), df_s=pd.DataFrame())
+    monkeypatch.setattr(p, "get_summary", lambda **kw: {"alpha": 1.0, "expense_drag": 200.0})
+    sid = "insights_ter_cov"
+    sessions._SESSIONS[sid] = {"portfolio": p, "last_accessed": datetime.now(), "owner": None}
+    out = insights.get_insights(sid)
+    assert out["expense_available"] is True
+    assert out["ter_coverage_pct"] == pytest.approx(80.0)
+

@@ -59,7 +59,7 @@ export default function TaxHistoryTab() {
 
   const remove = useMutation({
     mutationFn: (sessionId: string) => apiClient.deleteTaxSession(sessionId),
-    onSuccess: (_result, sessionId) => {
+    onSuccess: async (_result, sessionId) => {
       // Deleting the session currently loaded would otherwise leave the dashboard
       // rendering a session that no longer exists, and every subsequent tab 404s.
       if (sessionId === activeSessionId) clearSession('tax_expert')
