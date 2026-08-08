@@ -11,18 +11,29 @@ and synthesizes an institutional Portfolio Health Score and SIP Habit Rating.
 from fastapi import APIRouter
 import pandas as pd
 from domains.mutual_funds.sessions import get_session
-from shared.config import GOAL_TIMELINE, PE_ESTIMATES
+from shared.config import GOAL_TIMELINE, PE_ESTIMATES, BENCHMARKS
 
 router = APIRouter()
 
 @router.get("/{session_id}/insights")
-def get_insights(session_id: str):
+def get_insights(session_id: str, benchmark: str = "Nifty 500"):
+    """
+    Portfolio health, nudges, and ledger metrics.
+
+    `benchmark` is honored for the Alpha pillar (via get_summary). Other query
+    filters (category/AMC/plan) are intentionally whole-portfolio — Insights is
+    a CIO view of the full book, not a filtered slice.
+    """
     portfolio = get_session(session_id)
     df_h = portfolio.df_h
     df_t = portfolio.df_t
     df_s = portfolio.df_s
     total_value = float(df_h["Market Value"].sum())
     num_funds   = len(df_h)
+    # Resolve display/canonical benchmark key for get_summary lookup.
+    bench_key = benchmark if benchmark in BENCHMARKS else (
+        next((k for k in BENCHMARKS if k.lower() == str(benchmark).lower()), benchmark)
+    )
 
     # 1. Broad Allocation Metrics
     liquid_mask = (df_h["Category"] == "Liquid") | (df_h["Fund"].str.upper().str.contains("LIQUID", na=False))
@@ -75,14 +86,21 @@ def get_insights(session_id: str):
     # loop internally - so the same number was computed twice per request, with the
     # two copies free to drift apart.
     try:
-        summary = portfolio.get_summary()
+        summary = portfolio.get_summary(benchmark=bench_key)
         real_alpha = summary.get("alpha", 0.0)
         total_expense = summary.get("expense_drag", 0.0)
     except Exception:
         real_alpha = 0.0
         total_expense = portfolio.compute_expense_drag()
 
-    expense_pct = (total_expense / total_value * 100) if total_value > 0 else 0.85
+    # TER coverage so the UI can show N/A instead of a misleading ₹0 drag.
+    ter_covered_value = 0.0
+    if not df_h.empty and "TER" in df_h.columns:
+        ter_ok = df_h["TER"].notna() & (pd.to_numeric(df_h["TER"], errors="coerce").fillna(0) > 0)
+        ter_covered_value = float(df_h.loc[ter_ok, "Market Value"].sum())
+    ter_coverage_pct = (ter_covered_value / total_value * 100) if total_value > 0 else 0.0
+
+    expense_pct = (total_expense / total_value * 100) if total_value > 0 else 0.0
 
     if real_alpha > 5:
         score_alpha = 30
@@ -154,10 +172,15 @@ def get_insights(session_id: str):
         "goal_timeline":   goal_data,
         "score":           total_score,
         "score_breakdown": score_breakdown,
-        "sip_score":       sip_score,
+        "sip_score":       round(sip_score, 1),
+        "sip_score_label": "SIP Habit & Performance",
         "liquid_val":      liquid_val,
-        "liquid_pct":      liquid_pct,
-        "expense_drag":    total_expense,
+        "liquid_pct":      round(liquid_pct, 1),
+        "expense_drag":    round(total_expense, 0),
         "expense_pct":     round(expense_pct, 2),
+        "ter_coverage_pct": round(ter_coverage_pct, 1),
+        "expense_available": ter_coverage_pct > 0,
         "elss_val":        float(df_h[df_h["Category"] == "ELSS"]["Market Value"].sum()),
+        "benchmark":       bench_key,
+        "alpha":           round(real_alpha, 2),
     }

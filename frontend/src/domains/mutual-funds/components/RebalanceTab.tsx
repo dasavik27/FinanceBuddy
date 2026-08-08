@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Box, Typography, Paper, Grid, Button, Chip, Skeleton, Tooltip } from '@mui/material'
+import { Box, Typography, Paper, Grid, Button, Chip, Skeleton, Tooltip, Alert } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { useRebalancePlan } from '../hooks/useData'
 import { fmtInr } from '../../../shared/utils/fmt'
@@ -22,7 +22,7 @@ const PROFILES = [
 export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean }) {
   const [profile, setProfile] = useState('Auto')
   const [filter, setFilter] = useState<'all' | 'buy' | 'sell' | 'switch'>('all')
-  const { data, isLoading, isFetching } = useRebalancePlan(profile)
+  const { data, isLoading, isError, refetch } = useRebalancePlan(profile)
 
   const filteredOrders = useMemo(() => {
     if (!data?.orders) return []
@@ -43,6 +43,16 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
           title="Strategic Rebalancing" 
           subtitle="Realign your asset allocation to match your target risk profile."
         />
+      )}
+
+      {isError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2, bgcolor: 'rgba(255, 81, 106, 0.1)', color: '#FF516A', border: '1px solid rgba(255, 81, 106, 0.3)' }}
+          action={<Button color="inherit" size="small" onClick={() => refetch()}>Retry</Button>}
+        >
+          Failed to load rebalance plan. Drift shown below may be stale or empty.
+        </Alert>
       )}
 
       {/* ── Architecture Selection Card ────────────────────────────────────────── */}
@@ -84,7 +94,9 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
                         {p.label}
                       </Typography>
                       <Typography sx={{ fontSize: 11, fontWeight: 600, color: 'text.secondary' }}>
-                        {p.desc.split('/')[0].trim()}
+                        {p.id === 'Auto' && data?.profile_used
+                          ? `Using ${data.profile_used} targets`
+                          : p.desc.split('/')[0].trim()}
                       </Typography>
                     </Button>
                   </Tooltip>
@@ -247,6 +259,9 @@ export default function RebalanceTab({ isSubTab = false }: { isSubTab?: boolean 
                                   <Typography sx={{ fontSize: 16, fontWeight: 900, color: '#fff' }}>
                                     {order.fund || order.category}
                                   </Typography>
+                                  {order.fund && order.category && (
+                                    <Chip label={order.category} size="small" sx={{ fontWeight: 700, fontSize: 10, bgcolor: 'rgba(255,255,255,0.06)', color: 'text.secondary' }} />
+                                  )}
                                   <Chip
                                     label={order.action.toUpperCase()}
                                     size="small"

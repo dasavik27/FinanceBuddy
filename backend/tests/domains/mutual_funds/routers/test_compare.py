@@ -23,14 +23,27 @@ def test_compare_router_endpoints(monkeypatch):
 
     # 3. get_history
     monkeypatch.setattr(compare, "fetch_benchmark_series", lambda t, d: pd.Series([], dtype=float))
-    assert compare.get_history("TICKER") == {"dates": [], "values": []}
+    empty = compare.get_history("TICKER")
+    assert empty["dates"] == []
+    assert empty["returns"] == {}
 
-    dates = pd.date_range("2025-01-01", periods=3)
-    s = pd.Series([100.0, 110.0, 105.0], index=dates)
+    dates = pd.date_range("2020-01-01", periods=100, freq="ME")
+    s = pd.Series(np.linspace(100.0, 150.0, 100), index=dates)
     monkeypatch.setattr(compare, "fetch_benchmark_series", lambda t, d: s)
+    monkeypatch.setattr(compare, "fetch_fund_ter", lambda code: 0.42)
+    monkeypatch.setattr(compare, "compute_trailing_returns", lambda series: {"1Y": 12.0, "3Y": 15.0})
+    monkeypatch.setattr(compare, "compute_risk_metrics", lambda *a, **k: {
+        "sharpe": 1.2, "sortino": 1.4, "alpha": 2.0, "beta": 0.9, "vol": 14.0, "max_dd": -18.0,
+    })
+    monkeypatch.setattr(compare, "compute_consistency_score", lambda *a, **k: 7.5)
     res_hist = compare.get_history("TICKER")
-    assert len(res_hist["dates"]) == 3
-    assert res_hist["values"] == [100.0, 110.0, 105.0]
+    assert len(res_hist["dates"]) == 100
+    assert res_hist["returns"]["1Y"] == 12.0
+    assert res_hist["sharpe"] == 1.2
+    assert res_hist["day_chg"] is not None
+
+    res_mf = compare.get_history("122639")
+    assert res_mf["ter"] == 0.42
 
     # 4. get_category_peers
     monkeypatch.setattr(

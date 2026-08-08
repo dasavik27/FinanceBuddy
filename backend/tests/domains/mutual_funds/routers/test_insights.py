@@ -64,12 +64,13 @@ def test_insights_liquid_and_alpha_score_branches(monkeypatch):
          "Market Value": 200000.0, "Invested": 150000.0, "Weight%": 35.0, "AMC": "AMC3"},
     ])
     p = Portfolio(df_h=df_h, df_t=pd.DataFrame(), df_s=pd.DataFrame([{"Fund": "X", "Amount": 1000}]))
-    monkeypatch.setattr(p, "get_summary", lambda: {"alpha": 3.0, "expense_drag": 1000.0})
+    monkeypatch.setattr(p, "get_summary", lambda **kw: {"alpha": 3.0, "expense_drag": 1000.0})
     sid = "insights_alpha"
     sessions._SESSIONS[sid] = {"portfolio": p, "last_accessed": datetime.now(), "owner": None}
     out = insights.get_insights(sid)
     assert any("liquid reserves" in n["message"].lower() for n in out["nudges"])
     assert out["score_breakdown"][0]["score"] == 22
+    assert "expense_available" in out
 
 def test_insights_alpha_extreme_branches(monkeypatch):
     from domains.mutual_funds.routers import insights
@@ -81,13 +82,14 @@ def test_insights_alpha_extreme_branches(monkeypatch):
          "Market Value": 100000.0, "Invested": 80000.0, "Weight%": 100.0, "AMC": "AMC1"},
     ])
     p = Portfolio(df_h=df_h, df_t=pd.DataFrame(), df_s=pd.DataFrame())
-    monkeypatch.setattr(p, "get_summary", lambda: {"alpha": 6.0, "expense_drag": 100.0})
+    monkeypatch.setattr(p, "get_summary", lambda **kw: {"alpha": 6.0, "expense_drag": 100.0})
     sid = "insights_alpha_hi"
     sessions._SESSIONS[sid] = {"portfolio": p, "last_accessed": datetime.now(), "owner": None}
-    hi = insights.get_insights(sid)
+    hi = insights.get_insights(sid, benchmark="Nifty 50")
     assert hi["score_breakdown"][0]["score"] == 30
+    assert hi["benchmark"] == "Nifty 50"
 
-    monkeypatch.setattr(p, "get_summary", lambda: {"alpha": -1.0, "expense_drag": 100.0})
+    monkeypatch.setattr(p, "get_summary", lambda **kw: {"alpha": -1.0, "expense_drag": 100.0})
     lo = insights.get_insights(sid)
     assert lo["score_breakdown"][0]["score"] == 8
 

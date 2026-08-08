@@ -25,9 +25,11 @@ import SwapHorizIcon       from '@mui/icons-material/SwapHoriz'
 import CloudUploadIcon     from '@mui/icons-material/CloudUpload'
 import CloseIcon           from '@mui/icons-material/Close'
 import AccountBalanceIcon  from '@mui/icons-material/AccountBalance'
+import { useQueryClient } from '@tanstack/react-query'
 import { apiClient }       from '../../../shared/api/client'
 import { useAppStore }     from '../../../shared/store/appStore'
 import { SwitchSessionButton } from '../../../shared/components/dashboard/SwitchSessionButton'
+import { invalidateMutualFundQueries } from '../../../shared/hooks/invalidateSessionQueries'
 import { UploadHistoryList } from '../../../shared/components/dashboard/UploadHistoryList'
 import type { UploadHistoryListProps } from '../../../shared/components/dashboard/UploadHistoryList'
 
@@ -74,6 +76,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
   const [password, setPassword] = useState('')
   const setSession = useAppStore((s) => s.setSession)
   const setIdentity = useAppStore((s) => s.setIdentity)
+  const queryClient = useQueryClient()
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -90,6 +93,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
     try {
       const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
+      await invalidateMutualFundQueries(queryClient)
       if (password.trim()) {
         setIdentity({ userId: useAppStore.getState().userId, pan: password.trim().toUpperCase() })
       }
@@ -187,6 +191,7 @@ interface SwitchPopoverProps {
 export function SwitchStatementButton({ sessionId }: SwitchPopoverProps) {
   const setSessionById = useAppStore((s) => s.setSessionById)
   const pan = useAppStore((s) => s.pan)
+  const queryClient = useQueryClient()
 
   const fetchHistory = useCallback(async () => {
     if (!pan) return []
@@ -198,7 +203,10 @@ export function SwitchStatementButton({ sessionId }: SwitchPopoverProps) {
     <SwitchSessionButton
       sessionId={sessionId}
       fetchHistory={fetchHistory}
-      onSelect={(sid) => setSessionById(sid, 'mutual_funds')}
+      onSelect={async (sid) => {
+        setSessionById(sid, 'mutual_funds')
+        await invalidateMutualFundQueries(queryClient)
+      }}
       accent="indigo"
       buttonLabel="Switch Statement"
       tooltip="Switch portfolio statement or upload a new CAS"
@@ -231,6 +239,7 @@ export default function MFUploadPanel() {
   const setSessionById = useAppStore((s) => s.setSessionById)
   const pan = useAppStore((s) => s.pan)
   const setIdentity = useAppStore((s) => s.setIdentity)
+  const queryClient = useQueryClient()
 
   const fetchHistory = useCallback(() => {
     if (!pan) return
@@ -255,6 +264,7 @@ export default function MFUploadPanel() {
     try {
       const data = await apiClient.parseFile(file, password, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
+      await invalidateMutualFundQueries(queryClient)
       if (password.trim()) {
         setIdentity({ userId: useAppStore.getState().userId, pan: password.trim().toUpperCase() })
       }
@@ -426,7 +436,14 @@ export default function MFUploadPanel() {
               </Typography>
 
               <Box sx={{ flex: 1 }}>
-                <HistoryList history={history} onSelect={(sid) => setSessionById(sid, 'mutual_funds')} compact={false} />
+                <HistoryList
+                  history={history}
+                  onSelect={async (sid) => {
+                    setSessionById(sid, 'mutual_funds')
+                    await invalidateMutualFundQueries(queryClient)
+                  }}
+                  compact={false}
+                />
               </Box>
             </Paper>
           </motion.div>

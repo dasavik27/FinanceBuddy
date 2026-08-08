@@ -51,10 +51,26 @@ export default function WhatIfPanel() {
           <Autocomplete
             options={options}
             getOptionLabel={(o: any) => o.name || ''}
+            isOptionEqualToValue={(a: any, b: any) => a?.symbol === b?.symbol}
+            filterOptions={(x) => x}
+            clearOnBlur={false}
             loading={searching}
             value={selected}
-            onChange={(_, val) => setSelected(val)}
-            onInputChange={(_, val) => { setQuery(val); if (!val) setSelected(null) }}
+            inputValue={query}
+            onChange={(_, val) => {
+              setSelected(val)
+              if (val) setQuery(val.name || '')
+              else setQuery('')
+            }}
+            onInputChange={(_, val, reason) => {
+              if (reason === 'input') {
+                setQuery(val)
+                if (!val.trim()) setSelected(null)
+              } else if (reason === 'clear') {
+                setQuery('')
+                setSelected(null)
+              }
+            }}
             renderInput={(params) => (
               <TextField {...params} label="Candidate fund" placeholder="Search by name..." size="small"
                 InputProps={{ ...params.InputProps, endAdornment: <>{searching ? <CircularProgress size={16} /> : null}{params.InputProps.endAdornment}</> }}

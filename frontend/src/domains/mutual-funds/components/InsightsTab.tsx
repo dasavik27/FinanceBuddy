@@ -36,15 +36,15 @@ export default function InsightsTab() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeSubTab = searchParams.get('tab') === 'rebalance' ? 'rebalance' : 'diagnostics'
   
-  const { data, isLoading, isFetching, error } = useInsights()
+  const { data, isLoading, error } = useInsights()
   const [filter, setFilter] = useState<'all' | 'warn' | 'danger' | 'info'>('all')
 
   const scoreBreakdown = data?.score_breakdown || [
-    { label: 'Alpha vs Benchmark',   max: 30, score: 0 },
-    { label: 'Fund Diversification', max: 25, score: 0 },
-    { label: 'Direct Plan Usage',    max: 20, score: 0 },
-    { label: 'Concentration Risk',   max: 15, score: 0 },
-    { label: 'Category Balance',     max: 10, score: 0 },
+    { label: 'Alpha vs Benchmark', max: 30, score: 0 },
+    { label: 'Diversification & Balance', max: 25, score: 0 },
+    { label: 'Direct Plan Usage', max: 20, score: 0 },
+    { label: 'Concentration Risk', max: 15, score: 0 },
+    { label: 'Liquidity & Safety', max: 10, score: 0 },
   ]
 
   const filteredNudges = useMemo(() => {
@@ -135,11 +135,23 @@ export default function InsightsTab() {
             }}>
               <Typography variant="h6" sx={{ mb: 3, fontWeight: 900, color: '#fff' }}>Portfolio Ledger</Typography>
               {[
-                { label: 'SIP Consistency',  value: `${Number(data?.sip_score ?? 0).toFixed(1)}/10`, highlight: '#4EDE93' },
-                { label: 'Liquid Holdings',  value: `${fmtInr(data?.liquid_val, true)} (${data?.liquid_pct?.toFixed(1)}%)`, highlight: '#fff' },
-                { label: 'Expense Drag/yr',  value: fmtInr(data?.expense_drag), highlight: '#FF516A' },
-                { label: 'Expense Drag %',   value: `${data?.expense_pct?.toFixed(2)}%`, highlight: '#FF516A' },
-                { label: 'ELSS Holdings',    value: fmtInr(data?.elss_val, true), highlight: '#6366F1' },
+                { label: 'SIP Habit Score', value: `${Number(data?.sip_score ?? 0).toFixed(1)}/10`, highlight: '#4EDE93' },
+                { label: 'Liquid Holdings', value: `${fmtInr(data?.liquid_val, true)} (${Number(data?.liquid_pct ?? 0).toFixed(1)}%)`, highlight: '#fff' },
+                {
+                  label: 'Expense Drag/yr',
+                  value: (data as any)?.expense_available === false
+                    ? 'TER unavailable'
+                    : fmtInr(data?.expense_drag),
+                  highlight: '#FF516A',
+                },
+                {
+                  label: 'Expense Drag %',
+                  value: (data as any)?.expense_available === false
+                    ? '—'
+                    : `${Number(data?.expense_pct ?? 0).toFixed(2)}%`,
+                  highlight: '#FF516A',
+                },
+                { label: 'ELSS Holdings', value: fmtInr(data?.elss_val, true), highlight: '#6366F1' },
               ].map((s) => (
                 <Box key={s.label} sx={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 2,

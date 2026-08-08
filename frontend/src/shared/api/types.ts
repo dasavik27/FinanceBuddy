@@ -137,11 +137,16 @@ export interface InsightsData {
   nudges: { type: string; message: string }[]
   goal_timeline: any[]
   score: number
-  score_breakdown: { label: string; max: number }[]
+  score_breakdown: { label: string; max: number; score: number }[]
   sip_score: number
+  sip_score_label?: string
   liquid_pct: number
   liquid_val: number
   expense_drag: number
   expense_pct: number
+  expense_available?: boolean
+  ter_coverage_pct?: number
   elss_val: number
+  benchmark?: string
+  alpha?: number
 }

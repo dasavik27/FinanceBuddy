@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Box, Typography, Paper, Grid, Chip, Button, Stack, CircularProgress, Alert, Switch, FormControlLabel, IconButton, Tooltip, Collapse } from '@mui/material'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useDropzone } from 'react-dropzone'
+import { useQueryClient } from '@tanstack/react-query'
 import api, { apiClient } from '../../api/client'
 import { useSessionId, useAppStore } from '../../store/appStore'
+import { invalidateModuleQueries } from '../../hooks/invalidateSessionQueries'
 import HistoryIcon from '@mui/icons-material/History'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows'
@@ -33,6 +35,7 @@ export default function UploadHistory() {
   const setSessionById = useAppStore((s) => s.setSessionById)
   const setSession = useAppStore((s) => s.setSession)
   const activeModule = useAppStore((s) => s.activeModule)
+  const queryClient = useQueryClient()
   const [history, setHistory] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [comparingWith, setComparingWith] = useState<string | null>(null)
@@ -61,6 +64,7 @@ export default function UploadHistory() {
     try {
       const data = await apiClient.parseFile(uploadFile, uploadPassword, 'mutual_funds')
       setSession(data.session_id, 'mutual_funds', data)
+      await invalidateModuleQueries(queryClient, 'mutual_funds')
       // Refresh history list
       const hist = await apiClient.getHistory(activeModule)
       setHistory(hist.history || [])
@@ -103,8 +107,9 @@ export default function UploadHistory() {
     }
   }
 
-  const restoreSession = (sessionId: string) => {
+  const restoreSession = async (sessionId: string) => {
     setSessionById(sessionId, activeModule)
+    await invalidateModuleQueries(queryClient, activeModule)
   }
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -120,6 +125,7 @@ export default function UploadHistory() {
         window.alert("You deleted your active session. You will be redirected to upload a new one.")
         setSessionById(null as any, activeModule) // Clear state
       }
+      await invalidateModuleQueries(queryClient, activeModule)
     } catch (err) {
       console.error(err)
       window.alert("Failed to delete session.")

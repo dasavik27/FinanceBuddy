@@ -20,6 +20,7 @@ import RestoreIcon from '@mui/icons-material/Restore'
 
 import { apiClient } from '../../../../shared/api/client'
 import { useAppStore } from '../../../../shared/store/appStore'
+import { invalidateTaxQueries } from '../../../../shared/hooks/invalidateSessionQueries'
 
 interface TaxHistoryEntry {
   session_id: string
@@ -62,13 +63,7 @@ export default function TaxHistoryTab() {
       // Deleting the session currently loaded would otherwise leave the dashboard
       // rendering a session that no longer exists, and every subsequent tab 404s.
       if (sessionId === activeSessionId) clearSession('tax_expert')
-      queryClient.invalidateQueries({ queryKey: ['tax-history'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-sessions'] })
-      queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-summary'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-income'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-capital-gains'] })
-      queryClient.invalidateQueries({ queryKey: ['tax-itr'] })
+      await invalidateTaxQueries(queryClient)
       setPendingDelete(null)
     },
   })
@@ -163,7 +158,10 @@ export default function TaxHistoryTab() {
                   size="small"
                   startIcon={<RestoreIcon />}
                   disabled={isActive}
-                  onClick={() => setSessionById(entry.session_id, 'tax_expert')}
+                  onClick={async () => {
+                    setSessionById(entry.session_id, 'tax_expert')
+                    await invalidateTaxQueries(queryClient)
+                  }}
                   sx={{ textTransform: 'none', fontWeight: 700, color: '#38BDF8' }}
                 >
                   {isActive ? 'Loaded' : 'Restore'}

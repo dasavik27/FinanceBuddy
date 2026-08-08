@@ -648,18 +648,32 @@ def _search_mutual_funds_uncached(query: str) -> List[Dict]:
         return []
 
 
-def get_nse_indices(query: str) -> List[Dict]:
-    """Search for NSE indices."""
-    try:
-        from nsepython import nse_get_index_list
-        indices = nse_get_index_list() or []
-        return [
-            {"symbol": name, "name": name, "type": "Index", "exchange": "NSE"}
-            for name in indices
-            if query.lower() in name.lower()
-        ]
-    except Exception:
+def _local_benchmark_matches(query: str) -> List[Dict]:
+    """Instant local index/benchmark matches — never touches the network."""
+    from shared.config import BENCHMARKS
+
+    q = (query or "").strip().lower()
+    if not q:
         return []
+
+    out: List[Dict] = []
+    seen = set()
+    for name in BENCHMARKS.keys():
+        if q in name.lower() and name not in seen:
+            seen.add(name)
+            out.append({"symbol": name, "name": name, "type": "Index", "exchange": "LOCAL"})
+    return out
+
+
+def get_nse_indices(query: str) -> List[Dict]:
+    """
+    Index autocomplete for Compare / What-If search.
+
+    Uses local BENCHMARKS only. nsepython's nse_get_index_list() hangs for tens of
+    seconds (or forever) on many networks and previously froze the market
+    comparator search bar on every keystroke.
+    """
+    return _local_benchmark_matches(query)
 
 
 # ---------------------------------------------------------------------------

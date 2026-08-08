@@ -161,10 +161,13 @@ export function useMandateOverlap() {
 // ── Insights ──────────────────────────────────────────────────────────────────
 export function useInsights() {
   const sid = useSessionId()
-  const p = useFilterParams()
+  // Only benchmark affects Insights (Alpha pillar). Category/AMC/plan filters are
+  // whole-portfolio CIO view and are not applied server-side — omit them so filter
+  // chip changes do not trigger useless refetches.
+  const { benchmark } = useFilterParams()
   return useQuery({
-    queryKey: ['insights', sid, p],
-    queryFn: () => apiClient.getInsights(sid!, p),
+    queryKey: ['insights', sid, benchmark],
+    queryFn: () => apiClient.getInsights(sid!, { benchmark }),
     enabled: !!sid,
   })
 }

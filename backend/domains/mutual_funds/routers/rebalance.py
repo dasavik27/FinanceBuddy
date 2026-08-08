@@ -96,9 +96,13 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
                     available = amount - sell_info["shortfall"]
                     note += f" Only ₹{available:,.0f} of the ₹{amount:,.0f} target is available unlocked."
 
+                sell_fund = sell_info.get("fund_suggestion") or (
+                    str(cat_funds.iloc[0]["Fund"]) if not cat_funds.empty else None
+                )
                 orders.append({
                     "action": "Sell (Overweight)",
                     "category": cat,
+                    "fund": sell_fund,
                     "amount": round(amount, 0),
                     "note": note,
                     "tax_estimate": sell_info.get("estimated_tax"),
@@ -107,8 +111,10 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
                     "exit_load_estimate": sell_info.get("estimated_exit_load"),
                 })
             else:
+                buy_fund = None
                 if not cat_funds.empty:
-                    fund_suggestion = f" (e.g. {cat_funds.iloc[0]['Fund']})"
+                    buy_fund = str(cat_funds.iloc[0]["Fund"])
+                    fund_suggestion = f" (e.g. {buy_fund})"
                 elif cat == "Hybrid":
                     fund_suggestion = " (e.g., consider adding a standard Aggressive Hybrid Fund)"
                 elif cat == "Other":
@@ -119,12 +125,13 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
                 orders.append({
                     "action": "Buy (Underweight)",
                     "category": cat,
+                    "fund": buy_fund,
                     "amount": round(amount, 0),
                     "note": f"Increase {cat} exposure by {abs(d):.1f}%{fund_suggestion} to reach target."
                 })
 
-    # ── Institutional Fix: Intra-Equity Rebalancing (Aggressive Profile) ──
-    if profile == "Aggressive":
+    # Intra-equity switch uses detected_profile so Auto→Aggressive still fires.
+    if detected_profile == "Aggressive" and "Cap Type" in df_h.columns:
         equity_funds = df_h[df_h["SimpleCat"] == "Equity"]
         equity_total = float(equity_funds["Market Value"].sum())
         if equity_total > 0:
@@ -145,6 +152,7 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
                 orders.append({
                     "action": "Switch (Intra-Equity)",
                     "category": "Small Cap → Large Cap",
+                    "fund": sc_sell_info.get("fund_suggestion"),
                     "amount": round(switch_amount, 0),
                     "note": note,
                     "tax_estimate": sc_sell_info.get("estimated_tax"),
@@ -156,6 +164,8 @@ def get_rebalance_plan(session_id: str, profile: str = "Balanced"):
     return {
         "drift_score": round(drift_score, 2),
         "status": "Balanced" if drift_score < REBALANCE_THRESHOLD else "Rebalancing Required",
+        "profile_requested": profile,
+        "profile_used": detected_profile,
         "drifts": {k: round(v, 2) for k, v in drifts.items()},
         "orders": orders
     }

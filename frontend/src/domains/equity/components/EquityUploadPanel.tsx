@@ -15,17 +15,17 @@ import ShowChartIcon       from '@mui/icons-material/ShowChart'
 import SwapHorizIcon       from '@mui/icons-material/SwapHoriz'
 import CloseIcon           from '@mui/icons-material/Close'
 import DeleteOutlineIcon   from '@mui/icons-material/DeleteOutline'
+import { useQueryClient } from '@tanstack/react-query'
 import { apiClient }       from '../../../shared/api/client'
 import { useAppStore }     from '../../../shared/store/appStore'
 import { SwitchSessionButton } from '../../../shared/components/dashboard/SwitchSessionButton'
 import { UploadHistoryList } from '../../../shared/components/dashboard/UploadHistoryList'
+import { invalidateEquityQueries } from '../../../shared/hooks/invalidateSessionQueries'
+import { KITE_STATE_KEY } from '../hooks/useKiteOAuthCallback'
 
 /** Mirrors MAX_UPLOAD_BYTES in backend/domains/equity/parser.py. */
 const MAX_UPLOAD_MB = 8
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-
-/** Where the Kite OAuth `state` is parked across the redirect to Zerodha and back. */
-const KITE_STATE_KEY = 'equity.kite.oauth.state'
 
 function SyncOverlay({ state }: { state: 'syncing' | 'success' }) {
   const [msgIndex, setMsgIndex] = useState(0)
@@ -72,6 +72,7 @@ function SyncOverlay({ state }: { state: 'syncing' | 'success' }) {
 
 export function SwitchEquityStatementButton({ sessionId }: { sessionId: string | null }) {
   const setSessionById = useAppStore((s) => s.setSessionById)
+  const queryClient = useQueryClient()
 
   const fetchHistory = useCallback(async () => {
     const res = await apiClient.getEquityHistory()
@@ -82,16 +83,20 @@ export function SwitchEquityStatementButton({ sessionId }: { sessionId: string |
     try {
       await apiClient.deleteHistorySession(sid)
       if (sessionId === sid) setSessionById('', 'equity')
+      await invalidateEquityQueries(queryClient)
     } catch (e) {
       console.error(e)
     }
-  }, [sessionId, setSessionById])
+  }, [sessionId, setSessionById, queryClient])
 
   return (
     <SwitchSessionButton
       sessionId={sessionId}
       fetchHistory={fetchHistory}
-      onSelect={(sid) => setSessionById(sid, 'equity')}
+      onSelect={async (sid) => {
+        setSessionById(sid, 'equity')
+        await invalidateEquityQueries(queryClient)
+      }}
       onDelete={handleDelete}
       accent="emerald"
       buttonLabel="Switch Portfolio"
@@ -111,7 +116,11 @@ export function SwitchEquityStatementButton({ sessionId }: { sessionId: string |
       renderFooter={(close) => (
         <Button
           fullWidth variant="contained"
-          onClick={() => { setSessionById('', 'equity'); close() }}
+          onClick={async () => {
+            setSessionById('', 'equity')
+            await invalidateEquityQueries(queryClient)
+            close()
+          }}
           sx={{
             py: 1, borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem',
             background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
@@ -141,6 +150,7 @@ export default function EquityUploadPanel() {
   const setSession = useAppStore((s) => s.setSession)
   const setSessionById = useAppStore((s) => s.setSessionById)
   const userId = useAppStore((s) => s.userId)
+  const queryClient = useQueryClient()
 
   const fetchHistory = useCallback(() => {
     if (!userId) return
@@ -158,15 +168,13 @@ export default function EquityUploadPanel() {
       if (useAppStore.getState().equitySessionId === sid) {
         setSessionById('', 'equity')
       }
+      await invalidateEquityQueries(queryClient)
     } catch (e) {
       console.error(e)
     }
   }
 
-  const kiteAttemptRef = useRef<string | null>(null)
-  // Tracked so pending timers can be cancelled on unmount. Two bare setTimeout calls
-  // used to fire regardless — one of them calling history.replaceState, which rewrote
-  // the URL of whatever page the user had navigated to in the meantime.
+  // Tracked so pending timers can be cancelled on unmount.
   const timersRef = useRef<number[]>([])
 
   const later = useCallback((fn: () => void, ms: number) => {
@@ -179,55 +187,8 @@ export default function EquityUploadPanel() {
     timersRef.current = []
   }, [])
 
-  /** Strip the OAuth parameters from the address bar. */
-  const clearOAuthParams = useCallback(() => {
-    window.history.replaceState({}, document.title, window.location.pathname)
-  }, [])
-
-  // Handle the Kite OAuth callback.
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const requestToken = urlParams.get('request_token')
-    const action = urlParams.get('action')
-    // Echoed back by Zerodha. The backend issued it and will only accept it from the
-    // user it was issued to, which is what ties this return leg to the login that
-    // started it. Fall back to sessionStorage in case the provider drops the param.
-    const state = urlParams.get('state') || sessionStorage.getItem(KITE_STATE_KEY) || ''
-
-    if (requestToken && action === 'login' && kiteAttemptRef.current !== requestToken) {
-      kiteAttemptRef.current = requestToken
-
-      if (!state) {
-        setError('This Zerodha login could not be verified. Please start the connection again.')
-        clearOAuthParams()
-        return
-      }
-
-      setSyncState('syncing')
-      apiClient.connectKite(requestToken, state)
-        .then(data => {
-            sessionStorage.removeItem(KITE_STATE_KEY)
-            setSyncState('success')
-            later(() => {
-                setSession(data.session_id, 'equity', data)
-                clearOAuthParams()
-            }, 1200)
-        })
-        .catch(err => {
-            setError(err?.response?.data?.detail || 'Kite connect failed')
-            setSyncState('idle')
-        })
-        .finally(() => {
-            // In a finally, not only on success: the request_token is a credential that
-            // arrived in the query string, so it lands in browser history and in the
-            // Referer of any later same-page request. Leaving it there on the error path
-            // (as this did) leaves it readable for as long as the tab is open.
-            sessionStorage.removeItem(KITE_STATE_KEY)
-            clearOAuthParams()
-        })
-    }
-  }, [setSession, clearOAuthParams, later])
-
+  // Kite OAuth return is handled by IndianStocksDashboard (useKiteOAuthCallback)
+  // so it still works on Analyzer / with an existing session.
 
   const onDropHoldings = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -267,8 +228,9 @@ export default function EquityUploadPanel() {
     try {
       const data = await apiClient.parseEquityCsv(file, tradebookFile || undefined)
       setSyncState('success')
-      later(() => {
+      later(async () => {
         setSession(data.session_id, 'equity', data)
+        await invalidateEquityQueries(queryClient)
         // Release the File handles; they were held until the panel happened to unmount.
         setFile(null)
         setTradebookFile(null)
@@ -511,7 +473,10 @@ export default function EquityUploadPanel() {
                       <Box sx={{ flex: 1, overflowY: 'auto', pr: 1, mr: -1 }}>
                         <UploadHistoryList
                           history={history}
-                          onSelect={(sid) => setSessionById(sid, 'equity')}
+                          onSelect={async (sid) => {
+                            setSessionById(sid, 'equity')
+                            await invalidateEquityQueries(queryClient)
+                          }}
                           onDelete={handleDeleteSession}
                           accent="emerald"
                           itemLabel="Stocks"

@@ -13,6 +13,7 @@
 
 import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
+import { useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Box, Typography, Button, Alert, CircularProgress,
@@ -31,6 +32,7 @@ import DescriptionIcon    from '@mui/icons-material/Description'
 import DeleteOutlineIcon  from '@mui/icons-material/DeleteOutline'
 import { apiClient }      from '../../../shared/api/client'
 import { useAppStore, useIsAuthenticated } from '../../../shared/store/appStore'
+import { invalidateTaxQueries } from '../../../shared/hooks/invalidateSessionQueries'
 
 /** Safely convert any error detail (string or structured object) to a display string. */
 function extractErrorMessage(detail: any): string {
@@ -217,6 +219,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const setSession = useAppStore((s) => s.setSession)
+  const queryClient = useQueryClient()
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) { setFile(accepted[0]); setError(null) }
@@ -232,6 +235,7 @@ function MiniDropzone({ onUploaded }: MiniDropzoneProps) {
     try {
       const data = await apiClient.parseAIS(file)
       setSession(data.session_id, 'tax_expert', data)
+      await invalidateTaxQueries(queryClient)
       onUploaded()
     } catch (e: any) {
       const detail = e?.response?.data?.detail
@@ -316,6 +320,7 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
   const clearSession = useAppStore((s) => s.clearSession)
   const activeSessionId = useAppStore((s) => s.taxSessionId)
   const isAuthenticated = useIsAuthenticated()
+  const queryClient = useQueryClient()
   const open = Boolean(anchorEl)
 
   const fetchHistory = useCallback(() => {
@@ -329,8 +334,9 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
     if (open) fetchHistory()
   }, [open, fetchHistory])
 
-  const handleSelect = (sid: string) => {
+  const handleSelect = async (sid: string) => {
     setSessionById(sid, 'tax_expert')
+    await invalidateTaxQueries(queryClient)
     setAnchorEl(null)
   }
 
@@ -340,6 +346,7 @@ export function SwitchTaxSessionButton({ sessionId }: SwitchTaxPopoverProps) {
       await apiClient.deleteTaxSession(item.session_id)
       if (item.session_id === activeSessionId) clearSession('tax_expert')
       setHistory((prev) => prev.filter((h) => h.session_id !== item.session_id))
+      await invalidateTaxQueries(queryClient)
     } catch {
       // keep dialog open on error
     } finally {
@@ -466,12 +473,15 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
 
+  const queryClient = useQueryClient()
+
   const handleDelete = async (item: TaxHistoryItem) => {
     setDeleting(true)
     try {
       await apiClient.deleteTaxSession(item.session_id)
       if (item.session_id === activeSessionId) clearSession('tax_expert')
       setHistory((prev) => prev.filter((h) => h.session_id !== item.session_id))
+      await invalidateTaxQueries(queryClient)
     } catch {
       // silently retain dialog open; user can retry
     } finally {
@@ -494,6 +504,7 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
     try {
       const data = await apiClient.parseAIS(file)
       onSessionCreated(data.session_id, data)
+      await invalidateTaxQueries(queryClient)
     } catch (e: any) {
       const type = e?.response?.data?.detail?.type
       if (type === 'AIS_UNKNOWN_CODE') {
@@ -676,7 +687,10 @@ export default function TaxUploadPanel({ onSessionCreated, sessionExpired = fals
               <Box sx={{ flex: 1 }}>
                 <HistoryList
                   history={history}
-                  onSelect={(sid) => setSessionById(sid, 'tax_expert')}
+                  onSelect={async (sid) => {
+                    setSessionById(sid, 'tax_expert')
+                    await invalidateTaxQueries(queryClient)
+                  }}
                   onDelete={setDeleteConfirm}
                   compact={false}
                 />

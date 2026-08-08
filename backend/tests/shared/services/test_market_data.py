@@ -182,13 +182,10 @@ def test_search_and_indices(monkeypatch):
     mock_prov.search_funds.side_effect = RuntimeError("Search failed")
     assert market_data.search_mutual_funds("ANOTHER_QUERY_XYZ") == []
 
-    # NSE indices
-    mock_nse = MagicMock()
-    mock_nse.nse_get_index_list.return_value = ["NIFTY 50", "NIFTY BANK", "NIFTY IT"]
-    monkeypatch.setitem(sys.modules, "nsepython", mock_nse)
-
+    # Local benchmark index search (no nsepython — it hangs on many networks)
     idx_res = market_data.get_nse_indices("NIFTY")
-    assert len(idx_res) == 3
+    assert len(idx_res) >= 3
+    assert any(r["name"] == "Nifty 50" for r in idx_res)
 
 
 def test_get_fund_benchmark_all_branches():
@@ -276,8 +273,10 @@ def test_market_data_search_empty_and_peer_errors(monkeypatch):
     monkeypatch.setattr(market_data, "fetch_nav_series_by_code", MagicMock(side_effect=RuntimeError("peer")))
     pct, alpha = market_data.fetch_peer_returns("123")
     assert pct == 0.0 and alpha == 0.0
-    monkeypatch.setattr("nsepython.nse_get_index_list", MagicMock(side_effect=RuntimeError("nse")))
-    assert market_data.get_nse_indices("NIFTY") == []
+    local_idx = market_data.get_nse_indices("NIFTY")
+    assert len(local_idx) >= 1
+    assert all(r["exchange"] == "LOCAL" for r in local_idx)
+    assert market_data.get_nse_indices("") == []
 
 def test_market_data_nav_series_corrupt_cache(monkeypatch):
     from shared.services import market_data

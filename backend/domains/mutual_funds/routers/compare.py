@@ -33,21 +33,80 @@ def list_benchmarks():
 
 @router.get("/search")
 def search_ticker(q: str):
+    """
+    Autocomplete for market indices + peer mutual funds.
+
+    Local BENCHMARKS / timed NSE lookup run first so the UI always gets
+    instant index hits even when MFAPI or nsepython is slow.
+    """
     logger.info(f"[REALTIME] Searching for: {q}")
+    # Indices first (local + timed NSE), then live MFAPI fund peers.
     results = get_nse_indices(q) + search_mutual_funds(q)
-    return {"results": results, "peers": results}
+    # Deduplicate by symbol while preserving order
+    seen = set()
+    deduped = []
+    for item in results:
+        key = str(item.get("symbol", "")).strip().upper()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return {"results": deduped, "peers": deduped}
 
 @router.get("/history")
 def get_history(ticker: str, days: int = 365):
+    """
+    NAV/price history for a market index or peer mutual fund (scheme code).
+
+    Also returns trailing returns + risk stats so Compare can add external MFs
+    as full matrix rows without a portfolio holding.
+    """
     series = fetch_benchmark_series(ticker, days)
+    empty = {
+        "dates": [], "values": [], "raw": [], "day_chg": None, "ter": None,
+        "returns": {}, "sharpe": None, "sortino": None, "alpha": None,
+        "beta": None, "volatility": None, "max_drawdown": None, "consistency": None,
+    }
     if series.empty:
-        return {"dates": [], "values": []}
-    
+        return empty
+
     norm = (series / series.iloc[0] * 100).round(2)
+    day_chg = None
+    if len(series) >= 2 and float(series.iloc[-2]) != 0:
+        day_chg = round((float(series.iloc[-1]) / float(series.iloc[-2]) - 1.0) * 100.0, 2)
+
+    ter = None
+    t = str(ticker).strip()
+    if t.isdigit() and len(t) >= 5:
+        try:
+            ter = fetch_fund_ter(t)
+        except Exception:
+            ter = None
+
+    trailing = compute_trailing_returns(series)
+    # Relative risk vs Nifty 50 unless this ticker already is that benchmark.
+    t_upper = t.upper()
+    if t_upper in ("NIFTY 50", "^NSEI", "120716"):
+        bench_for_risk = series
+    else:
+        bench_for_risk = fetch_benchmark_series("120716", days)
+    risk = compute_risk_metrics(series, bench_for_risk, risk_free_rate=6.5)
+    consistency = compute_consistency_score(series, bench_for_risk)
+
     return {
         "dates": series.index.strftime("%Y-%m-%d").tolist(),
         "values": norm.tolist(),
         "raw": series.round(2).tolist(),
+        "day_chg": day_chg,
+        "ter": ter,
+        "returns": trailing,
+        "sharpe": round(risk.get("sharpe", 0), 2) if risk else None,
+        "sortino": round(risk.get("sortino", 0), 2) if risk else None,
+        "alpha": round(risk.get("alpha", 0), 2) if risk else None,
+        "beta": round(risk.get("beta", 1), 2) if risk else None,
+        "volatility": round(risk.get("vol", 0), 2) if risk else None,
+        "max_drawdown": round(abs(risk.get("max_dd", 0)), 2) if risk else None,
+        "consistency": round(consistency, 1) if consistency is not None else None,
     }
 
 @router.get("/peers")

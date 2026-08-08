@@ -26,10 +26,12 @@ def test_rebalance_router(sample_portfolio_session):
     # Auto profile (which will detect Aggressive/Balanced/Conservative)
     res_auto = rebalance.get_rebalance_plan(sid, profile="Auto")
     assert "drift_score" in res_auto
+    assert "profile_used" in res_auto
 
     # Aggressive profile (triggers intra-equity check)
     res_agg = rebalance.get_rebalance_plan(sid, profile="Aggressive")
     assert "drift_score" in res_agg
+    assert res_agg["profile_used"] == "Aggressive"
 
     # Empty portfolio
     from datetime import datetime
@@ -85,6 +87,9 @@ def test_rebalance_auto_profiles_and_sell_notes(monkeypatch):
     out2 = rebalance.get_rebalance_plan("reb_sell", profile="Balanced")
     notes = " ".join(o.get("note", "") for o in out2.get("orders", []))
     assert "ELSS" in notes or not out2.get("orders")
+    sell_orders = [o for o in out2.get("orders", []) if "Sell" in o.get("action", "")]
+    if sell_orders:
+        assert sell_orders[0].get("fund") == "Sample Fund"
 
 def test_rebalance_empty_value_and_buy_notes(monkeypatch):
     from domains.mutual_funds.models import Portfolio

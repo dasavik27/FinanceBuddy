@@ -34,6 +34,29 @@ import { gainColor } from '../../../shared/utils/fmt'
 
 import { COLORS, calculateDrawdown } from '../rules/tabCommon'
 
+type PeerRef = { symbol: string; name: string; type?: string }
+
+function parseComparePeers(raw: string | undefined): PeerRef[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((p) => p && p.symbol && p.name)
+    }
+    if (parsed && typeof parsed === 'object' && parsed.symbol) {
+      return [{ symbol: String(parsed.symbol), name: String(parsed.name || parsed.symbol), type: parsed.type }]
+    }
+  } catch {
+    // Legacy plain-string bench (e.g. "Nifty 50")
+    return [{ symbol: raw, name: raw, type: 'Index' }]
+  }
+  return []
+}
+
+function isSchemeCode(symbol: string) {
+  return /^\d{5,}$/.test(String(symbol || '').trim())
+}
+
 // ── Motion Variants ──────────────────────────────────────────────────────────
 const containerVar = {
   hidden: { opacity: 0 },
@@ -58,11 +81,20 @@ export default function CompareTab() {
   const setSelectedFunds = (funds: string[]) => setCompareFunds(sid, funds)
 
   const [extSearch, setExtSearch] = useState('')
-  const extTickerStr = compareBenchState[sid]
-  const extTicker = extTickerStr ? JSON.parse(extTickerStr) : null
-  const setExtTicker = (ticker: { symbol: string; name: string } | null) => {
-    setCompareBench(sid, ticker ? JSON.stringify(ticker) : '')
+  const extPeersRaw = compareBenchState[sid]
+  const extPeers = useMemo(() => parseComparePeers(extPeersRaw), [extPeersRaw])
+  const setExtPeers = (peers: PeerRef[]) => {
+    setCompareBench(sid, peers.length ? JSON.stringify(peers) : '')
   }
+
+  // Migrate legacy single-object / plain-string bench into a peer array once.
+  useEffect(() => {
+    if (!extPeersRaw) return
+    const trimmed = extPeersRaw.trim()
+    if (trimmed.startsWith('[')) return
+    const migrated = parseComparePeers(extPeersRaw)
+    if (migrated.length) setCompareBench(sid, JSON.stringify(migrated))
+  }, [extPeersRaw, sid, setCompareBench])
 
   const [mode, setMode] = useState<'Overview' | 'Technical' | 'Trends'>('Overview')
   const [activeTrend, setActiveTrend] = useState<'Trailing' | 'Rolling' | 'Wealth' | 'Drawdown'>('Trailing')
@@ -79,12 +111,19 @@ export default function CompareTab() {
   // One /compare/search per keystroke before this, all queued behind one worker.
   const debouncedExtSearch = useDebounce(extSearch, 300)
 
-  const { data: searchRes } = useQuery({
+  const { data: searchRes, isFetching: searchingPeers } = useQuery({
     queryKey: ['tickerSearch', debouncedExtSearch],
     queryFn: () => apiClient.searchTicker(debouncedExtSearch),
     enabled: debouncedExtSearch.length >= 3,
     gcTime: 60 * 1000,
   })
+  const selectedPeerSymbols = new Set(extPeers.map((p) => p.symbol))
+  const peerOptions = (searchRes?.results || []).filter((o: any) => !selectedPeerSymbols.has(o.symbol))
+
+  // Index (non scheme-code) used as the portfolio performance benchmark; default Nifty 50.
+  const marketBenchmark = extPeers.find((p) => !isSchemeCode(p.symbol))?.symbol
+    || extPeers.find((p) => !isSchemeCode(p.symbol))?.name
+    || 'Nifty 50'
 
   // 1. Identify all assets for historical fetching
   const selectedAssets = useMemo(() => {
@@ -92,9 +131,14 @@ export default function CompareTab() {
       const h: any = allHoldings.find((x: any) => x.Fund === fname)
       return { id: h?.ISIN || fname, name: fname, type: 'fund', short: fname.split(' ')[0] }
     })
-    const bench = extTicker ? [{ id: extTicker.symbol, name: extTicker.name, type: 'bench', short: extTicker.name?.split(' ')[0] || extTicker.symbol }] : []
-    return [...funds, ...bench]
-  }, [selectedFunds, extTicker, allHoldings])
+    const peers = extPeers.map((p) => ({
+      id: p.symbol,
+      name: p.name,
+      type: isSchemeCode(p.symbol) ? 'peer' : 'bench',
+      short: (p.name || p.symbol).split(' ')[0],
+    }))
+    return [...funds, ...peers]
+  }, [selectedFunds, extPeers, allHoldings])
 
   // 2. Multi-fetch individual histories
   const historyResults = useQueries({
@@ -119,7 +163,7 @@ export default function CompareTab() {
   const [period, setPeriod] = useState('1Y')
   const { data: perfData, isLoading: perfL, isFetching: perfF, isError: perfE, error: perfErr } = usePerformance(period, { 
     include_funds: selectedFunds.join(','),
-    benchmark: extTicker?.symbol || extTicker?.name || 'Nifty 50'
+    benchmark: marketBenchmark
   })
 
   const historiesFetching = historyResults.some((r: any) => r.isFetching) || rollingResults.some((r: any) => r.isFetching)
@@ -178,10 +222,13 @@ export default function CompareTab() {
         return (intersection.length / Math.max(tokensX.length, tokensA.length)) >= 0.6
       })
       const hist = histories[i] ?? {}
+      const isExternal = asset.type === 'bench' || asset.type === 'peer'
       const isBench = asset.type === 'bench'
       const bStats: any = (perfData as any)?.benchmark_stats
       const trailingDict: Record<string, number> = {}
-      if (isBench && bStats?.returns) {
+      if (isExternal && hist?.returns) {
+        Object.assign(trailingDict, hist.returns)
+      } else if (isBench && bStats?.returns) {
         Object.assign(trailingDict, bStats.returns)
       } else if (pFund?.roll_labels && pFund?.fund_rolls) {
         pFund.roll_labels.forEach((lbl: string, idx: number) => {
@@ -189,23 +236,34 @@ export default function CompareTab() {
         })
       }
 
+      const extAlpha = hist?.alpha ?? (isBench ? (bStats?.alpha ?? 0) : null)
+      const extSharpe = hist?.sharpe ?? (isBench ? bStats?.sharpe : null)
+      const extSortino = hist?.sortino ?? (isBench ? bStats?.sortino : null)
+      const extBeta = hist?.beta ?? (isBench ? (bStats?.beta ?? 1) : null)
+      const extVol = hist?.volatility ?? (isBench ? bStats?.volatility : null)
+      const extMaxDd = hist?.max_drawdown ?? (isBench ? bStats?.max_drawdown : null)
+      const extConsist = hist?.consistency ?? (isBench ? 10 : null)
+
       return {
         name: asset.short,
         shortName: asset.short,
         fullName: asset.name,
         id: asset.id,
         isBench,
+        isExternal,
         color: COLORS[i % COLORS.length],
         // Technicals
-        alpha: isBench ? (bStats?.alpha ?? 0) : (pFund?.alpha || 'N/A'),
-        beta: isBench ? (bStats?.beta ?? 1) : (pFund?.beta || 'N/A'),
-        sharpe: isBench ? (bStats?.sharpe ?? 'N/A') : (pFund?.sharpe || 'N/A'),
-        sortino: isBench ? (bStats?.sortino ?? 'N/A') : (pFund?.sortino || 'N/A'),
-        volatility: isBench ? (bStats?.volatility ?? 'N/A') : (pFund?.vol || 'N/A'),
-        consistency: isBench ? '100%' : (pFund?.consistency || 'N/A'),
-        risk: isBench ? 'Moderate' : (pFund?.verdict || 'Average'),
+        alpha: isExternal ? (extAlpha ?? 'N/A') : (pFund?.alpha || 'N/A'),
+        beta: isExternal ? (extBeta ?? 'N/A') : (pFund?.beta || 'N/A'),
+        sharpe: isExternal ? (extSharpe ?? 'N/A') : (pFund?.sharpe || 'N/A'),
+        sortino: isExternal ? (extSortino ?? 'N/A') : (pFund?.sortino || 'N/A'),
+        volatility: isExternal ? (extVol ?? 'N/A') : (pFund?.vol || 'N/A'),
+        consistency: isExternal ? (extConsist != null ? `${extConsist}` : 'N/A') : (pFund?.consistency || 'N/A'),
+        risk: isBench ? 'Target' : (isExternal ? 'Peer' : (pFund?.verdict || 'Average')),
         // Performance
-        return: isBench ? ((perfData as any)?.benchmark_return ?? 0) : (pFund?.return_period || 0),
+        return: isExternal
+          ? (trailingDict['1Y'] ?? (perfData as any)?.benchmark_return ?? 0)
+          : (pFund?.return_period || 0),
         trailing: trailingDict,
         history: hist,
         chartDates: hist.dates || [],
@@ -214,23 +272,48 @@ export default function CompareTab() {
         data: {
           '1Y Ret': trailingDict['1Y'] != null ? `${trailingDict['1Y'] >= 0 ? '+' : ''}${trailingDict['1Y'].toFixed(1)}%` : (pFund ? `${pFund.fund_xi?.toFixed(1)}%` : 'N/A'),
           '3Y Ret': trailingDict['3Y'] != null ? `${trailingDict['3Y'] >= 0 ? '+' : ''}${trailingDict['3Y'].toFixed(1)}%` : 'N/A',
-          'Alpha': isBench ? '0.0%' : (pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(1)}%` : 'N/A'),
-          'Sharpe': isBench ? (bStats?.sharpe?.toFixed(2) ?? 'N/A') : (pFund?.sharpe?.toFixed(2) ?? 'N/A'),
-          'Sortino': isBench ? (bStats?.sortino?.toFixed(2) ?? 'N/A') : (pFund?.sortino?.toFixed(2) ?? 'N/A'),
-          'Beta': isBench ? '1.00' : (pFund?.beta?.toFixed(2) ?? 'N/A'),
-          'Volatility': isBench ? (bStats?.volatility != null ? `${bStats.volatility}%` : 'N/A') : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : 'N/A'),
-          'Max Drawdown': isBench ? (bStats?.max_drawdown != null ? `${bStats.max_drawdown.toFixed(1)}%` : 'N/A') : (pFund?.max_dd != null ? `${Number(pFund.max_dd).toFixed(1)}%` : 'N/A'),
-          'Expense Ratio': pFund?.er != null ? `${Number(pFund.er).toFixed(2)}%` : 'N/A',
-          'Consistency': isBench ? '10/10' : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : 'N/A'),
-          'Verdict': isBench ? 'Target' : (pFund?.verdict ?? 'Average'),
+          'Alpha': isExternal
+            ? (extAlpha != null ? `${extAlpha >= 0 ? '+' : ''}${Number(extAlpha).toFixed(1)}%` : 'N/A')
+            : (pFund ? `${pFund.alpha >= 0 ? '+' : ''}${pFund.alpha.toFixed(1)}%` : 'N/A'),
+          'Sharpe': isExternal
+            ? (extSharpe != null ? Number(extSharpe).toFixed(2) : 'N/A')
+            : (pFund?.sharpe?.toFixed(2) ?? 'N/A'),
+          'Sortino': isExternal
+            ? (extSortino != null ? Number(extSortino).toFixed(2) : 'N/A')
+            : (pFund?.sortino?.toFixed(2) ?? 'N/A'),
+          'Beta': isExternal
+            ? (extBeta != null ? Number(extBeta).toFixed(2) : 'N/A')
+            : (pFund?.beta?.toFixed(2) ?? 'N/A'),
+          'Volatility': isExternal
+            ? (extVol != null ? `${extVol}%` : 'N/A')
+            : (pFund?.vol != null ? `${pFund.vol.toFixed(1)}%` : 'N/A'),
+          'Max Drawdown': isExternal
+            ? (extMaxDd != null ? `${Number(extMaxDd).toFixed(1)}%` : 'N/A')
+            : (pFund?.max_dd != null ? `${Number(pFund.max_dd).toFixed(1)}%` : 'N/A'),
+          'Expense Ratio': isExternal
+            ? (hist?.ter != null ? `${Number(hist.ter).toFixed(2)}%` : 'N/A')
+            : (pFund?.er != null ? `${Number(pFund.er).toFixed(2)}%` : 'N/A'),
+          'Consistency': isExternal
+            ? (extConsist != null ? `${Number(extConsist).toFixed(1)}/10` : 'N/A')
+            : (pFund ? `${pFund.consistency?.toFixed(1)}/10` : 'N/A'),
+          'Verdict': isBench ? 'Target' : (isExternal ? 'Peer' : (pFund?.verdict ?? 'Average')),
+          // P/E & P/B are category-level estimates from config (not live fund holdings multiples).
           'P/E Ratio': pFund?.pe_ratio != null ? pFund.pe_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : 'N/A'),
           'P/B Ratio': pFund?.pb_ratio != null ? pFund.pb_ratio.toFixed(1) : (pFund?.is_debt ? 'N/A (Debt)' : 'N/A'),
-          'Day Chg.%': isBench ? ((perfData as any)?.benchmark_day_chg != null ? `${(perfData as any).benchmark_day_chg >= 0 ? '+' : ''}${(perfData as any).benchmark_day_chg.toFixed(2)}%` : 'N/A') : (h?.['Day Chg.%'] != null ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%` : 'N/A'),
-          AlphaVal: isBench ? 0 : (pFund?.alpha ?? 0),
-          SharpeVal: isBench ? (bStats?.sharpe ?? 0) : (pFund?.sharpe ?? 0),
-          SortinoVal: isBench ? (bStats?.sortino ?? 0) : (pFund?.sortino ?? 0),
-          VolVal: isBench ? (bStats?.volatility ?? 0) : (pFund?.vol ?? 100),
-          ConsistVal: isBench ? 10 : (pFund?.consistency ?? 0),
+          'Day Chg.%': (() => {
+            if (isExternal) {
+              const chg = hist?.day_chg ?? (isBench ? (perfData as any)?.benchmark_day_chg : null)
+              return chg != null ? `${chg >= 0 ? '+' : ''}${Number(chg).toFixed(2)}%` : 'N/A'
+            }
+            return h?.['Day Chg.%'] != null
+              ? `${h['Day Chg.%'] >= 0 ? '+' : ''}${h['Day Chg.%'].toFixed(2)}%`
+              : 'N/A'
+          })(),
+          AlphaVal: isExternal ? (Number(extAlpha) || 0) : (pFund?.alpha ?? 0),
+          SharpeVal: isExternal ? (Number(extSharpe) || 0) : (pFund?.sharpe ?? 0),
+          SortinoVal: isExternal ? (Number(extSortino) || 0) : (pFund?.sortino ?? 0),
+          VolVal: isExternal ? (Number(extVol) || 0) : (pFund?.vol ?? 100),
+          ConsistVal: isExternal ? (Number(extConsist) || 0) : (pFund?.consistency ?? 0),
         },
       }
     })
@@ -428,17 +511,68 @@ export default function CompareTab() {
             </Grid>
             <Grid item xs={12} md={6}>
               <Typography variant="overline" sx={{ fontWeight: 800, color: 'primary.main', mb: 2, display: 'block', letterSpacing: '0.1em' }}>
-                MARKET COMPARATOR & PEERS
+                OTHER MUTUAL FUNDS & INDICES
               </Typography>
               <Autocomplete
-                options={searchRes?.results || []}
-                getOptionLabel={(o: any) => `${o.symbol} - ${o.name}`}
-                value={extTicker}
-                onChange={(_, newVal) => setExtTicker(newVal)}
-                onInputChange={(_, val) => setExtSearch(val)}
-                noOptionsText={extSearch.length < 3 ? 'Type at least 3 chars (e.g., RELIANCE, NIFTY)' : 'No matching peers'}
+                multiple
+                options={peerOptions}
+                value={extPeers}
+                inputValue={extSearch}
+                getOptionLabel={(o: any) => {
+                  if (typeof o === 'string') return o
+                  const kind = o.type === 'Mutual Fund' || isSchemeCode(o.symbol) ? 'Fund' : 'Index'
+                  // Keep symbol in the label so scheme codes / tickers stay visible & matchable.
+                  return `${o.symbol} · ${o.name} (${kind})`
+                }}
+                isOptionEqualToValue={(a: any, b: any) => a?.symbol === b?.symbol}
+                filterOptions={(x) => x}
+                clearOnBlur={false}
+                loading={searchingPeers}
+                onChange={(_, newVal) => {
+                  setExtPeers(newVal.map((p: any) => ({
+                    symbol: p.symbol,
+                    name: p.name,
+                    type: p.type,
+                  })))
+                  setExtSearch('')
+                }}
+                onInputChange={(_, val, reason) => {
+                  if (reason === 'input') setExtSearch(val)
+                  else if (reason === 'clear') setExtSearch('')
+                }}
+                noOptionsText={extSearch.length < 3 ? 'Type at least 3 chars (e.g., Parag, Quant, Nifty)' : (searchingPeers ? 'Searching…' : 'No matching mutual funds')}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...tagProps } = getTagProps({ index })
+                    const kind = option.type === 'Mutual Fund' || isSchemeCode(option.symbol) ? 'Fund' : 'Index'
+                    return (
+                      <Chip
+                        key={key}
+                        variant="outlined"
+                        label={`${option.name.split(' ').slice(0, 4).join(' ')} · ${kind}`}
+                        {...tagProps}
+                        sx={{ borderRadius: '10px', borderColor: 'rgba(255,255,255,0.2)', color: '#fff', fontWeight: 600, fontSize: 11 }}
+                      />
+                    )
+                  })
+                }
                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: '16px', bgcolor: 'rgba(255,255,255,0.03)' } }}
-                renderInput={(params) => <TextField {...params} label="Search Market Index or Peer Fund" placeholder="e.g., Nifty 50, S&P 500, Parag Parikh Flexi" />}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Search other mutual funds or indices"
+                    placeholder="e.g., Parag Parikh Flexi, Mirae Midcap, Nifty 50"
+                    InputProps={{
+                      ...params.InputProps,
+                      endAdornment: (
+                        <>
+                          {searchingPeers ? <CircularProgress color="inherit" size={16} /> : null}
+                          {params.InputProps.endAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
               />
             </Grid>
           </Grid>
@@ -561,8 +695,8 @@ export default function CompareTab() {
                               { label: 'Volatility', val: m.data.Volatility, info: "Annualized standard deviation of daily returns. Higher = more price swings." },
                               { label: 'Max Drawdown', val: m.data['Max Drawdown'], info: "Largest peak-to-trough decline. Measures worst-case loss scenario." },
                               { label: 'Expense Ratio', val: m.data['Expense Ratio'], info: "Total annual fund management fee charged as % of AUM." },
-                              { label: 'P/E Ratio', val: m.data['P/E Ratio'], info: "Price-to-Earnings valuation multiple of underlying portfolio holdings." },
-                              { label: 'P/B Ratio', val: m.data['P/B Ratio'], info: "Price-to-Book valuation multiple of underlying portfolio holdings." },
+                              { label: 'P/E Ratio', val: m.data['P/E Ratio'], info: "Category-level P/E estimate (not a live holdings-weighted multiple)." },
+                              { label: 'P/B Ratio', val: m.data['P/B Ratio'], info: "Category-level P/B estimate (not a live holdings-weighted multiple)." },
                               { label: 'Consistency', val: m.data.Consistency, info: "% of 3-year rolling windows where fund beat its benchmark. 10/10 = always outperformed." },
                             ].map((stat, i) => (
                               <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>

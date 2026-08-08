@@ -84,9 +84,10 @@ export function useEquityHoldings(
     queryFn: () => apiClient.getEquityHoldings(sid!, { sort_by: sortBy, ascending }),
     enabled: !!sid,
     staleTime: LIVE,
-    // Sorting changes the key, and without this the table unmounts to a spinner and
-    // resets scroll position on every header click.
-    placeholderData: keepPreviousData,
+    // Keep prior rows only when the session is unchanged (sort/filter). Never flash
+    // another portfolio's holdings after upload / switch / delete.
+    placeholderData: (prev, prevQuery) =>
+      (prevQuery?.queryKey?.[2] === sid ? prev : undefined),
   })
 }
 
@@ -110,7 +111,8 @@ export function useEquityPerformance(
     queryFn: () => apiClient.getEquityPerformance(sid!, { period, benchmark }),
     enabled: !!sid,
     staleTime: SETTLED,
-    placeholderData: keepPreviousData,
+    placeholderData: (prev, prevQuery) =>
+      (prevQuery?.queryKey?.[2] === sid ? prev : undefined),
   })
 }
 

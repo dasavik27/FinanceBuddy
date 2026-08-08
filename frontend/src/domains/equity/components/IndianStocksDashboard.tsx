@@ -3,11 +3,14 @@ import { Box } from '@mui/material'
 import { useAppStore, useEquitySessionId } from '../../../shared/store/appStore'
 import { ErrorBoundary } from '../../../shared/components/ui'
 import EquityDashboard from './EquityDashboard'
-import EquityUploadPanel from './EquityUploadPanel'
+import { KiteOAuthOverlay, useKiteOAuthCallback } from '../hooks/useKiteOAuthCallback'
 
 export default function IndianStocksDashboard() {
   const setActiveModule = useAppStore((s) => s.setActiveModule)
   const sessionId = useEquitySessionId()
+  // Always mounted for /equity/* so Zerodha redirects complete even on Analyzer
+  // or when an existing session hides EquityUploadPanel.
+  const { syncState, error, clearError } = useKiteOAuthCallback()
 
   useEffect(() => {
     setActiveModule('indian_stocks')
@@ -15,6 +18,7 @@ export default function IndianStocksDashboard() {
 
   return (
     <Box>
+      <KiteOAuthOverlay syncState={syncState} error={error} onDismissError={clearError} />
       {/*
         The dashboard renders with or without a portfolio. It used to be gated entirely
         behind `sessionId`, which put the Stock Analyzer — the one feature here that

@@ -157,7 +157,7 @@ describe('CompareTab', () => {
 
     expect(screen.getByRole('heading', { name: 'Compare Funds' })).toBeInTheDocument()
     expect(screen.getByText('PORTFOLIO ASSETS')).toBeInTheDocument()
-    expect(screen.getByText('MARKET COMPARATOR & PEERS')).toBeInTheDocument()
+    expect(screen.getByText('OTHER MUTUAL FUNDS & INDICES')).toBeInTheDocument()
 
     expect(await screen.findByText('Comparison Matrix')).toBeInTheDocument()
     expect(screen.getByText('Matrix Overview')).toBeInTheDocument()
@@ -209,7 +209,7 @@ describe('CompareTab', () => {
     renderWithProviders(<CompareTab />)
     expect(await screen.findByText('Comparison Matrix')).toBeInTheDocument()
 
-    const peerInput = screen.getByLabelText(/Search Market Index or Peer Fund/i)
+    const peerInput = screen.getByLabelText(/Search other mutual funds or indices/i)
     await user.type(peerInput, 'NIF')
     await waitFor(() => expect(apiClient.searchTicker).toHaveBeenCalledWith('NIF'), { timeout: 5000 })
     const option = await screen.findByRole('option', { name: /NIFTYBEES/i }, { timeout: 5000 })
@@ -217,6 +217,54 @@ describe('CompareTab', () => {
 
     await waitFor(() => {
       expect(useAppStore.getState().compareBench['sid-compare']).toContain('NIFTYBEES')
+    })
+  })
+
+  it('searches and adds another mutual fund peer to the matrix', async () => {
+    const user = userEvent.setup()
+    vi.mocked(apiClient.searchTicker).mockResolvedValue({
+      results: [{ symbol: '122639', name: 'Parag Parikh Flexi Cap Fund', type: 'Mutual Fund' }],
+    } as any)
+    vi.mocked(apiClient.getBenchmarkHistory).mockResolvedValue({
+      dates: ['2023-01-01', '2023-06-01', '2023-12-31'],
+      values: [100, 115, 130],
+      returns: { '1Y': 18.5, '3Y': 16.2 },
+      sharpe: 1.35,
+      sortino: 1.5,
+      alpha: 3.2,
+      beta: 0.88,
+      volatility: 12.4,
+      max_drawdown: -14,
+      consistency: 7.8,
+      ter: 0.76,
+      day_chg: 0.4,
+    } as any)
+    renderWithProviders(<CompareTab />)
+    expect(await screen.findByText('Comparison Matrix')).toBeInTheDocument()
+
+    const peerInput = screen.getByLabelText(/Search other mutual funds or indices/i)
+    await user.type(peerInput, 'Parag')
+    await waitFor(() => expect(apiClient.searchTicker).toHaveBeenCalledWith('Parag'), { timeout: 5000 })
+    await user.click(await screen.findByRole('option', { name: /122639/i }, { timeout: 5000 }))
+
+    await waitFor(() => {
+      const raw = useAppStore.getState().compareBench['sid-compare']
+      expect(raw).toContain('122639')
+      expect(raw?.startsWith('[')).toBe(true)
+    })
+    expect(screen.getAllByText(/Parag Parikh Flexi Cap/i).length).toBeGreaterThan(0)
+  })
+
+  it('migrates legacy plain-string compareBench without crashing search', async () => {
+    useAppStore.setState({
+      compareBench: { 'sid-compare': 'Nifty 50' },
+    })
+    renderWithProviders(<CompareTab />)
+    expect(await screen.findByLabelText(/Search other mutual funds or indices/i)).toBeInTheDocument()
+    await waitFor(() => {
+      const raw = useAppStore.getState().compareBench['sid-compare']
+      expect(raw).toContain('Nifty 50')
+      expect(raw?.startsWith('[')).toBe(true)
     })
   })
 
@@ -310,7 +358,7 @@ describe('CompareTab', () => {
     renderWithProviders(<CompareTab />)
     expect(await screen.findByText('Comparison Matrix')).toBeInTheDocument()
 
-    const peerInput = screen.getByLabelText(/Search Market Index or Peer Fund/i)
+    const peerInput = screen.getByLabelText(/Search other mutual funds or indices/i)
     await user.type(peerInput, 'ab')
     expect(await screen.findByText(/Type at least 3 chars/i)).toBeInTheDocument()
 
@@ -327,7 +375,7 @@ describe('CompareTab', () => {
     await user.click(clearBtns[clearBtns.length - 1])
     await waitFor(() => {
       const bench = useAppStore.getState().compareBench['sid-compare']
-      expect(!bench || bench === '').toBe(true)
+      expect(!bench || bench === '' || bench === '[]').toBe(true)
     })
 
     // Deselect one portfolio fund via chip delete
