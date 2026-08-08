@@ -477,6 +477,32 @@ export const apiClient = {
     return data
   },
 
+  /** List equity research strategies (VCP, etc.). */
+  getEquityResearchStrategies: async (): Promise<{ strategies: Array<{ id: string; name: string; description: string }> }> => {
+    const { data } = await api.get('/equity/research/strategies')
+    return data
+  },
+
+  /** Scan a universe with a research strategy (Nifty 50 default). */
+  scanEquityResearch: async (body: {
+    strategy?: string
+    universe?: string
+    symbols?: string[]
+    limit?: number
+    only_setups?: boolean
+  } = {}): Promise<any> => {
+    const { data } = await api.post('/equity/research/scan', body)
+    return data
+  },
+
+  /** Evaluate one symbol against a research strategy. */
+  evaluateEquityResearchSymbol: async (symbol: string, strategy = 'minervini_vcp'): Promise<any> => {
+    const { data } = await api.get(`/equity/research/symbol/${encodeURIComponent(symbol)}`, {
+      params: { strategy },
+    })
+    return data
+  },
+
   deleteHistorySession: async (sid: string): Promise<any> => {
     const { data } = await api.delete(`/history/${sid}`)
     return data

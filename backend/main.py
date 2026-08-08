@@ -44,6 +44,7 @@ from domains.equity.routers import (
     performance as eq_performance,
     insights as eq_insights,
     analyzer as eq_analyzer,
+    research as eq_research,
 )
 
 # Domain: Tax Expert
@@ -491,6 +492,7 @@ app.include_router(eq_holdings.router,    prefix="/equity/holdings",   tags=["Eq
 app.include_router(eq_performance.router, prefix="/equity/performance", tags=["Equity - Performance vs Benchmark"])
 app.include_router(eq_insights.router,    prefix="/equity/insights",   tags=["Equity - Smart Insights"])
 app.include_router(eq_analyzer.router,    prefix="/equity/analyzer",   tags=["Equity - Stock Analyzer"])
+app.include_router(eq_research.router,    prefix="/equity/research",   tags=["Equity - Research Scanner"])
 
 # Domain: Tax Expert — all six routers share the /tax-expert prefix and define
 # non-overlapping paths within it.

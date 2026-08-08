@@ -16,6 +16,7 @@ const PLTab = lazy(() => import('./tabs/PLTab'))
 const SectorTab = lazy(() => import('./tabs/SectorTab'))
 const PerformanceTab = lazy(() => import('./tabs/PerformanceTab'))
 const StockAnalyzerTab = lazy(() => import('./tabs/StockAnalyzerTab'))
+const ResearchScannerTab = lazy(() => import('./tabs/ResearchScannerTab'))
 const InsightsTab = lazy(() => import('./tabs/InsightsTab'))
 
 const TABS = [
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'sectors', label: 'Sector Allocation' },
   { id: 'performance', label: 'Performance' },
   { id: 'analyzer', label: 'Stock Analyzer', chip: 'New' },
+  { id: 'research', label: 'Research Scanner', chip: 'New' },
   { id: 'insights', label: 'Insights' },
 ]
 
@@ -111,6 +113,8 @@ export default function EquityDashboard({ hasSession = true }: { hasSession?: bo
                 */}
                 {activeTabId === 'analyzer' ? (
                   <StockAnalyzerTab />
+                ) : activeTabId === 'research' ? (
+                  <ResearchScannerTab />
                 ) : !hasSession ? (
                   <EquityUploadPanel />
                 ) : (

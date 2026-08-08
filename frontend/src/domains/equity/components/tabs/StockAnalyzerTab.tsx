@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Box,
   Typography,
@@ -287,6 +288,7 @@ function RangeSliderBar({
 
 export default function StockAnalyzerTab() {
   const sessionId = useEquitySessionId()
+  const [searchParams] = useSearchParams()
   const {
     query,
     selectedStock,
@@ -425,6 +427,14 @@ export default function StockAnalyzerTab() {
       if (seq === analysisSeq.current) setLoadingAnalysis(false)
     }
   }
+
+  // Deep-link from Research Scanner: /equity/analyzer?symbol=RELIANCE
+  useEffect(() => {
+    const sym = (searchParams.get('symbol') || '').toUpperCase().trim()
+    if (!sym || stock?.symbol?.toUpperCase() === sym) return
+    void handleSelect({ symbol: sym, name: sym })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrap once per symbol query
+  }, [searchParams])
 
   // Handle adding a stock to compare
   const handleAddCompareStock = async (symbol: string) => {
